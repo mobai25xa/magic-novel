@@ -1,0 +1,359 @@
+/* magic-ui button semantic layer */
+
+.btn,
+.mui-button {
+  position: relative;
+  overflow: hidden;
+  white-space: nowrap;
+  line-height: 1;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  text-decoration: none !important;
+  user-select: none;
+  -webkit-appearance: none;
+}
+
+.btn:focus-visible,
+.mui-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+.btn:not([disabled]):not(.btn-loading):active,
+.mui-button:not([disabled]):not(.btn-loading):active {
+  transform: scale(0.98);
+}
+
+.btn[disabled],
+.btn.btn-loading,
+.mui-button[disabled],
+.mui-button.btn-loading {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.btn.btn-loading,
+.mui-button.btn-loading {
+  pointer-events: none;
+  opacity: 0.75;
+}
+
+.btn-default,
+.mui-button--default {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+}
+.btn-default:not([disabled]):not(.btn-loading):hover,
+.mui-button--default:not([disabled]):not(.btn-loading):hover {
+  background: var(--border-success);
+}
+
+.btn-secondary,
+.mui-button--secondary {
+  background: var(--color-secondary-bg);
+  color: var(--color-secondary-text);
+  border: 1px solid var(--border-color);
+}
+.btn-secondary:not([disabled]):not(.btn-loading):hover,
+.mui-button--secondary:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-secondary-bg-hover);
+}
+
+.btn-outline:not([disabled]):not(.btn-loading):hover,
+.mui-button--outline:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-secondary-bg);
+}
+
+.btn-ghost,
+.mui-button--ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid transparent;
+}
+.btn-ghost:not([disabled]):not(.btn-loading):hover,
+.mui-button--ghost:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-secondary-bg);
+  color: var(--text-main);
+}
+
+.btn-destructive,
+.mui-button--destructive,
+.btn-text {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+}
+.btn-destructive:not([disabled]):not(.btn-loading):hover,
+.mui-button--destructive:not([disabled]):not(.btn-loading):hover,
+.btn-text:hover {
+  background: var(--color-danger-soft-hover);
+}
+
+.btn-link,
+.mui-button--link {
+  background: transparent;
+  color: var(--text-success-dark);
+  border: 1px solid transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  padding-left: 2px;
+  padding-right: 2px;
+  height: auto;
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: 500;
+  font-size: 13px;
+}
+.btn-link:not([disabled]):not(.btn-loading):hover,
+.mui-button--link:not([disabled]):not(.btn-loading):hover {
+  opacity: 0.75;
+  text-decoration-thickness: 2px;
+}
+
+.btn-sm,
+.mui-button--sm {
+  height: 28px;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  gap: 4px;
+}
+
+.btn-lg,
+.mui-button--lg {
+  height: 44px;
+  font-size: 13px;
+  padding: 10px 20px;
+  border-radius: 7px;
+  gap: 8px;
+}
+
+.btn-icon,
+.mui-button--icon {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+.btn-icon.btn-sm,
+.btn-icon.mui-button--sm,
+.mui-button--icon.btn-sm,
+.mui-button--icon.mui-button--sm {
+  width: 28px;
+  height: 28px;
+}
+.btn-icon.btn-lg,
+.btn-icon.mui-button--lg,
+.mui-button--icon.btn-lg,
+.mui-button--icon.mui-button--lg {
+  width: 44px;
+  height: 44px;
+}
+
+.btn svg,
+.mui-button svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: block;
+}
+.btn-lg svg,
+.mui-button--lg svg {
+  width: 16px;
+  height: 16px;
+}
+.btn-sm svg,
+.mui-button--sm svg {
+  width: 12px;
+  height: 12px;
+}
+.btn-icon svg,
+.mui-button--icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.btn-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: btn-spin 0.6s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes btn-spin {
+  to { transform: rotate(360deg); }
+}
+
+.btn-group {
+  display: inline-flex;
+  align-items: center;
+}
+.btn-group .btn,
+.btn-group .mui-button {
+  border-radius: 0;
+  border-right-width: 0;
+}
+.btn-group .btn:first-child,
+.btn-group .mui-button:first-child {
+  border-top-left-radius: 6px;
+  border-bottom-left-radius: 6px;
+}
+.btn-group .btn:last-child,
+.btn-group .mui-button:last-child {
+  border-top-right-radius: 6px;
+  border-bottom-right-radius: 6px;
+  border-right-width: 1px;
+}
+
+.btn-full,
+.mui-button--full {
+  width: 100%;
+  justify-content: center;
+}
+
+.btn-active,
+.btn-active:hover {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border-color: var(--border-success);
+}
+
+.mui-button--settings-outline {
+  padding: 6px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-white);
+  color: var(--text-main);
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+  justify-content: flex-start;
+}
+.mui-button--settings-outline:not([disabled]):hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.mui-button--default:not([disabled]):hover {
+  color: var(--text-success-dark);
+}
+
+/* legacy alias retained during migration */
+.btn-solid-success {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+}
+.btn-solid-success:hover {
+  background: var(--border-success);
+}
+
+/* ── 大号按钮变体 ── */
+
+.btn-large {
+  height: 48px;
+  padding: 14px 32px;
+  font-size: 16px;
+  border-radius: 8px;
+  gap: 8px;
+}
+
+.btn-primary-large {
+  height: 48px;
+  padding: 14px 32px;
+  font-size: 16px;
+  border-radius: 8px;
+  gap: 8px;
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+}
+.btn-primary-large:not([disabled]):not(.btn-loading):hover {
+  background: var(--border-success);
+}
+
+.btn-outline-large {
+  height: 48px;
+  padding: 14px 32px;
+  font-size: 16px;
+  border-radius: 8px;
+  gap: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+.btn-outline-large:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-secondary-bg);
+}
+
+/* ── 危险操作轮廓按钮 ── */
+
+.btn-danger-outline {
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+}
+.btn-danger-outline:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-danger-soft-bg);
+}
+
+/* ── 回收站恢复按钮 ── */
+
+.btn-restore {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+}
+.btn-restore:not([disabled]):not(.btn-loading):hover {
+  background: var(--border-success);
+}
+
+/* ── 永久删除按钮 ── */
+
+.btn-delete-permanent {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger-dark);
+  border: 1px solid var(--color-danger-border);
+}
+.btn-delete-permanent:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-danger-soft-hover);
+}
+
+/* ── Worker 运行按钮 ── */
+
+.btn-run {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+}
+.btn-run:not([disabled]):not(.btn-loading):hover {
+  background: var(--border-success);
+}
+
+/* ── 创建按钮（绿色主色调） ── */
+
+.btn-create {
+  background: var(--text-success-dark);
+  color: #ffffff;
+  border: 1px solid var(--text-success-dark);
+}
+.btn-create:not([disabled]):not(.btn-loading):hover {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+}

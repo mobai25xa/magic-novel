@@ -1,0 +1,122 @@
+.tooltip-content {
+  z-index: 300;
+  overflow: hidden;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  pointer-events: none;
+  box-shadow: 0 4px 6px -1px var(--modal-shadow);
+  animation: tooltip-in 0.15s ease-out;
+}
+
+@keyframes tooltip-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.tooltip-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.tooltip-default {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.tooltip-lg {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+.tooltip-variant-default {
+  background: var(--text-main);
+  color: var(--tooltip-text);
+}
+
+.tooltip-variant-primary {
+  background: var(--text-success-dark);
+  color: var(--bg-white);
+}
+
+.tooltip-variant-secondary {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+}
+
+.tooltip-variant-success {
+  background: var(--text-success-dark);
+  color: var(--bg-white);
+}
+
+.tooltip-variant-warning {
+  background: var(--color-warning);
+  color: var(--text-main);
+}
+
+.tooltip-variant-destructive {
+  background: var(--color-danger);
+  color: var(--bg-white);
+}
+
+.tooltip-variant-info {
+  background: var(--color-info);
+  color: var(--bg-white);
+}
+
+.tooltip-variant-light {
+  background: var(--bg-white);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 4px 6px -1px var(--modal-shadow);
+}
+
+.tooltip-arrow {
+  fill: currentColor;
+}
+
+.tooltip-variant-default .tooltip-arrow {
+  color: var(--text-main);
+}
+
+.tooltip-variant-primary .tooltip-arrow {
+  color: var(--text-success-dark);
+}
+
+.tooltip-variant-secondary .tooltip-arrow {
+  color: var(--bg-hover);
+}
+
+.tooltip-variant-success .tooltip-arrow {
+  color: var(--text-success-dark);
+}
+
+.tooltip-variant-warning .tooltip-arrow {
+  color: var(--color-warning);
+}
+
+.tooltip-variant-destructive .tooltip-arrow {
+  color: var(--color-danger);
+}
+
+.tooltip-variant-info .tooltip-arrow {
+  color: var(--color-info);
+}
+
+.tooltip-variant-light .tooltip-arrow {
+  color: var(--bg-white);
+}
+
+/* dark: adds box-shadow not present in light mode */
+.dark .tooltip-variant-default {
+  box-shadow: 0 4px 6px -1px var(--modal-shadow);
+}

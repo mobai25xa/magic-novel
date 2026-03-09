@@ -1,0 +1,305 @@
+/* ============================================================
+   DARK THEME — dark-theme.css
+   在 html 或 body 上添加 .dark class 即可切换暗色主题。
+   依赖: design-tokens.css（亮色变量定义）
+============================================================ */
+
+.dark {
+    /* ── 基础文字 ── */
+    --text-main: #f3f4f6;
+    --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+
+    /* ── 基础背景 ── */
+    --bg-white: #111827;
+    --bg-app: #0b0f19;
+    --bg-hover: #1f2937;
+    --bg-app-dots: #1f2937;
+
+    /* ── 边框 ── */
+    --border-color: #374151;
+    --border-focus: #6b7280;
+    --input-focus-ring: rgba(52, 211, 153, 0.22);
+
+    /* ── 阴影 ── */
+    --shadow-elevation-menu: 0 10px 20px -4px rgba(0, 0, 0, 0.3), 0 4px 8px -2px rgba(0, 0, 0, 0.15);
+    --shadow-elevation-context-menu: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 4px 10px -3px rgba(0, 0, 0, 0.15);
+    --shadow-floating-panel: 0 8px 32px rgba(0, 0, 0, 0.2);
+    --shadow-bento-card: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    --shadow-bento-card-hover: 0 12px 32px rgba(0, 0, 0, 0.3);
+
+    /* ── 毛玻璃效果 (Glassmorphism) ── */
+    --glass-bg-light: rgba(24, 24, 27, 0.6);
+    --glass-bg-light-strong: rgba(24, 24, 27, 0.7);
+    --glass-bg-light-subtle: rgba(24, 24, 27, 0.55);
+
+    /* ── 成功/主色 ── */
+    --bg-success-light: rgba(5, 150, 105, 0.12);
+    --text-success-dark: #34d399;
+    --border-success: #065f46;
+    --color-primary-dark: #6ee7b7;
+
+    /* ── 危险色 ── */
+    --color-danger: #f87171;
+    --color-danger-soft-bg: rgba(239, 68, 68, 0.1);
+    --color-danger-soft-hover: rgba(239, 68, 68, 0.18);
+    --color-danger-border: rgba(239, 68, 68, 0.3);
+    --color-danger-dark: #fca5a5;
+    --color-danger-light: #ef4444;
+    --bg-error: rgba(239, 68, 68, 0.08);
+
+    /* ── 警告/信息 ── */
+    --color-warning: #fbbf24;
+    --color-warning-border: rgba(251, 191, 36, 0.3);
+    --color-info: #38bdf8;
+    --color-info-border: rgba(56, 189, 248, 0.3);
+
+    /* ── 次要色 ── */
+    --color-secondary-bg: #1f2937;
+    --color-secondary-bg-hover: #374151;
+    --color-secondary-text: #9ca3af;
+
+    /* ── Tag 色板 ── */
+    --tag-yellow-bg: rgba(180, 83, 9, 0.18);
+    --tag-yellow-text: #fbbf24;
+    --tag-pink-bg: rgba(190, 24, 93, 0.18);
+    --tag-pink-text: #f472b6;
+    --tag-green-bg: rgba(4, 120, 87, 0.18);
+    --tag-green-text: #34d399;
+    --tag-blue-bg: rgba(3, 105, 161, 0.18);
+    --tag-blue-text: #38bdf8;
+
+    /* ── Toast 头部 ── */
+    --toast-header-bg: #14332a;
+    --toast-header-text: #6ee7b7;
+
+    /* ── Callout ── */
+    --callout-bg: rgba(59, 130, 246, 0.1);
+    --callout-border: rgba(59, 130, 246, 0.25);
+    --callout-icon: #60a5fa;
+
+    /* ── Code Block ── */
+    --code-bg: #1e293b;
+    --code-text: #e2e8f0;
+    --code-keyword: #fbbf24;
+    --code-string: #34d399;
+    --code-function: #38bdf8;
+    --code-comment: #64748b;
+
+    /* ── Table ── */
+    --table-header-bg: #1a2332;
+    --table-row-hover: #1a2332;
+
+    /* ── Toggle Switch ── */
+    --toggle-off-bg: #4b5563;
+    --toggle-thumb: #e5e7eb;
+
+    /* ── Skeleton ── */
+    --skeleton-from: #1f2937;
+    --skeleton-to: #374151;
+
+    /* ── Modal ── */
+    --modal-overlay: rgba(0, 0, 0, 0.55);
+    --modal-shadow: rgba(0, 0, 0, 0.4);
+
+    /* ── Tooltip ── */
+    --tooltip-text: #f9fafb;
+
+    /* ── Tailwind / shadcn-ui 语义变量（引用 design-tokens 暗色变量） ── */
+    --background: var(--bg-app);
+    --foreground: var(--text-main);
+    --card: var(--bg-white);
+    --card-foreground: var(--text-main);
+    --popover: var(--bg-white);
+    --popover-foreground: var(--text-main);
+    --primary: var(--text-success-dark);
+    --primary-foreground: var(--bg-white);
+    --secondary: var(--color-secondary-bg);
+    --secondary-foreground: var(--color-secondary-text);
+    --muted: var(--bg-hover);
+    --muted-foreground: var(--text-muted);
+    --accent: var(--bg-success-light);
+    --accent-foreground: var(--color-primary-dark);
+    --destructive: var(--color-danger);
+    --destructive-foreground: #ffffff;
+    --border: var(--border-color);
+    --input: var(--border-color);
+    --ring: var(--text-success-dark);
+
+    /* ── Chat 区域色 ── */
+    --chat-user: oklch(0.235 0.05 163.8);
+    --chat-assistant: oklch(0.2 0.02 163.8);
+    --chat-input-bg: oklch(0.23 0.03 163.8);
+    --chat-action: oklch(0.748 0.152 163.8);
+
+    /* ── AI Panel ── */
+    --ai-panel-bg: color-mix(in srgb, var(--bg-white) 88%, transparent);
+    --ai-panel-elevated-bg: color-mix(in srgb, var(--bg-white) 82%, var(--bg-app) 18%);
+    --ai-panel-scroll-bg: color-mix(in srgb, var(--bg-white) 84%, transparent);
+    --ai-panel-border: color-mix(in srgb, var(--border-color) 76%, transparent);
+    --ai-panel-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 8px 20px -10px rgba(0, 0, 0, 0.45), 0 28px 72px -26px rgba(0, 0, 0, 0.62);
+    --ai-panel-header-bg: color-mix(in srgb, var(--bg-white) 88%, transparent);
+    --ai-panel-header-btn-bg: transparent;
+    --ai-panel-header-btn-border: color-mix(in srgb, var(--border-color) 76%, transparent);
+    --ai-panel-header-btn-hover-bg: color-mix(in srgb, var(--bg-hover) 72%, transparent);
+    --ai-panel-header-btn-active-bg: color-mix(in srgb, var(--bg-success-light) 52%, var(--bg-white) 48%);
+    --ai-panel-header-btn-color: var(--text-secondary);
+    --ai-panel-header-btn-hover-color: var(--text-main);
+    --ai-panel-model-dot: var(--text-success-dark);
+
+    /* ── AI Input ── */
+    --ai-input-shell-bg: color-mix(in srgb, var(--chat-input-bg) 82%, var(--bg-white) 18%);
+    --ai-input-shell-border: color-mix(in srgb, var(--border-color) 82%, transparent);
+    --ai-input-shell-border-focus: var(--text-success-dark);
+    --ai-input-shell-focus-ring: var(--input-focus-ring);
+    --ai-input-shell-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+    --ai-input-shell-disabled-bg: color-mix(in srgb, var(--bg-hover) 66%, var(--bg-white) 34%);
+    --ai-input-footer-bg: color-mix(in srgb, var(--bg-white) 86%, transparent);
+    --ai-input-divider: color-mix(in srgb, var(--border-color) 78%, transparent);
+    --ai-input-icon-hover-bg: color-mix(in srgb, var(--bg-hover) 76%, transparent);
+    --ai-input-model-bg: color-mix(in srgb, var(--bg-white) 94%, transparent);
+    --ai-input-model-border: color-mix(in srgb, var(--border-color) 86%, transparent);
+    --ai-input-model-hover-bg: color-mix(in srgb, var(--bg-hover) 88%, transparent);
+    --ai-input-model-open-bg: color-mix(in srgb, var(--bg-success-light) 35%, var(--bg-white) 65%);
+    --ai-input-model-open-border: color-mix(in srgb, var(--text-success-dark) 45%, var(--border-color) 55%);
+    --ai-input-model-open-color: var(--text-main);
+    --ai-input-send-bg: var(--text-success-dark);
+    --ai-input-send-hover-bg: var(--color-primary-dark);
+    --ai-input-send-stop-bg: var(--color-danger);
+    --ai-input-send-stop-hover-bg: var(--color-danger-dark);
+    --ai-input-send-disabled-bg: color-mix(in srgb, var(--border-color) 68%, transparent);
+    --ai-input-send-disabled-color: var(--text-muted);
+
+    /* ── AI Message Surface ── */
+    --ai-user-bubble-bg: var(--chat-user);
+    --ai-user-bubble-border: color-mix(in srgb, var(--text-success-dark) 28%, var(--border-color) 72%);
+    --ai-user-bubble-text: var(--text-success-dark);
+    --ai-assistant-bubble-bg: color-mix(in srgb, var(--chat-assistant) 78%, var(--bg-app) 22%);
+    --ai-assistant-bubble-border: color-mix(in srgb, var(--border-color) 78%, transparent);
+    --ai-assistant-bubble-text: var(--text-secondary);
+
+    /* ── AI Tool Card ── */
+    --ai-tool-card-bg: oklch(0.2 0.015 163.8);
+    --ai-tool-card-border: oklch(0.3 0.02 163.8);
+    --ai-tool-card-header-bg: oklch(0.22 0.018 163.8);
+
+    /* ── AI Status Indicators ── */
+    --ai-status-running: oklch(0.707 0.165 254.624);
+    --ai-status-waiting: oklch(0.828 0.119 84.429);
+    --ai-status-success: oklch(0.765 0.177 163.223);
+    --ai-status-error: oklch(0.704 0.191 22.216);
+    --ai-status-cancelled: oklch(0.705 0.015 286.067);
+
+    /* ── AI Approval Panel ── */
+    --ai-approval-bg: oklch(0.22 0.03 250);
+    --ai-approval-border: oklch(0.35 0.05 250);
+    --ai-approval-pulse: oklch(0.748 0.152 163.8);
+
+    /* ── AI Feedback ── */
+    --ai-feedback-positive: oklch(0.765 0.177 163.223);
+    --ai-feedback-negative: oklch(0.704 0.191 22.216);
+
+    /* ── AI Thinking Block ── */
+    --ai-thinking-line: oklch(0.5 0.06 163.8);
+    --ai-thinking-bg: oklch(0.19 0.02 163.8);
+}
+
+/* ── body 背景点阵在暗色下更柔和 ── */
+.dark body {
+    color-scheme: dark;
+}
+
+/* ── 全局 SVG stroke 在暗色下保持 currentColor 继承 ── */
+/* （无需额外覆盖，因为 svg { stroke: currentColor } 已在 design-tokens.css 中） */
+
+/* ── Spinner overlay 暗色适配 ── */
+.dark .spinner-overlay {
+    background: rgba(17, 24, 39, 0.8);
+}
+
+/* ── Collapse gradient 暗色适配 ── */
+.dark .collapse-gradient {
+    background: linear-gradient(to bottom, transparent, var(--bg-white));
+}
+
+/* ── ShowMore fade 暗色适配 ── */
+.dark .show-more-fade {
+    background: linear-gradient(to bottom, transparent, var(--bg-white));
+}
+
+/* ── Slider track 暗色适配 ── */
+.dark .range-slider::-moz-range-track {
+    background: var(--border-color);
+}
+.dark .range-slider::-moz-range-progress {
+    background: var(--text-success-dark);
+}
+.dark .range-slider::-webkit-slider-thumb {
+    background: var(--bg-white);
+    border-color: var(--text-success-dark);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.dark .range-slider::-moz-range-thumb {
+    background: var(--bg-white);
+    border-color: var(--text-success-dark);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+.dark .range-slider:disabled::-webkit-slider-thumb {
+    background: var(--border-color);
+    border-color: var(--text-muted);
+}
+.dark .range-slider:disabled::-moz-range-thumb {
+    background: var(--border-color);
+    border-color: var(--text-muted);
+}
+
+/* ── Card shadow 暗色适配 ── */
+.dark .card {
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Toast shadow 暗色适配 ── */
+.dark .toast {
+    box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Modal shadow 暗色适配 ── */
+.dark .modal-content {
+    box-shadow: 0 25px 50px -12px var(--modal-shadow), 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* ── Select dropdown shadow 暗色适配 ── */
+.dark .custom-select-content {
+    box-shadow: 0 10px 20px -4px rgba(0, 0, 0, 0.3), 0 4px 8px -2px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Context menu shadow 暗色适配 ── */
+.dark .ctx-menu {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 4px 10px -3px rgba(0, 0, 0, 0.15);
+}
+.dark .ctx-submenu {
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 4px 10px -3px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Floating badge shadow 暗色适配 ── */
+.dark .floating-badge {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* ── Learning toast shadow 暗色适配 ── */
+.dark .learning-toast {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2), 0 4px 6px -2px rgba(0, 0, 0, 0.1);
+}
+
+/* ── Slider thumb hover glow 暗色适配 ── */
+.dark .range-slider::-webkit-slider-thumb:hover {
+    box-shadow: 0 2px 6px rgba(52, 211, 153, 0.35);
+}
+.dark .range-slider::-moz-range-thumb:hover {
+    box-shadow: 0 2px 6px rgba(52, 211, 153, 0.35);
+}
+
+/* ── Find-replace bar 暗色适配 ── */
+.dark .find-replace-bar {
+    box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}

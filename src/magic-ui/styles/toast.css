@@ -1,0 +1,230 @@
+/* magic-ui toast semantic layer */
+.toast-container {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 10px;
+    z-index: 400;
+    pointer-events: none;
+    max-width: 420px;
+    width: calc(100vw - 48px);
+}
+
+.toast {
+    position: relative;
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px 40px 14px 48px;
+    box-shadow: 0 8px 24px -4px rgba(0,0,0,0.1), 0 2px 8px -2px rgba(0,0,0,0.04);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    pointer-events: all;
+    overflow: hidden;
+    animation: toastIn 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+    transition: opacity 0.2s ease, transform 0.2s ease, max-height 0.3s ease;
+}
+
+.toast.toast-dismissing {
+    opacity: 0;
+    transform: translateX(16px);
+    max-height: 0 !important;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin: 0;
+}
+
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(20px) scale(0.97); }
+    to   { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.toast::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    border-radius: 10px 0 0 10px;
+    background: var(--border-color);
+}
+
+.toast-success::before {
+    background: var(--text-success-dark);
+}
+
+.toast-warning::before {
+    background: var(--color-warning);
+}
+
+.toast-error::before,
+.toast-destructive::before {
+    background: var(--color-danger);
+}
+
+.toast-info::before {
+    background: var(--color-info);
+}
+
+.toast-icon {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 12px;
+    flex-shrink: 0;
+}
+
+.toast-default .toast-icon {
+    color: var(--text-muted);
+}
+
+.toast-success .toast-icon {
+    color: var(--text-success-dark);
+}
+
+.toast-warning .toast-icon {
+    color: var(--color-warning);
+}
+
+.toast-error .toast-icon,
+.toast-destructive .toast-icon {
+    color: var(--color-danger);
+}
+
+.toast-info .toast-icon {
+    color: var(--color-info);
+}
+
+.toast-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    line-height: 1.4;
+}
+
+.toast-desc {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+}
+
+.toast-desc.has-title {
+    margin-top: 4px;
+}
+
+.toast-body {
+    min-width: 0;
+    flex: 1;
+}
+
+.toast-action {
+    margin-top: 8px;
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: inherit;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    align-self: flex-start;
+}
+
+.toast-success .toast-action {
+    color: var(--text-success-dark);
+}
+
+.toast-warning .toast-action {
+    color: var(--color-warning);
+}
+
+.toast-error .toast-action,
+.toast-destructive .toast-action {
+    color: var(--color-danger);
+}
+
+.toast-info .toast-action {
+    color: var(--color-info);
+}
+
+.toast-default .toast-action {
+    color: var(--text-main);
+}
+
+.toast-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 3px;
+    border-radius: 4px;
+    line-height: 0;
+    transition: color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+
+.toast-close-icon {
+    width: 16px;
+    height: 16px;
+}
+
+.toast-close:hover {
+    color: var(--text-main);
+    background: var(--bg-hover);
+}
+
+.toast-progress {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    height: 2px;
+    border-radius: 0 0 10px 10px;
+    background: var(--border-color);
+    transition: width linear;
+}
+
+.toast-success .toast-progress {
+    background: var(--text-success-dark);
+    opacity: 0.4;
+}
+
+.toast-warning .toast-progress {
+    background: var(--color-warning);
+    opacity: 0.4;
+}
+
+.toast-error .toast-progress,
+.toast-destructive .toast-progress {
+    background: var(--color-danger);
+    opacity: 0.4;
+}
+
+.toast-info .toast-progress {
+    background: var(--color-info);
+    opacity: 0.4;
+}
+
+.toast-trigger-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+}
+
+/* dark: hardcoded rgba shadow — cannot switch via CSS variables */
+.dark .toast {
+    box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.3), 0 2px 8px -2px rgba(0, 0, 0, 0.15);
+}

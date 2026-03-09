@@ -1,0 +1,285 @@
+/* ============================================================
+   WORKSPACE PAGE — workspace.css
+   首页工作台 Bento 卡片样式。
+   依赖: bento.css, glassmorphism.css, design-tokens.css
+============================================================ */
+
+/* ── 页面容器 ── */
+.workspace-page {
+  position: relative;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.workspace-page::-webkit-scrollbar {
+  display: none;
+}
+
+/* ── Hero 卡片 ── */
+.card-hero {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  background: linear-gradient(145deg, var(--bg-white) 0%, rgba(5, 150, 105, 0.03) 100%);
+  min-height: 220px;
+}
+
+.hero-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hero-greeting {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.hero-date {
+  font-size: 13px;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.hero-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 4px 0;
+}
+
+.hero-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.hero-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+/* ── 3D 书籍封面 ── */
+.hero-cover {
+  flex-shrink: 0;
+}
+
+.book-3d {
+  perspective: 800px;
+  width: 140px;
+  height: 190px;
+}
+
+.book-3d-front {
+  width: 100%;
+  height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-hover);
+  box-shadow: 4px 4px 12px rgba(0, 0, 0, 0.1);
+  transform: rotateY(-5deg);
+  transition: transform 0.3s ease;
+}
+
+.card-hero:hover .book-3d-front {
+  transform: rotateY(0deg) scale(1.02);
+}
+
+.book-3d-front img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.book-3d-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 12px;
+}
+
+/* ── 统计卡片 ── */
+.stat-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+}
+
+.stat-projects .stat-icon {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+}
+
+.stat-words .stat-icon {
+  background: var(--tag-blue-bg);
+  color: var(--tag-blue-text);
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.stat-trend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.trend-up {
+  color: var(--text-success-dark);
+}
+
+.trend-down {
+  color: var(--color-danger);
+}
+
+/* ── AI 灵感卡片 ── */
+.ai-tip-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 12px;
+}
+
+.ai-tip-sparkle {
+  color: var(--text-success-dark);
+  animation: pulse-sparkle 2s ease-in-out infinite;
+}
+
+@keyframes pulse-sparkle {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.9); }
+}
+
+.ai-tip-content {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.ai-tip-action {
+  margin-top: 12px;
+}
+
+/* ── 书架 ── */
+.shelf-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.shelf-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.novel-shelf {
+  display: flex;
+  gap: 20px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.novel-shelf::-webkit-scrollbar {
+  display: none;
+}
+
+.book-item {
+  flex-shrink: 0;
+  width: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 8px;
+  border-radius: 12px;
+  transition: background 0.15s;
+  text-align: center;
+}
+
+.book-item:hover {
+  background: var(--bg-hover);
+}
+
+.book-item-cover {
+  width: 90px;
+  height: 120px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-hover);
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.book-item-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.book-item-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.book-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.book-item-author {
+  font-size: 11px;
+  color: var(--text-muted);
+}

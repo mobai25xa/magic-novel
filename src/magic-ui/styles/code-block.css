@@ -1,0 +1,31 @@
+/* magic-ui code-block semantic layer */
+
+.code-block {
+  background-color: var(--code-bg);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 16px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--code-text);
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.code-keyword {
+  color: var(--code-keyword);
+  font-weight: 600;
+}
+
+.code-string {
+  color: var(--code-string);
+}
+
+.code-function {
+  color: var(--code-function);
+}
+
+.code-comment {
+  color: var(--code-comment);
+  font-style: italic;
+}

@@ -1,0 +1,3 @@
+pub const LLM_CONNECT_TIMEOUT_SECS: u64 = 15;
+pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
+pub const LLM_POOL_MAX_IDLE_PER_HOST: usize = 4;

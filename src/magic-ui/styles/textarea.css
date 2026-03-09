@@ -1,0 +1,56 @@
+/* magic-ui textarea semantic layer */
+
+.textarea-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.textarea-wrapper textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-main);
+  background: var(--bg-white);
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  resize: vertical;
+  min-height: 80px;
+  line-height: 1.6;
+  box-sizing: border-box;
+  padding-bottom: 28px;
+}
+
+.textarea-wrapper textarea:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--input-focus-ring);
+}
+
+.textarea-wrapper textarea.textarea-error {
+  border-color: var(--color-danger-light);
+  background: var(--bg-error);
+}
+
+.textarea-wrapper textarea.textarea-error:focus {
+  border-color: var(--color-danger);
+}
+
+.textarea-wrapper textarea.no-resize {
+  resize: none;
+}
+
+.textarea-count {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  pointer-events: none;
+  font-family: inherit;
+}
+
+.textarea-count.over-limit {
+  color: var(--color-danger);
+}

@@ -1,0 +1,106 @@
+/* magic-ui toggle semantic layer */
+
+.header-with-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.toggle-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--toggle-off-bg);
+  transition: 0.3s;
+  border-radius: 20px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--toggle-thumb);
+  transition: 0.3s;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--text-success-dark);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+  transform: translateX(16px);
+}
+
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-switch-sm {
+  width: 28px;
+  height: 16px;
+}
+
+.toggle-switch-sm .toggle-slider {
+  border-radius: 16px;
+}
+
+.toggle-switch-sm .toggle-slider:before {
+  width: 12px;
+  height: 12px;
+}
+
+.toggle-switch-sm input:checked + .toggle-slider:before {
+  transform: translateX(12px);
+}
+
+.toggle-switch-lg {
+  width: 44px;
+  height: 24px;
+}
+
+.toggle-switch-lg .toggle-slider {
+  border-radius: 24px;
+}
+
+.toggle-switch-lg .toggle-slider:before {
+  width: 20px;
+  height: 20px;
+}
+
+.toggle-switch-lg input:checked + .toggle-slider:before {
+  transform: translateX(20px);
+}

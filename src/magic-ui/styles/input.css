@@ -1,0 +1,134 @@
+/* magic-ui input semantic layer */
+
+.input-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.input-icon {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-muted);
+  pointer-events: none;
+  width: 14px;
+  height: 14px;
+}
+
+.input-icon-left {
+  left: 10px;
+}
+
+.input-icon-right {
+  right: 10px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).has-left-icon {
+  padding-left: 32px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).has-right-icon {
+  padding-right: 36px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+.input-wrapper input:not([type="checkbox"]):not([type="radio"]) {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text-main);
+  background: var(--bg-white);
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+input:not([type="checkbox"]):not([type="radio"]):focus,
+.input-wrapper input:not([type="checkbox"]):not([type="radio"]):focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px var(--input-focus-ring);
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-filled {
+  background: var(--bg-hover);
+  border-color: transparent;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-filled:focus {
+  background: var(--bg-white);
+  border-color: var(--border-focus);
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-outline-dashed {
+  border-style: dashed;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-ghost:hover {
+  border-color: var(--border-color);
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-ghost:focus {
+  background: var(--bg-white);
+  border-color: var(--border-focus);
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-sm {
+  height: 28px;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 5px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-lg {
+  height: 44px;
+  font-size: 14px;
+  padding: 10px 14px;
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-error {
+  border-color: var(--color-danger-light);
+  background: var(--bg-error);
+}
+
+input:not([type="checkbox"]):not([type="radio"]).input-error:focus {
+  border-color: var(--color-danger);
+}
+
+.input-error-msg {
+  font-size: 11px;
+  color: var(--color-danger);
+  margin-top: 2px;
+}
+
+.input-action-btn {
+  position: absolute;
+  right: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+  padding: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  line-height: 0;
+  transition: color 0.15s, background 0.15s;
+}
+
+.input-action-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}

@@ -1,0 +1,750 @@
+/* ============================================================
+   AI ANIMATIONS — ai-animations.css
+   AI 面板动画系统：Keyframes、状态块样式、过渡与无障碍降级。
+   依赖: design-tokens.css（--ai-duration-*、--ai-ease-default）
+============================================================ */
+
+/* ── Keyframes ── */
+
+@keyframes ai-fly-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.985);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes ai-fly-out {
+    from {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.99);
+    }
+}
+
+@keyframes ai-slide-in {
+    from {
+        opacity: 0;
+        transform: translateY(100%);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes ai-slide-out {
+    from {
+        max-height: var(--content-height, 200px);
+        opacity: 1;
+    }
+    to {
+        max-height: 0;
+        opacity: 0;
+    }
+}
+
+@keyframes ai-scale-in {
+    from {
+        opacity: 0;
+        transform: scale(0.92);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes ai-pulse {
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.72;
+        transform: scale(1.08);
+    }
+}
+
+@keyframes ai-fade-in {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes ai-fade-out {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+    }
+}
+
+@keyframes ai-cursor-blink {
+    0%,
+    45% {
+        opacity: 1;
+    }
+    50%,
+    100% {
+        opacity: 0;
+    }
+}
+
+@keyframes ai-typing-dot {
+    0%,
+    60%,
+    100% {
+        opacity: 0.35;
+        transform: translateY(0);
+    }
+    30% {
+        opacity: 1;
+        transform: translateY(-3px);
+    }
+}
+
+@keyframes ai-phase-line-in {
+    from {
+        opacity: 0;
+        transform: translateY(6px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes ai-phase-timeline-out {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+        max-height: 0;
+    }
+}
+
+/* ── 动画工具类 ── */
+
+.ai-animate-fly-in {
+    animation: ai-fly-in var(--ai-duration-normal) var(--ai-ease-default) both;
+}
+
+.ai-animate-fly-out {
+    animation: ai-fly-out var(--ai-duration-fast) var(--ai-ease-default) both;
+}
+
+.ai-animate-slide-in {
+    animation: ai-slide-in var(--ai-duration-normal) var(--ai-ease-default) both;
+}
+
+.ai-animate-scale-in {
+    animation: ai-scale-in var(--ai-duration-fast) var(--ai-ease-default) both;
+}
+
+.ai-animate-pulse {
+    animation: ai-pulse 1.8s ease-in-out infinite;
+}
+
+.ai-animate-fade-in {
+    animation: ai-fade-in var(--ai-duration-fast) var(--ai-ease-default) both;
+}
+
+.ai-animate-phase-line-in {
+    animation: ai-phase-line-in 250ms var(--ai-ease-default) both;
+}
+
+.ai-animate-phase-timeline-out {
+    animation: ai-phase-timeline-out 500ms var(--ai-ease-default) both;
+    overflow: hidden;
+}
+
+.ai-animate-cursor-blink {
+    animation: ai-cursor-blink 1s step-end infinite;
+}
+
+.ai-typing-dots {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+}
+
+.ai-typing-dots span {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: ai-typing-dot 1.2s ease-in-out infinite;
+}
+
+.ai-typing-dots span:nth-child(1) {
+    animation-delay: 0ms;
+}
+
+.ai-typing-dots span:nth-child(2) {
+    animation-delay: 160ms;
+}
+
+.ai-typing-dots span:nth-child(3) {
+    animation-delay: 320ms;
+}
+
+/* ── 过渡工具类 ── */
+
+.ai-transition-collapse {
+    transition: max-height var(--ai-duration-normal) var(--ai-ease-default),
+        opacity var(--ai-duration-fast) var(--ai-ease-default);
+    overflow: hidden;
+}
+
+.ai-transition-opacity {
+    transition: opacity var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-transition-transform {
+    transition: transform var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-chevron-collapsed {
+    transform: rotate(-90deg);
+    transition: transform var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-chevron-expanded {
+    transform: rotate(0deg);
+    transition: transform var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+/* ── ShowMore 渐变遮罩 ── */
+
+.show-more-mask {
+    position: relative;
+}
+
+.show-more-mask::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, var(--card));
+    pointer-events: none;
+}
+
+/* ── Thinking Block（Dev C）── */
+
+.ai-thinking {
+    border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+    border-radius: 10px;
+    overflow: hidden;
+    background: color-mix(in srgb, var(--bg-app) 62%, var(--bg-white));
+}
+
+.ai-thinking > summary {
+    list-style: none;
+}
+
+.ai-thinking > summary::-webkit-details-marker {
+    display: none;
+}
+
+.ai-thinking-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 12px;
+    cursor: pointer;
+    user-select: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    transition: background-color var(--ai-duration-fast) var(--ai-ease-default),
+        color var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-thinking-header:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.thinking-icon {
+    width: 18px;
+    height: 18px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    background: var(--bg-success-light);
+    color: var(--text-success-dark);
+}
+
+.thinking-chevron {
+    margin-left: auto;
+    color: var(--text-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transform: rotate(-90deg);
+    transition: transform var(--ai-duration-normal) var(--ai-ease-default);
+}
+
+.ai-thinking[open] .thinking-chevron {
+    transform: rotate(0deg);
+}
+
+.ai-thinking-body {
+    border-top: 1px solid color-mix(in srgb, var(--border-color) 80%, transparent);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height 360ms var(--ai-ease-default), opacity 180ms var(--ai-ease-default);
+    background: color-mix(in srgb, var(--ai-thinking-bg) 74%, transparent);
+}
+
+.ai-thinking[open] .ai-thinking-body {
+    max-height: 320px;
+    opacity: 1;
+}
+
+.ai-thinking-content {
+    padding: 9px 12px 10px;
+    color: var(--text-muted);
+    font-size: 11.5px;
+    line-height: 1.68;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* ── Phase Timeline（Dev C）── */
+
+.ai-phase-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px 0 2px 6px;
+}
+
+.ai-phase-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 20px;
+    font-size: 11px;
+    line-height: 1.25;
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.ai-phase-item-current {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.ai-phase-item-prev {
+    opacity: 0.46;
+}
+
+.ai-phase-item-old {
+    opacity: 0.24;
+}
+
+.ai-phase-icon {
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.ai-phase-icon-running {
+    background: color-mix(in srgb, var(--ai-status-running) 16%, transparent);
+    color: var(--ai-status-running);
+}
+
+.ai-phase-icon-done {
+    background: color-mix(in srgb, var(--ai-status-success) 14%, transparent);
+    color: var(--ai-status-success);
+    font-size: 9px;
+    font-weight: 700;
+}
+
+.ai-phase-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Tool Call Card（Dev C）── */
+
+.ai-tool-card {
+    border: 1px solid var(--ai-tool-card-border);
+    border-radius: 10px;
+    background: var(--ai-tool-card-bg);
+    overflow: hidden;
+    transition: border-color var(--ai-duration-fast) var(--ai-ease-default),
+        box-shadow var(--ai-duration-fast) var(--ai-ease-default),
+        transform var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-tool-card:hover {
+    border-color: color-mix(in srgb, var(--ai-tool-card-border) 75%, var(--text-muted));
+    box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.16);
+}
+
+.ai-tool-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 12px;
+    background: var(--ai-tool-card-header-bg);
+    cursor: pointer;
+    user-select: none;
+    transition: background-color var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-tool-card-header:hover {
+    background: color-mix(in srgb, var(--bg-hover) 86%, transparent);
+}
+
+.ai-tool-card-header-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--text-success-dark) 75%, white);
+    outline-offset: -2px;
+}
+
+.ai-tool-card-head-row {
+    width: 100%;
+    min-width: 0;
+}
+
+.ai-tool-card-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--bg-white) 75%, transparent);
+}
+
+.ai-tool-card-dot.is-running {
+    background: var(--ai-status-running);
+    animation: ai-pulse 1.8s ease-in-out infinite;
+}
+
+.ai-tool-card-dot.is-waiting {
+    background: var(--ai-status-waiting);
+    animation: ai-pulse 1.8s ease-in-out infinite;
+}
+
+.ai-tool-card-dot.is-success {
+    background: var(--ai-status-success);
+}
+
+.ai-tool-card-dot.is-error {
+    background: var(--ai-status-error);
+}
+
+.ai-tool-card-dot.is-cancelled {
+    background: var(--ai-status-cancelled);
+}
+
+.ai-tool-card-icon-wrap {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.ai-tool-card-icon-wrap > svg {
+    width: 14px;
+    height: 14px;
+}
+
+.ai-tool-card-name {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 38%;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ai-tool-card-args {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.ai-tool-card-duration {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.ai-tool-card-chevron {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.ai-tool-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: color-mix(in srgb, var(--ai-tool-card-bg) 80%, transparent);
+}
+
+.ai-tool-card .collapse-content {
+    transition: max-height var(--ai-duration-normal) var(--ai-ease-default),
+        opacity var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-tool-card .collapse-block[data-collapsed="true"] .collapse-content {
+    opacity: 0;
+}
+
+.ai-tool-card .collapse-block[data-collapsed="false"] .collapse-content {
+    opacity: 1;
+}
+
+.ai-tool-card-error {
+    color: var(--ai-status-error);
+    line-height: 1.5;
+}
+
+.ai-tool-card-action-btn {
+    color: var(--text-muted);
+    border-radius: 6px;
+    transition: background-color var(--ai-duration-fast) var(--ai-ease-default),
+        color var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-tool-card-action-btn:hover {
+    color: var(--text-main);
+    background: color-mix(in srgb, var(--bg-hover) 78%, transparent);
+}
+
+.ai-tool-card-row {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+}
+
+.ai-tool-card-label {
+    font-size: var(--ai-text-xs);
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding-top: 2px;
+    min-width: 44px;
+    flex-shrink: 0;
+}
+
+.ai-tool-card-code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: var(--ai-text-xs);
+    color: var(--code-text);
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex: 1;
+    min-width: 0;
+    word-break: break-all;
+}
+
+.ai-tool-card-value {
+    font-size: var(--ai-text-sm);
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+/* ── Diff Preview（Dev C）── */
+
+.ai-tool-diff {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ai-tool-diff-summary {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.ai-tool-diff-preview {
+    border: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+    background: color-mix(in srgb, var(--bg-app) 74%, var(--bg-white));
+    border-radius: 8px;
+    padding: 8px;
+}
+
+.ai-tool-diff-line {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin: 1px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.ai-tool-diff-line.is-added {
+    color: var(--text-success-dark);
+    background: color-mix(in srgb, var(--ai-status-success) 12%, transparent);
+}
+
+.ai-tool-diff-line.is-removed {
+    color: var(--color-danger);
+    background: color-mix(in srgb, var(--ai-status-error) 11%, transparent);
+    text-decoration: line-through;
+    text-decoration-color: color-mix(in srgb, var(--ai-status-error) 45%, transparent);
+    text-decoration-thickness: 1px;
+}
+
+.ai-tool-diff-gutter {
+    width: 10px;
+    min-width: 10px;
+    text-align: center;
+    font-size: 10px;
+    opacity: 0.65;
+    user-select: none;
+}
+
+.ai-tool-diff-toggle {
+    width: fit-content;
+    padding: 3px 10px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--bg-white) 88%, transparent);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color var(--ai-duration-fast) var(--ai-ease-default),
+        color var(--ai-duration-fast) var(--ai-ease-default),
+        border-color var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-tool-diff-toggle:hover {
+    color: var(--text-main);
+    border-color: var(--border-color);
+    background: var(--bg-hover);
+}
+
+/* ── Scroll Jump（Dev C）── */
+
+.ai-scroll-jump-wrap {
+    position: absolute;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 20;
+}
+
+.ai-scroll-jump-btn {
+    min-height: 30px;
+    height: 30px;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--border-color) 88%, transparent);
+    background: var(--bg-white);
+    color: var(--text-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+    transition: background-color var(--ai-duration-fast) var(--ai-ease-default),
+        box-shadow var(--ai-duration-fast) var(--ai-ease-default),
+        color var(--ai-duration-fast) var(--ai-ease-default),
+        transform var(--ai-duration-fast) var(--ai-ease-default);
+}
+
+.ai-scroll-jump-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-main);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.ai-scroll-jump-btn:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--text-success-dark) 75%, white);
+    outline-offset: 2px;
+}
+
+.ai-scroll-jump-label {
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.ai-scroll-jump-label.is-badge {
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+/* ── Reduced Motion 无障碍适配 ── */
+
+@media (prefers-reduced-motion: reduce) {
+    .ai-animate-fly-in,
+    .ai-animate-fly-out,
+    .ai-animate-slide-in,
+    .ai-animate-scale-in,
+    .ai-animate-pulse,
+    .ai-animate-fade-in,
+    .ai-animate-phase-line-in,
+    .ai-animate-phase-timeline-out,
+    .ai-animate-cursor-blink,
+    .ai-typing-dots span {
+        animation: none !important;
+    }
+
+    .ai-transition-collapse,
+    .ai-transition-opacity,
+    .ai-transition-transform,
+    .ai-chevron-collapsed,
+    .ai-chevron-expanded,
+    .ai-thinking-header,
+    .ai-thinking-body,
+    .thinking-chevron,
+    .ai-tool-card,
+    .ai-tool-card-header,
+    .ai-tool-card .collapse-content,
+    .ai-tool-card-action-btn,
+    .ai-tool-diff-toggle,
+    .ai-scroll-jump-btn {
+        transition: none !important;
+    }
+}

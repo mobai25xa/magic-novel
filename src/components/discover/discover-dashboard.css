@@ -1,0 +1,542 @@
+/* Discover dashboard parity with grepstyle/main_ui/index_panel.html */
+
+.discover-dashboard .card-title {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discover-dashboard .card-stats {
+  grid-column: span 12;
+  display: flex;
+  gap: 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  flex-direction: row;
+}
+
+.discover-dashboard .stat-box {
+  flex: 1;
+  background: var(--bg-white);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  padding: 24px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.discover-dashboard .stat-box:hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
+}
+
+.discover-dashboard .stat-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+}
+
+.discover-dashboard .stat-icon.purple {
+  background: linear-gradient(135deg, #34d399, #059669);
+  box-shadow: 0 8px 16px rgba(5, 150, 105, 0.2);
+}
+
+.discover-dashboard .stat-icon.blue {
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  box-shadow: 0 8px 16px rgba(59, 130, 246, 0.2);
+}
+
+.discover-dashboard .stat-icon.green {
+  background: linear-gradient(135deg, #10b981, #059669);
+  box-shadow: 0 8px 16px rgba(16, 185, 129, 0.2);
+}
+
+.discover-dashboard .stat-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.discover-dashboard .stat-value {
+  font-size: 28px;
+  line-height: 1;
+  font-weight: 800;
+  color: var(--text-main);
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.discover-dashboard .stat-label {
+  font-size: 14px;
+  line-height: 1.2;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.discover-dashboard .card-chart {
+  grid-column: span 8;
+  grid-row: span 3;
+}
+
+.discover-dashboard .chart-container {
+  flex: 1;
+  width: 100%;
+  position: relative;
+  min-height: 250px;
+}
+
+.discover-dashboard .chart-body {
+  position: relative;
+  height: 100%;
+  min-height: 250px;
+}
+
+.discover-dashboard .chart-y-axis {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 28px;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  padding-right: 8px;
+}
+
+.discover-dashboard .chart-main {
+  margin-left: 44px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.discover-dashboard .chart-series-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.discover-dashboard .chart-grid-lines {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.discover-dashboard .chart-grid-line {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 85%, transparent);
+}
+
+.discover-dashboard .chart-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.discover-dashboard .chart-line {
+  stroke: #059669;
+  stroke-width: 0.72;
+}
+
+.discover-dashboard .chart-guide-line {
+  stroke: rgba(5, 150, 105, 0.35);
+  stroke-width: 0.35;
+  stroke-dasharray: 1.5 1.5;
+}
+
+.discover-dashboard .chart-points-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.discover-dashboard .chart-point-dot {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  transform: translate(-50%, -50%);
+  background: rgba(5, 150, 105, 0.62);
+  border: 1px solid rgba(5, 150, 105, 0.9);
+  transition: transform 0.12s ease, background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.discover-dashboard .chart-point-dot.active {
+  width: 7px;
+  height: 7px;
+  background: #059669;
+  border-color: #ffffff;
+}
+
+.discover-dashboard .chart-tooltip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 10px));
+  pointer-events: none;
+  z-index: 3;
+  background: rgba(15, 23, 42, 0.92);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-width: 96px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+}
+
+.discover-dashboard .chart-tooltip.edge-left {
+  transform: translate(0%, calc(-100% - 10px));
+}
+
+.discover-dashboard .chart-tooltip.edge-right {
+  transform: translate(-100%, calc(-100% - 10px));
+}
+
+.discover-dashboard .chart-tooltip-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.2;
+}
+
+.discover-dashboard .chart-tooltip-value {
+  font-size: 13px;
+  margin-top: 2px;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.discover-dashboard .chart-x-axis {
+  height: 28px;
+  position: relative;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding-top: 6px;
+}
+
+.discover-dashboard .chart-x-label {
+  position: absolute;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.discover-dashboard .chart-x-label.first {
+  transform: translateX(0%);
+}
+
+.discover-dashboard .chart-x-label.last {
+  transform: translateX(-100%);
+}
+
+.discover-dashboard .chart-x-label.single {
+  left: 0 !important;
+  transform: none;
+}
+
+.discover-dashboard .card-calendar {
+  grid-column: span 4;
+  grid-row: span 3;
+}
+
+.discover-dashboard .calendar-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.discover-dashboard .calendar-month {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.discover-dashboard .calendar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.discover-dashboard .calendar-actions .icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.discover-dashboard .calendar-actions .icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.discover-dashboard .calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.discover-dashboard .weekday {
+  font-weight: 700;
+  color: var(--text-muted);
+  padding-bottom: 8px;
+}
+
+.discover-dashboard .day {
+  aspect-ratio: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-weight: 600;
+  color: var(--text-main);
+  background: var(--bg-hover);
+  border: 1px solid transparent;
+  transition: all 0.2s;
+  cursor: pointer;
+  position: relative;
+}
+
+.discover-dashboard .day:hover {
+  border-color: var(--primary);
+}
+
+.discover-dashboard .day.empty {
+  background: transparent;
+  cursor: default;
+}
+
+.discover-dashboard .day.empty:hover {
+  border-color: transparent;
+}
+
+.discover-dashboard .day.today {
+  background: var(--primary);
+  color: #ffffff;
+  box-shadow: 0 4px 10px rgba(5, 150, 105, 0.3);
+}
+
+.discover-dashboard .day.has-data::after {
+  content: '';
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.discover-dashboard .day.today::after {
+  background: #ffffff;
+}
+
+.discover-dashboard .day-word-count {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.discover-dashboard .day.today .day-word-count {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.discover-dashboard .discover-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 16px;
+}
+
+.discover-dashboard .card-heatmap {
+  grid-column: span 12;
+  grid-row: span 2;
+}
+
+.discover-dashboard .discover-heatmap-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.discover-dashboard .discover-year-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discover-dashboard .year-btn {
+  padding: 4px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border-color);
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+
+.discover-dashboard .year-btn-active {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border-color: var(--border-success);
+}
+
+.discover-dashboard .heatmap-scroll {
+  width: 100%;
+  overflow-x: auto;
+  padding-bottom: 10px;
+  scrollbar-width: thin;
+}
+
+.discover-dashboard .heatmap-scroll::-webkit-scrollbar {
+  height: 6px;
+}
+
+.discover-dashboard .heatmap-scroll::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 10px;
+}
+
+.discover-dashboard .heatmap-container {
+  display: flex;
+  gap: 4px;
+  min-width: max-content;
+}
+
+.discover-dashboard .heatmap-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.discover-dashboard .heatmap-cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+  transition: transform 0.1s;
+  cursor: pointer;
+  border: 1px solid rgba(0, 0, 0, 0.02);
+}
+
+.discover-dashboard .heatmap-cell:hover {
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+.discover-dashboard .level-1 {
+  background: rgba(5, 150, 105, 0.2);
+  border-color: rgba(5, 150, 105, 0.1);
+}
+
+.discover-dashboard .level-2 {
+  background: rgba(5, 150, 105, 0.4);
+  border-color: rgba(5, 150, 105, 0.2);
+}
+
+.discover-dashboard .level-3 {
+  background: rgba(5, 150, 105, 0.7);
+  border-color: rgba(5, 150, 105, 0.3);
+}
+
+.discover-dashboard .level-4 {
+  background: rgba(5, 150, 105, 1);
+  border-color: rgba(5, 150, 105, 0.4);
+  box-shadow: 0 0 8px rgba(5, 150, 105, 0.4);
+}
+
+.discover-dashboard .heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.discover-dashboard .legend-box {
+  display: flex;
+  gap: 4px;
+}
+
+.discover-dashboard .legend-cell {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--bg-hover);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.discover-dashboard .legend-cell.level-1 {
+  background: rgba(5, 150, 105, 0.2);
+  border-color: rgba(5, 150, 105, 0.1);
+}
+
+.discover-dashboard .legend-cell.level-2 {
+  background: rgba(5, 150, 105, 0.4);
+  border-color: rgba(5, 150, 105, 0.2);
+}
+
+.discover-dashboard .legend-cell.level-3 {
+  background: rgba(5, 150, 105, 0.7);
+  border-color: rgba(5, 150, 105, 0.3);
+}
+
+.discover-dashboard .legend-cell.level-4 {
+  background: rgba(5, 150, 105, 1);
+  border-color: rgba(5, 150, 105, 0.4);
+  box-shadow: 0 0 4px rgba(5, 150, 105, 0.35);
+}
+
+@media (max-width: 1280px) {
+  .discover-dashboard .card-stats {
+    grid-column: span 8;
+    flex-wrap: wrap;
+  }
+
+  .discover-dashboard .stat-box {
+    min-width: calc(50% - 12px);
+  }
+}
+
+@media (max-width: 1024px) {
+  .discover-dashboard .card-stats {
+    grid-column: span 4;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .discover-dashboard .stat-box {
+    min-width: 0;
+  }
+
+  .discover-dashboard .discover-heatmap-header-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

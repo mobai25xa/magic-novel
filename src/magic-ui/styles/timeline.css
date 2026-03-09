@@ -1,0 +1,134 @@
+/* magic-ui timeline semantic layer */
+
+.timeline-vertical {
+  position: relative;
+}
+
+.timeline-horizontal {
+  display: flex;
+  align-items: flex-start;
+  overflow-x: auto;
+  padding-bottom: 16px;
+}
+
+.timeline-vertical .timeline-item {
+  display: flex;
+  gap: 16px;
+  padding-bottom: 32px;
+  position: relative;
+}
+
+.timeline-vertical .timeline-item:last-child {
+  padding-bottom: 0;
+}
+
+.timeline-vertical .timeline-stem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.timeline-vertical .timeline-line {
+  width: 2px;
+  flex: 1;
+  margin-top: 8px;
+  background: var(--border-color);
+}
+
+.timeline-vertical .timeline-line-active {
+  background: var(--text-success-dark);
+}
+
+.timeline-content {
+  padding-top: 4px;
+  min-width: 0;
+}
+
+.timeline-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-main);
+  line-height: 1.4;
+}
+
+.timeline-desc {
+  font-size: 14px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-top: 2px;
+}
+
+.timeline-date {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.timeline-horizontal .timeline-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 120px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.timeline-horizontal .timeline-rail {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.timeline-horizontal .timeline-line {
+  height: 2px;
+  flex: 1;
+  background: var(--border-color);
+}
+
+.timeline-horizontal .timeline-line-active {
+  background: var(--text-success-dark);
+}
+
+.timeline-horizontal .timeline-content {
+  padding-top: 12px;
+}
+
+.timeline-node {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg-white);
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.timeline-node-completed {
+  background: var(--text-success-dark);
+  border-color: var(--text-success-dark);
+  color: #ffffff;
+}
+
+.timeline-node-current {
+  border-color: var(--text-success-dark);
+  color: var(--text-success-dark);
+}
+
+.timeline-node-upcoming {
+  border-color: var(--border-color);
+  color: var(--text-muted);
+}
+
+.timeline-node-completed svg {
+  width: 16px;
+  height: 16px;
+  stroke: #ffffff;
+  stroke-width: 2.5;
+  fill: none;
+}

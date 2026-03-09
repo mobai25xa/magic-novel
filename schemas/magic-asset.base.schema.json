@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "magic-asset.base.schema.json",
+  "title": "Magic Asset Base",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "kind", "title", "root"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "id": { "type": "string", "minLength": 1 },
+    "kind": {
+      "type": "string",
+      "enum": ["worldview", "outline", "character", "lore", "prompt"]
+    },
+    "title": { "type": "string" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["imported_at", "importer"],
+      "properties": {
+        "original_filename": { "type": ["string", "null"] },
+        "imported_at": { "type": "integer" },
+        "importer": { "type": "string" }
+      }
+    },
+    "root": { "$ref": "magic-asset.node.schema.json" }
+  }
+}

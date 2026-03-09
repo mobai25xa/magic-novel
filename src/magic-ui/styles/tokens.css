@@ -1,0 +1,11 @@
+/* magic-ui tokens bridge */
+@import "./design-tokens.css";
+@import "./dark-theme.css";
+
+/* Breakpoints (CSS 变量不支持媒体查询，仅作文档):
+   sm  =  640px
+   md  =  768px
+   lg  = 1024px  ← 最小支持宽度
+   xl  = 1280px  ← sidebar 自动折叠 / 右面板自动隐藏
+   2xl = 1536px
+*/

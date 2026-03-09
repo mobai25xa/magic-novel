@@ -1,0 +1,49 @@
+/* magic-ui tabs semantic layer */
+
+.tabs-container {
+  display: flex;
+  gap: 24px;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 24px;
+}
+
+.tabs-container.tabs-vertical {
+  flex-direction: column;
+  gap: 4px;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.tab {
+  padding: 0 4px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  margin-bottom: -1px;
+}
+
+.tabs-vertical .tab {
+  padding: 0;
+  border-bottom: none;
+  margin-bottom: 0;
+  border-radius: 6px;
+}
+
+.tab:hover {
+  color: var(--text-main);
+}
+
+.tab.active {
+  color: var(--text-main);
+  border-bottom-color: var(--text-main);
+  font-weight: 600;
+}
+
+.tabs-vertical .tab.active {
+  border-bottom-color: transparent;
+}

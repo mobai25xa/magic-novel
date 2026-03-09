@@ -1,0 +1,115 @@
+/* magic-ui tag semantic layer */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.tag-sm {
+  height: 20px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.tag-lg {
+  height: 28px;
+  font-size: 13px;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+
+.tag-default {
+  background: var(--color-secondary-bg);
+  color: var(--text-secondary);
+}
+
+.tag-success {
+  background: var(--tag-green-bg);
+  color: var(--tag-green-text);
+}
+
+.tag-warning {
+  background: var(--tag-yellow-bg);
+  color: var(--tag-yellow-text);
+}
+
+.tag-destructive {
+  background: var(--tag-pink-bg);
+  color: var(--tag-pink-text);
+}
+
+.tag-info {
+  background: var(--tag-blue-bg);
+  color: var(--tag-blue-text);
+}
+
+.tag-secondary {
+  background: var(--color-secondary-bg);
+  color: var(--color-secondary-text);
+}
+
+.tag-outline {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border-color);
+}
+
+.tag-outline.tag-success {
+  color: var(--tag-green-text);
+  border-color: var(--tag-green-text);
+}
+
+.tag-outline.tag-warning {
+  color: var(--tag-yellow-text);
+  border-color: var(--tag-yellow-text);
+}
+
+.tag-outline.tag-destructive {
+  color: var(--tag-pink-text);
+  border-color: var(--tag-pink-text);
+}
+
+.tag-outline.tag-info {
+  color: var(--tag-blue-text);
+  border-color: var(--tag-blue-text);
+}
+
+.tag-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-left: 2px;
+  font-size: 14px;
+  line-height: 1;
+  color: currentColor;
+  opacity: 0.6;
+  transition: opacity 0.15s, color 0.15s;
+  border-radius: 3px;
+  width: 16px;
+  height: 16px;
+  font-family: inherit;
+}
+
+.tag-close-btn:hover {
+  opacity: 1;
+  color: var(--color-danger-dark);
+}
+
+.tag-closable {
+  padding-right: 4px;
+}

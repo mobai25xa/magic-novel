@@ -1,0 +1,38 @@
+/* magic-ui container semantic layer */
+
+.container-base {
+  margin: 0 auto;
+  width: 100%;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+@media (min-width: 640px) {
+  .container-base {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container-base {
+    padding-left: 32px;
+    padding-right: 32px;
+  }
+}
+
+.container-tight {
+  max-width: 896px;
+}
+
+.container-default {
+  max-width: 1152px;
+}
+
+.container-wide {
+  max-width: 1280px;
+}
+
+.container-full {
+  max-width: 100%;
+}

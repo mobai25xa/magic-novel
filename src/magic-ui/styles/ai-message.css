@@ -1,0 +1,154 @@
+/* AI 消息区风格 */
+
+.ai-message {
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.ai-message-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.ai-message-body {
+  padding: 16px 20px;
+}
+
+.ai-message-body p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+}
+
+.ai-message-body p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-message-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.editor-shell-ai-user-bubble {
+  align-self: flex-end;
+  background: var(--bg-success-light);
+  border-color: var(--border-success);
+  color: var(--color-primary-dark);
+  animation: msg-in-right 0.28s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+.dark .editor-shell-ai-user-bubble {
+  background: oklch(0.235 0.05 163.8);
+  border-color: oklch(0.32 0.07 163.8);
+}
+
+@keyframes msg-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(12px) scale(0.97);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.editor-shell-ai-user-time {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.editor-shell-ai-assistant-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-app) 60%, transparent);
+  animation: msg-in-left 0.28s cubic-bezier(0.34, 1.4, 0.64, 1) both;
+}
+
+@keyframes msg-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.editor-shell-ai-response-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 18px;
+}
+
+.editor-shell-ai-response-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10b981;
+  flex-shrink: 0;
+}
+
+.editor-shell-ai-response-dot-streaming {
+  animation: ai-pulse 1.5s ease-in-out infinite;
+}
+
+.editor-shell-ai-response-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.editor-shell-ai-response-time {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.editor-shell-ai-assistant-text {
+  color: var(--text-main);
+}
+
+.editor-shell-ai-response-actions,
+.editor-shell-ai-feedback-actions {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+
+.editor-shell-ai-action-btn {
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+.editor-shell-ai-action-btn:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}
+
+.editor-shell-ai-action-btn[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--bg-hover) 75%, transparent);
+}

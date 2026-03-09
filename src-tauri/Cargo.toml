@@ -1,0 +1,46 @@
+[package]
+name = "magic-novel"
+version = "1.0.0"
+edition = "2021"
+default-run = "magic-novel"
+
+[lib]
+name = "magic_novel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "magic-novel"
+path = "src/main.rs"
+
+[[bin]]
+name = "agent_worker"
+path = "src/bin/agent_worker.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+pulldown-cmark = "0.9"
+regex = "1"
+dirs = "5"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking", "stream"] }
+async-trait = "0.1"
+futures = "0.3"
+tokio-stream = "0.1"
+pin-project-lite = "0.2"
+rand = "0.8"
+bytes = "1"
+dashmap = "5"
+tokio-util = "0.7"

@@ -1,0 +1,194 @@
+/* ============================================================
+   GLOBAL TOPBAR — topbar.css
+   全局顶栏样式（非编辑器页面使用）
+============================================================ */
+
+.main-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+  padding: 0 32px;
+}
+
+.main-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 40px;
+  scrollbar-width: none;
+}
+
+.main-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.global-topbar {
+  height: 88px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  flex-shrink: 0;
+  user-select: none;
+  z-index: 10;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.icon-btn-plain {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.search-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  padding: 10px 20px;
+  border-radius: 6px;
+  width: 300px;
+  max-width: min(420px, 56vw);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  transition: border-color 0.3s, box-shadow 0.3s, width 0.3s;
+  cursor: pointer;
+}
+
+.search-pill:hover,
+.search-pill:focus-within {
+  border-color: var(--text-success-dark);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.1);
+  width: 360px;
+}
+
+.search-pill input {
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-main);
+  font-size: 14px;
+  width: 100%;
+}
+
+.search-pill input::placeholder {
+  color: var(--text-muted);
+}
+
+.search-pill-kbd {
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: var(--bg-hover);
+  font-family: var(--font-mono);
+  margin-left: auto;
+}
+
+.search-pill-recycle {
+  cursor: text;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-left: auto;
+}
+
+.topbar-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-color);
+}
+
+.global-topbar .btn-create {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+  padding: 0 24px;
+  height: 40px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.global-topbar .btn-create:hover {
+  background: var(--border-success);
+}
+
+/* Skills page aligns with grepstyle main_ui and uses a dedicated CTA in topbar */
+.topbar-skill-create {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+  padding: 0 24px;
+  height: 40px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.topbar-skill-create:hover {
+  background: var(--border-success);
+}
+
+.btn-danger-outline {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  padding: 0 24px;
+  height: 40px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.btn-danger-outline:hover {
+  background: var(--color-danger-soft-hover);
+}

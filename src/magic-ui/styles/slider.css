@@ -1,0 +1,103 @@
+.slider-root {
+  position: relative;
+  display: flex;
+  width: 100%;
+  touch-action: none;
+  user-select: none;
+  align-items: center;
+}
+
+.slider-track {
+  position: relative;
+  width: 100%;
+  flex-grow: 1;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-hover);
+}
+
+.slider-range {
+  position: absolute;
+  height: 100%;
+  background: var(--text-success-dark);
+  border-radius: 999px;
+}
+
+.slider-thumb {
+  display: block;
+  border-radius: 50%;
+  border: 2px solid var(--text-success-dark);
+  background: var(--bg-white);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.slider-thumb:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 6px rgba(5, 150, 105, 0.25);
+}
+
+.slider-thumb:focus-visible {
+  outline: 2px solid var(--text-success-dark);
+  outline-offset: 2px;
+}
+
+.slider-sm .slider-track {
+  height: 3px;
+}
+
+.slider-sm .slider-thumb {
+  width: 14px;
+  height: 14px;
+}
+
+.slider-default .slider-track {
+  height: 4px;
+}
+
+.slider-default .slider-thumb {
+  width: 18px;
+  height: 18px;
+}
+
+.slider-lg .slider-track {
+  height: 6px;
+}
+
+.slider-lg .slider-thumb {
+  width: 22px;
+  height: 22px;
+}
+
+.slider-root[data-disabled] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.slider-root[data-disabled] .slider-thumb {
+  background: var(--border-color);
+  border-color: var(--text-muted);
+  box-shadow: none;
+}
+
+.slider-wrapper {
+  width: 100%;
+}
+
+.slider-value-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* dark: hardcoded rgba shadow — cannot switch via CSS variables */
+.dark .slider-thumb {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+.dark .slider-thumb:hover {
+  box-shadow: 0 2px 6px rgba(52, 211, 153, 0.35);
+}
+

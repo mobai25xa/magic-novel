@@ -1,0 +1,63 @@
+/* magic-ui filespan semantic layer */
+
+.filespan {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: default;
+  transition: background 0.15s;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+
+.filespan:hover {
+  background: var(--color-secondary-bg-hover);
+}
+
+.filespan.copyable {
+  cursor: pointer;
+}
+
+.filespan.copyable:active {
+  transform: scale(0.98);
+}
+
+.filespan-sm {
+  font-size: 11px;
+  padding: 1px 5px;
+}
+
+.filespan-md {
+  font-size: 13px;
+  padding: 3px 8px;
+}
+
+.filespan-icon {
+  font-style: normal;
+  margin-right: 2px;
+  flex-shrink: 0;
+}
+
+.filespan-sep {
+  color: var(--text-muted);
+  margin: 0 1px;
+}
+
+.filespan-seg {
+  color: var(--text-secondary);
+}
+
+.filespan-last {
+  color: var(--text-main);
+  font-weight: 600;
+}

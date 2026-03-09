@@ -1,0 +1,50 @@
+/* magic-ui show-more semantic layer */
+
+.show-more-block {
+  position: relative;
+}
+
+.show-more-content {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--max-lines, 3);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-main);
+}
+
+.show-more-block.expanded .show-more-content {
+  -webkit-line-clamp: unset;
+  display: block;
+}
+
+.show-more-fade {
+  height: 32px;
+  background: linear-gradient(to bottom, transparent, var(--bg-white));
+  margin-top: -32px;
+  pointer-events: none;
+}
+
+.show-more-block.expanded .show-more-fade {
+  display: none;
+}
+
+.show-more-btn {
+  background: none;
+  border: none;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  color: var(--text-success-dark);
+  cursor: pointer;
+  padding: 4px 0;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  transition: color 0.15s;
+}
+
+.show-more-btn:hover {
+  color: var(--color-primary-dark);
+}
+

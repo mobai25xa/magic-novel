@@ -1,0 +1,389 @@
+/* ============================================================
+   SKILLS PAGE — skills-page.css
+   技能工坊 Bento 卡片样式（对齐 grepstyle/main_ui/index_skills）
+============================================================ */
+
+/* ── 页面容器 ── */
+.skills-page {
+  min-height: 100%;
+}
+
+/* 技能页专属网格：覆盖 app-components.css 中 .bento-grid 的 !important 行高 */
+.bento-grid.bento-grid-skills {
+  grid-auto-rows: auto !important;
+}
+
+/* ── Hero 卡片 ── */
+.skills-hero {
+  background: linear-gradient(145deg, var(--bg-white) 0%, rgba(16, 185, 129, 0.05) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32px 40px;
+  border-radius: 28px;
+}
+
+.skills-hero-info h1 {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.skills-hero-info h1 svg {
+  color: var(--text-success-dark);
+}
+
+.skills-hero-info p {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin: 0;
+  max-width: 500px;
+  line-height: 1.5;
+}
+
+.skills-hero-illustration {
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.skills-hero-illustration svg {
+  color: var(--text-success-dark);
+  opacity: 0.8;
+}
+
+/* ── 过滤栏 ── */
+.skills-filter-bar {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.skills-filter-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.skills-filter-btn {
+  padding: 10px 20px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skills-filter-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+.skills-filter-btn.active {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.skills-filter-btn-market {
+  margin-left: auto;
+  border-style: dashed;
+}
+
+/* ── 技能卡片 ── */
+.skill-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.skill-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.skill-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.5), 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.skill-color-1 {
+  background: linear-gradient(135deg, #34d399, #10b981);
+  color: white;
+}
+
+.skill-color-2 {
+  background: linear-gradient(135deg, #60a5fa, #3b82f6);
+  color: white;
+}
+
+.skill-color-3 {
+  background: linear-gradient(135deg, #f472b6, #ec4899);
+  color: white;
+}
+
+.skill-color-4 {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: white;
+}
+
+.skill-color-5 {
+  background: linear-gradient(135deg, #34d399, #059669);
+  color: white;
+}
+
+.skill-content h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.skill-content p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill-meta {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.skill-tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.skill-tag {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  line-height: 1;
+  border: 1px solid transparent;
+}
+
+.skill-tag-user {
+  background: rgba(5, 150, 105, 0.1);
+  color: var(--text-success-dark);
+}
+
+.skill-tag-frequent {
+  color: #10b981;
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.skill-more-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.skill-more-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+
+/* ── 创建占位卡片 ── */
+.skill-card-create {
+  border: 2px dashed var(--border-color);
+  background: transparent;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  gap: 12px;
+  text-align: center;
+}
+
+.skill-card-create:hover {
+  border-color: var(--primary);
+  background: rgba(5, 150, 105, 0.02);
+}
+
+.skill-create-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  transition: all 0.2s;
+}
+
+.skill-card-create:hover .skill-create-icon {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.skill-card-create h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.skill-card-create p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  white-space: pre-line;
+}
+
+/* ── 共享空状态 / 错误态 ── */
+.bento-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.bento-empty-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: rgba(16, 185, 129, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-success-dark);
+  opacity: 0.6;
+}
+
+.bento-empty-icon-muted {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+}
+
+.bento-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 60px 20px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.bento-error-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: var(--color-danger-soft-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-danger);
+  opacity: 0.7;
+}
+
+/* ── Skeleton 卡片 ── */
+.skill-skeleton-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1024px) {
+  .skills-hero {
+    padding: 28px;
+  }
+
+  .skills-hero-info h1 {
+    font-size: 28px;
+  }
+
+  .skills-filter-btn-market {
+    margin-left: 0;
+  }
+}
+
+/* ============================================================
+   DARK MODE OVERRIDES
+============================================================ */
+
+.dark .skills-hero {
+  background: linear-gradient(145deg, var(--bg-white) 0%, rgba(16, 185, 129, 0.08) 100%);
+}
+
+.dark .skills-hero-illustration {
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.15) 0%, transparent 70%);
+}
+
+.dark .skills-filter-btn.active {
+  background: rgba(52, 211, 153, 0.12);
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.3);
+}
+
+.dark .skill-icon-wrapper {
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.1), 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.dark .skill-card-create:hover {
+  background: rgba(52, 211, 153, 0.04);
+}
+
+.dark .skill-card-create:hover .skill-create-icon {
+  background: rgba(52, 211, 153, 0.15);
+  color: #34d399;
+}
+
+.dark .bento-empty-icon {
+  background: rgba(52, 211, 153, 0.12);
+}

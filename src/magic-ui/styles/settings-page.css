@@ -1,0 +1,247 @@
+/* ============================================================
+   SETTINGS PAGE — settings-page.css
+   设置全页面布局（非 Modal）
+============================================================ */
+
+/* ── 设置页语义变量 ── */
+:root {
+  --set-accent: var(--text-success-dark);
+  --set-accent-light: var(--bg-success-light);
+  --set-accent-border: var(--border-success);
+  --set-accent-dark: var(--color-primary-dark);
+}
+
+/* ── 设置页外层（独享整页） ── */
+.settings-page-shell {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+  padding: 24px;
+}
+
+/* ── 设置页侧边栏 ── */
+.settings-sidebar {
+  width: 220px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.dark .settings-sidebar {
+  border-right-color: rgba(255, 255, 255, 0.04);
+}
+
+/* ── 返回按钮区 ── */
+.nav-back-section {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  flex-shrink: 0;
+}
+
+.dark .nav-back-section {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+.nav-item.back {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.nav-item.back:hover {
+  color: var(--text-main);
+  background: var(--bg-hover);
+}
+
+/* ── 设置导航项活跃态 ── */
+.settings-nav .nav-item.active {
+  background: var(--set-accent);
+  color: white;
+  box-shadow: 0 4px 12px rgba(5, 150, 105, 0.25);
+}
+
+/* ── 内容区 ── */
+.settings-content-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-content-area .glass-panel-subtle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 24px;
+  margin: 0 24px 24px 0;
+}
+
+/* ── 内容头部 ── */
+.content-header {
+  padding: 28px 36px 24px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.dark .content-header {
+  border-bottom-color: rgba(255, 255, 255, 0.04);
+}
+
+.page-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.page-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 5px 0 0;
+}
+
+/* ── 内容底部 ── */
+.content-footer {
+  padding: 14px 36px;
+  border-top: 1px solid rgba(0, 0, 0, 0.04);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.dark .content-footer {
+  border-top-color: rgba(255, 255, 255, 0.04);
+}
+
+/* ── 设置卡片 ── */
+.settings-card {
+  background: var(--bg-white);
+  border-radius: 10px;
+  border: 1px solid var(--border-color);
+  padding: 24px 28px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.02);
+  margin-bottom: 16px;
+}
+
+.settings-card:last-child {
+  margin-bottom: 0;
+}
+
+.dark .settings-card {
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.2), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--set-accent-light);
+  color: var(--set-accent);
+  flex-shrink: 0;
+}
+
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.card-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin: 0 0 18px 48px;
+  line-height: 1.5;
+}
+
+/* ── 分段控件 ── */
+.segmented-control {
+  display: flex;
+  background: var(--bg-hover);
+  padding: 4px;
+  border-radius: 8px;
+  gap: 4px;
+  width: fit-content;
+}
+
+.seg-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.seg-btn.active {
+  background: var(--bg-white);
+  color: var(--text-main);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.07);
+}
+
+/* ── Slider 行 ── */
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.slider-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--set-accent);
+  min-width: 56px;
+  text-align: right;
+}
+
+/* ── 表单网格 ── */
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+/* ── 分隔线 ── */
+.section-divider {
+  height: 1px;
+  background: var(--border-color);
+  margin: 24px 0;
+  border: none;
+}
+
+/* ── 输入行 ── */
+.input-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.input-suffix {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+}

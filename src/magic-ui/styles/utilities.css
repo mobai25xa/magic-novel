@@ -1,0 +1,83 @@
+/* ── 文本颜色工具类（无 Tailwind 等价） ── */
+.text-warning { color: var(--tag-yellow-text); }
+.text-info    { color: var(--tag-blue-text); }
+.text-accent  { color: var(--tag-pink-text); }
+
+/* ── 通用交互 ── */
+.hover-bg:hover { background: var(--bg-hover); }
+.active-bg      { background: var(--bg-hover); }
+
+/* ── 焦点环 ── */
+.focus-ring-primary:focus { --tw-ring-color: var(--text-success-dark); }
+
+/* ── 标签背景 ── */
+.tag-yellow-bg { background: var(--tag-yellow-bg); }
+.tag-blue-bg   { background: var(--tag-blue-bg); }
+.tag-pink-bg   { background: var(--tag-pink-bg); }
+
+/* ── AI 专用（无 @theme 映射） ── */
+.bg-chat-user       { background: var(--chat-user-bg); }
+.text-ai-xs         { font-size: var(--ai-text-xs); }
+
+/* ── 半透明背景 (color-mix) ── */
+.bg-hover-30  { background: color-mix(in srgb, var(--bg-hover) 30%, transparent); }
+.bg-hover-20  { background: color-mix(in srgb, var(--bg-hover) 20%, transparent); }
+.hover-bg-30:hover { background: color-mix(in srgb, var(--bg-hover) 30%, transparent); }
+.bg-info-10   { background: color-mix(in srgb, var(--tag-blue-text) 10%, transparent); }
+.bg-success-10 { background: color-mix(in srgb, var(--text-success-dark) 10%, transparent); }
+.bg-error-15  { background: color-mix(in srgb, var(--ai-status-error) 15%, transparent); }
+.hover-bg-error-15:hover { background: color-mix(in srgb, var(--ai-status-error) 15%, transparent); }
+.border-border-70 { border-color: color-mix(in srgb, var(--border-color) 70%, transparent); }
+.bg-app-40    { background: color-mix(in srgb, var(--bg-app) 40%, transparent); }
+
+/* ── 边框变体（无 @theme 映射） ── */
+.border-success { border-color: var(--border-success); }
+.border-focus   { border-color: var(--border-focus); }
+
+/* ── AI 状态色 (soft / 15%) ── */
+.bg-ai-success-soft { background: color-mix(in srgb, var(--ai-status-success) 15%, transparent); }
+.bg-ai-waiting-soft { background: color-mix(in srgb, var(--ai-status-waiting) 15%, transparent); }
+.bg-ai-running-soft { background: color-mix(in srgb, var(--ai-status-running) 15%, transparent); }
+.bg-ai-success-10  { background: color-mix(in srgb, var(--ai-status-success) 10%, transparent); }
+.bg-danger-10      { background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
+
+/* ── AI 状态色 (outline / 40%) ── */
+.border-ai-primary-40 { border-color: color-mix(in srgb, var(--text-success-dark) 40%, transparent); }
+.border-ai-success-40 { border-color: color-mix(in srgb, var(--ai-status-success) 40%, transparent); }
+.border-ai-waiting-40 { border-color: color-mix(in srgb, var(--ai-status-waiting) 40%, transparent); }
+.border-ai-error-40   { border-color: color-mix(in srgb, var(--ai-status-error) 40%, transparent); }
+.border-danger-50      { border-color: color-mix(in srgb, var(--color-danger) 50%, transparent); }
+.hover-bg-danger-10:hover { background: color-mix(in srgb, var(--color-danger) 10%, transparent); }
+
+/* ── 半透明背景 (其他) ── */
+.bg-app-95    { background: color-mix(in srgb, var(--bg-app) 95%, transparent); }
+.bg-app-80    { background: color-mix(in srgb, var(--bg-app) 80%, transparent); }
+.bg-app-70    { background: color-mix(in srgb, var(--bg-app) 70%, transparent); }
+.bg-app-60    { background: color-mix(in srgb, var(--bg-app) 60%, transparent); }
+.bg-app-50    { background: color-mix(in srgb, var(--bg-app) 50%, transparent); }
+.bg-app-45    { background: color-mix(in srgb, var(--bg-app) 45%, transparent); }
+.bg-secondary-30 { background: color-mix(in srgb, var(--color-secondary-bg) 30%, transparent); }
+.hover-bg-50:hover { background: color-mix(in srgb, var(--bg-hover) 50%, transparent); }
+
+/* ── focus-within ── */
+.focus-within-primary:focus-within { border-color: var(--text-success-dark); }
+
+/* ── AI 状态色 (其他) ── */
+.border-ai-running-40 { border-color: color-mix(in srgb, var(--ai-status-running) 40%, transparent); }
+.border-ai-error-30   { border-color: color-mix(in srgb, var(--ai-status-error) 30%, transparent); }
+.bg-secondary-50      { background: color-mix(in srgb, var(--color-secondary-bg) 50%, transparent); }
+.bg-ai-waiting-30      { background: color-mix(in srgb, var(--ai-status-waiting) 30%, transparent); }
+.bg-success-20         { background: color-mix(in srgb, var(--text-success-dark) 20%, transparent); }
+
+/* ── 文本截断 (Dev-B P4) ── */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 全局防溢出 (Dev-B P4) ── */
+html, body, #root {
+  overflow-x: hidden;
+  min-width: 1024px;
+}

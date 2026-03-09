@@ -1,0 +1,1082 @@
+/* ── 进度条 ── */
+.progress-bar {
+    height: 8px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: var(--bg-hover);
+}
+.progress-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--text-success-dark);
+    transition: width 0.3s ease;
+}
+
+/* ── 统计数值 ── */
+.stat-value {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--text-success-dark);
+}
+.stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+/* ── 搜索面板 ── */
+.search-panel {
+    background: var(--bg-white);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1), 0 4px 10px -3px rgba(0,0,0,0.05);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── 封面占位 ── */
+.cover-placeholder {
+    width: 128px;
+    height: 160px;
+    border: 2px dashed var(--border-color);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 14px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+.cover-placeholder:hover {
+    background: var(--color-secondary-bg-hover);
+    border-color: var(--text-success-dark);
+}
+
+/* ── 表单标签 ── */
+.form-label {
+    font-size: 14px;
+    color: var(--text-main);
+    white-space: nowrap;
+}
+
+
+/* ── 对话框底部操作栏 ── */
+.dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* ── 表单 textarea ── */
+.form-textarea {
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-app);
+    font-size: 14px;
+    resize: none;
+    outline: none;
+    color: inherit;
+}
+.form-textarea:focus {
+    box-shadow: 0 0 0 2px var(--text-success-dark);
+    box-shadow: 0 0 0 2px var(--text-success-dark), 0 0 0 4px rgba(0,0,0,0.05);
+}
+
+/* ── 统计卡片 ── */
+.stat-card {
+    position: relative;
+    border-radius: 12px;
+    padding: 24px 24px 20px 24px;
+    border: 1px solid transparent;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    min-height: 100px;
+}
+.stat-card-success {
+    background: var(--bg-success-light);
+    border-color: var(--border-success);
+}
+.stat-card-info {
+    background: var(--tag-blue-bg);
+    border-color: #bfdbfe;
+}
+.stat-card-danger {
+    background: var(--tag-pink-bg);
+    border-color: #fbcfe8;
+}
+.stat-card-warning {
+    background: var(--tag-yellow-bg);
+    border-color: #fde68a;
+}
+
+/* 图标浮动在右上角 */
+.stat-card-icon-float {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.stat-card-icon-float.stat-card-icon-success {
+    background: color-mix(in srgb, var(--text-success-dark) 15%, transparent);
+    color: var(--text-success-dark);
+}
+.stat-card-icon-float.stat-card-icon-info {
+    background: color-mix(in srgb, #3b82f6 15%, transparent);
+    color: #3b82f6;
+}
+.stat-card-icon-float.stat-card-icon-danger {
+    background: color-mix(in srgb, #ec4899 15%, transparent);
+    color: #ec4899;
+}
+.stat-card-icon-float.stat-card-icon-warning {
+    background: color-mix(in srgb, #f59e0b 15%, transparent);
+    color: #f59e0b;
+}
+
+/* 标签和数值 */
+.stat-card-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+.stat-card-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-main);
+    line-height: 1.2;
+}
+.stat-card-value-md {
+    font-size: 18px;
+    font-weight: 600;
+}
+.stat-card-unit {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.stat-card-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.stat-card-icon-success { background: var(--bg-success-light); color: var(--text-success-dark); }
+.stat-card-icon-info    { background: var(--tag-blue-bg);       color: var(--tag-blue-text); }
+.stat-card-icon-danger  { background: var(--tag-pink-bg);       color: var(--tag-pink-text); }
+.stat-card-icon-warning { background: var(--tag-yellow-bg);     color: var(--tag-yellow-text); }
+
+/* ── 项目卡片标签 ── */
+.project-badge-success {
+    background: var(--text-success-dark);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+.project-badge-danger {
+    background: var(--color-danger);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+/* ── 项目卡片默认背景 ── */
+.project-card-bg {
+    background: linear-gradient(to bottom right, var(--bg-hover), var(--bg-app));
+}
+.project-card-title {
+    transition: color 0.15s;
+}
+.group:hover .project-card-title {
+    color: var(--text-success-dark);
+}
+
+/* ── 横版卡片（书架） ── */
+.h-card {
+    display: flex;
+    flex-direction: row;
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-white);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.07), 0 1px 3px rgba(0,0,0,0.05);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+    height: 110px;
+}
+.h-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 10px 24px rgba(0,0,0,0.11), 0 4px 8px rgba(0,0,0,0.07);
+}
+
+/* 左侧封面区 */
+.h-card-cover {
+    position: relative;
+    width: 80px;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+.h-card-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+.h-card-cover-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* 左侧竖向色条（覆盖在封面上） */
+.h-card-accent {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+}
+
+/* 右侧信息区 */
+.h-card-body {
+    flex: 1;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-width: 0;
+}
+.h-card-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.h-card-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-main);
+    margin: 0;
+    line-height: 1.3;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    transition: color 0.15s;
+}
+.h-card:hover .h-card-title {
+    color: var(--text-success-dark);
+}
+.h-card-date {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+/* ── 恢复按钮（回收站） ── */
+.restore-fab {
+    height: 32px;
+    width: 32px;
+    border-radius: 50%;
+    background: var(--text-success-dark);
+    color: white;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.restore-fab:hover {
+    background: var(--color-primary-dark);
+}
+
+/* ── 空状态 ── */
+.empty-state {
+    background: var(--bg-app);
+    border: 1px solid var(--border-color);
+}
+
+/* ── 热力图色阶 ── */
+.heat-zero   { background: var(--bg-hover); }
+.heat-low    { background: var(--tag-blue-bg); }
+.heat-medium { background: color-mix(in srgb, var(--tag-blue-text) 50%, transparent); }
+.heat-high   { background: color-mix(in srgb, var(--tag-blue-text) 70%, transparent); }
+.heat-peak   { background: var(--tag-blue-text); }
+
+/* ── 发现页面卡片 ── */
+.discover-card {
+    background: var(--bg-app);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 24px;
+}
+
+/* ── 年份切换按钮 ── */
+.year-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 14px;
+    border: none;
+    cursor: pointer;
+    background: var(--bg-hover);
+    transition: background 0.12s;
+}
+.year-btn:hover {
+    background: var(--color-secondary-bg-hover);
+}
+.year-btn-active {
+    background: var(--tag-blue-text);
+    color: white;
+}
+
+/* ── 高亮文本 ── */
+.text-info-accent { color: var(--tag-blue-text); }
+
+/* ── 热力图单元格 ── */
+.heat-cell {
+    cursor: pointer;
+    transition: box-shadow 0.1s;
+}
+.heat-cell:hover {
+    box-shadow: 0 0 0 1px var(--text-success-dark);
+}
+
+/* ── 日历单元格 ── */
+.calendar-day {
+    height: 56px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.12s;
+    cursor: pointer;
+    background: var(--bg-hover);
+}
+.calendar-day:hover {
+    background: var(--color-secondary-bg-hover);
+}
+.calendar-day-today {
+    background: var(--tag-blue-text);
+    color: white;
+}
+.calendar-day-today:hover {
+    background: var(--tag-blue-text);
+}
+
+/* ── 设置面板 ── */
+.settings-panel {
+    border-right: 1px solid var(--border-color);
+    background: var(--bg-app);
+}
+.settings-section {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+}
+
+/* ── 设置选项卡按钮 ── */
+.settings-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 6px;
+    border: 2px solid var(--border-color);
+    background: var(--bg-app);
+    color: var(--text-main);
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.settings-option:hover {
+    background: var(--bg-hover);
+    color: var(--text-main);
+}
+.settings-option-active {
+    border-color: var(--text-success-dark);
+    background: var(--text-success-dark);
+    color: white;
+}
+.settings-option-active:hover {
+    border-color: var(--text-success-dark);
+    background: var(--text-success-dark);
+    color: white;
+}
+
+.tabs-vertical .settings-nav-item {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr);
+    align-items: center;
+    justify-items: start;
+    width: 100%;
+    min-height: 36px;
+    padding: 8px 10px;
+    column-gap: 8px;
+    line-height: 1;
+    text-transform: none;
+    letter-spacing: 0;
+    font-weight: 500;
+    text-align: left;
+}
+
+.tabs-vertical .settings-nav-item.active {
+    border-color: var(--border-success);
+    background: var(--bg-success-light);
+    color: var(--text-success-dark);
+}
+
+.tabs-vertical .settings-nav-item.active:hover {
+    border-color: var(--border-success);
+    background: var(--bg-success-light);
+    color: var(--text-success-dark);
+}
+
+.settings-nav-icon {
+    width: 16px;
+    height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.settings-nav-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+
+.settings-nav-label {
+    min-width: 0;
+    line-height: 1;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* ── 开关指示器 ── */
+.toggle-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.15s;
+}
+.toggle-track {
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    padding: 2px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.toggle-track-on  { background: var(--text-success-dark); }
+.toggle-track-off { background: var(--bg-hover); }
+
+/* ── 提供商标签 ── */
+.provider-badge-active {
+    background: var(--text-success-dark);
+    color: white;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.provider-badge-inactive {
+    background: var(--bg-hover);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* ── 模型标签 ── */
+.model-tag-info {
+    background: color-mix(in srgb, var(--tag-blue-text) 10%, transparent);
+    color: var(--tag-blue-text);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+.model-tag-success {
+    background: color-mix(in srgb, var(--text-success-dark) 10%, transparent);
+    color: var(--text-success-dark);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* ── 禁用提供商卡片 ── */
+.provider-card-disabled {
+    border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
+    background: color-mix(in srgb, var(--bg-app) 40%, transparent);
+    border-radius: 8px;
+    padding: 16px;
+    opacity: 0.6;
+}
+
+/* ── Provider 模型勾选列表 ── */
+.provider-model-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 2px 0;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-main);
+}
+
+.provider-model-checkbox {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: var(--text-success-dark);
+}
+
+.provider-model-checkbox:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+
+.provider-model-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ============================================================
+   DARK MODE OVERRIDES
+============================================================ */
+
+/* ── 统计卡片边框暗色（替换亮色硬编码 hex） ── */
+.dark .stat-card-info    { border-color: rgba(59, 130, 246, 0.25); }
+.dark .stat-card-danger  { border-color: rgba(236, 72, 153, 0.25); }
+.dark .stat-card-warning { border-color: rgba(245, 158, 11, 0.25); }
+.dark .stat-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* ── 横版卡片暗色 ── */
+.dark .h-card {
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2), 0 1px 3px rgba(0,0,0,0.12);
+}
+.dark .h-card:hover {
+    box-shadow: 0 10px 24px rgba(0,0,0,0.25), 0 4px 8px rgba(0,0,0,0.15);
+}
+
+/* ── 搜索面板暗色 ── */
+.dark .search-panel {
+    box-shadow: 0 10px 25px -5px rgba(0,0,0,0.3), 0 4px 10px -3px rgba(0,0,0,0.15);
+}
+
+/* ── 分段控件暗色 ── */
+.dark .seg-btn.active {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+/* ============================================================
+   BENTO GRID SYSTEM — 首页 Bento Box 布局
+============================================================ */
+
+/* ── Bento 网格容器 ── */
+.bento-grid {
+    display: grid !important;
+    grid-template-columns: repeat(12, 1fr) !important;
+    grid-auto-rows: minmax(140px, auto) !important;
+    gap: 24px !important;
+    max-width: 1400px !important;
+    margin: 0 auto !important;
+    padding: 32px !important;
+}
+
+/* ── Bento 卡片基础样式 ── */
+.bento-card {
+    background: var(--bg-white);
+    border-radius: var(--floating-radius-md);
+    border: 1px solid var(--border-color);
+    padding: 28px;
+    box-shadow: var(--shadow-bento-card);
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    transition: box-shadow 0.3s ease, transform 0.3s ease;
+}
+
+.bento-card:hover {
+    box-shadow: var(--shadow-bento-card-hover);
+}
+
+/* ── Bento 卡片变体：Hero (8列 x 2行) ── */
+.bento-card-hero {
+    grid-column: span 8 !important;
+    grid-row: span 2 !important;
+    background: linear-gradient(145deg, var(--bg-white) 0%, rgba(5, 150, 105, 0.03) 100%) !important;
+    display: flex !important;
+    flex-direction: row !important;
+    gap: 32px !important;
+    align-items: center !important;
+    padding: 36px !important;
+}
+
+/* ── Bento 卡片变体：Stat (4列 x 1行) ── */
+.bento-card-stat {
+    grid-column: span 4 !important;
+    grid-row: span 1 !important;
+    justify-content: center !important;
+}
+
+/* ── Bento 卡片变体：AI Tip (4列 x 1行) ── */
+.bento-card-ai-tip {
+    grid-column: span 4 !important;
+    grid-row: span 1 !important;
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.05), rgba(16, 185, 129, 0.01)) !important;
+    border-color: rgba(16, 185, 129, 0.2) !important;
+}
+
+/* ── Bento 卡片变体：Library (12列 x auto) ── */
+.bento-card-library {
+    grid-column: span 12 !important;
+    padding: 32px !important;
+}
+
+/* ── Hero 卡片内部元素 ── */
+.bento-hero-info {
+    flex: 1;
+}
+
+.bento-hero-greeting {
+    font-size: 16px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.bento-hero-title {
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--text-main);
+    margin: 0 0 16px 0;
+    line-height: 1.2;
+}
+
+.bento-hero-subtitle {
+    color: var(--text-muted);
+    font-size: 15px;
+    line-height: 1.5;
+    margin-bottom: 28px;
+    max-width: 90%;
+}
+
+.bento-hero-actions {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+}
+
+.bento-hero-primary {
+    min-width: 172px !important;
+    padding: 0 24px !important;
+    height: 48px !important;
+    border-radius: 6px !important;
+    font-size: 15px !important;
+    background: var(--bg-success-light);
+    color: var(--text-success-dark);
+    border: 1px solid var(--border-success);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.bento-hero-primary:hover {
+    background: var(--border-success);
+}
+
+.bento-hero-primary-label {
+    white-space: nowrap;
+}
+
+.bento-hero-primary .lucide {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.bento-hero-secondary {
+    height: 48px !important;
+    width: 48px !important;
+    border-radius: 8px !important;
+}
+
+.bento-hero-cover {
+    width: 160px;
+    height: 220px;
+    border-radius: var(--floating-radius-md);
+    background: linear-gradient(135deg, #0ea5e9, #2563eb);
+    flex-shrink: 0;
+    box-shadow: 0 16px 32px rgba(37, 99, 235, 0.25);
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    transform: perspective(800px) rotateY(-5deg);
+    transition: all 0.4s ease;
+}
+
+.bento-card-hero:hover .bento-hero-cover {
+    transform: perspective(800px) rotateY(0deg) scale(1.02);
+    box-shadow: 0 20px 40px rgba(37, 99, 235, 0.35);
+}
+
+.bento-hero-cover::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to right, rgba(255, 255, 255, 0.2) 0%, transparent 20%, transparent 100%);
+}
+
+.bento-hero-cover-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.bento-hero-cover-icon {
+    color: #ffffff;
+    opacity: 0.9;
+}
+
+.bento-hero-cover-meta {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    right: 20px;
+    text-align: center;
+    color: #ffffff;
+}
+
+.bento-hero-cover-title {
+    font-family: 'Noto Serif SC', serif;
+    font-size: 24px;
+    font-weight: 900;
+    letter-spacing: 2px;
+}
+
+.bento-hero-cover-subtitle {
+    font-size: 12px;
+    opacity: 0.8;
+    margin-top: 4px;
+}
+
+.bento-hero-cover-empty {
+    opacity: 0.85;
+}
+
+/* ── Stat 卡片内部元素 ── */
+.bento-stat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.bento-stat-icon-wrap {
+    padding: 6px;
+    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.bento-stat-icon-blue {
+    background: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.bento-stat-icon-green {
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.bento-stat-val {
+    font-size: 40px;
+    font-weight: 800;
+    color: var(--text-main);
+    letter-spacing: -1px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.bento-stat-trend {
+    margin-top: 16px;
+    font-size: 13px;
+    color: #10b981;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* ── AI Tip 卡片 ── */
+.bento-ai-title {
+    color: #059669;
+}
+
+.bento-ai-title-icon {
+    color: #10b981;
+}
+
+.bento-ai-tip-text {
+    font-size: 14px;
+    color: var(--text-main);
+    line-height: 1.6;
+    margin: 0;
+    font-family: 'Noto Serif SC', serif;
+}
+
+.bento-ai-action {
+    margin-top: auto;
+    align-self: flex-start;
+    background: var(--bg-white);
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    color: #059669;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+/* ── Library 卡片内部元素 ── */
+.bento-library-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.bento-library-title {
+    font-size: 20px;
+    font-weight: 800;
+    color: var(--text-main);
+}
+
+.bento-badge-row {
+    display: flex;
+    gap: 8px;
+}
+
+/* ── 书架滚动容器 ── */
+.bento-novel-shelf {
+    display: flex;
+    gap: 24px;
+    overflow-x: auto;
+    padding-bottom: 16px;
+    scrollbar-width: thin;
+}
+
+.bento-novel-shelf::-webkit-scrollbar {
+    height: 6px;
+}
+
+.bento-novel-shelf::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 10px;
+}
+
+/* ── 书籍项 ── */
+.bento-book-item {
+    width: 140px;
+    flex-shrink: 0;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 0;
+}
+
+.bento-book-cover {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    border-radius: var(--floating-radius-md);
+    margin-bottom: 12px;
+    background: var(--bg-hover);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.05);
+    transition: transform 0.3s, box-shadow 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.bento-book-item:hover .bento-book-cover {
+    transform: translateY(-6px);
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.1);
+}
+
+.bento-book-cover-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.bento-book-cover-icon {
+    color: #ffffff;
+    opacity: 0.5;
+}
+
+.bento-book-cover-create {
+    background: transparent;
+    border: 2px dashed var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.bento-book-create-icon {
+    color: var(--text-muted);
+}
+
+.bento-book-title {
+    font-family: 'Noto Serif SC', serif;
+    font-weight: 900;
+    font-size: 15px;
+    color: var(--text-main);
+    margin: 0 0 4px 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.bento-book-title-create {
+    color: var(--text-muted);
+    font-weight: 600;
+    font-family: 'Inter', sans-serif;
+}
+
+.bento-book-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+/* ── 徽章 ── */
+.bento-badge {
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.bento-badge-active {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+}
+
+/* ── 闪烁动画 ── */
+.bento-sparkle {
+    animation: bento-pulse-sparkle 2s infinite;
+}
+
+@keyframes bento-pulse-sparkle {
+    0% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 1;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+}
+
+/* ── 响应式调整 ── */
+@media (max-width: 1400px) {
+    .bento-grid {
+        grid-template-columns: repeat(8, 1fr);
+    }
+
+    .bento-card-hero {
+        grid-column: span 8;
+    }
+
+    .bento-card-stat,
+    .bento-card-ai-tip {
+        grid-column: span 4;
+    }
+
+    .bento-card-library {
+        grid-column: span 8;
+    }
+}
+
+@media (max-width: 1024px) {
+    .bento-grid {
+        gap: 16px;
+        padding: 24px;
+    }
+
+    .bento-card-hero {
+        flex-direction: column;
+        padding: 24px;
+    }
+
+    .bento-hero-cover {
+        width: 120px;
+        height: 165px;
+    }
+}
+
+/* ── 暗色模式 ── */
+.dark .bento-card-hero {
+    background: linear-gradient(145deg, var(--bg-white) 0%, rgba(5, 150, 105, 0.05) 100%);
+}
+
+/* ── 无障碍适配 ── */
+@media (prefers-reduced-motion: reduce) {
+    .bento-card,
+    .bento-book-cover,
+    .bento-hero-cover {
+        transition: none !important;
+    }
+
+    .bento-sparkle {
+        animation: none !important;
+    }
+}

@@ -1,0 +1,123 @@
+/* magic-ui select semantic layer */
+
+.custom-select {
+  position: relative;
+  width: 100%;
+}
+
+.custom-select-trigger {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-main);
+  background: var(--bg-white);
+  transition: border-color 0.2s, box-shadow 0.2s, background-color 0.2s;
+}
+
+.custom-select-trigger:hover {
+  border-color: var(--border-focus);
+}
+
+.custom-select-trigger[data-state='open'],
+.custom-select-trigger:focus-visible {
+  border-color: var(--border-focus);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.16);
+}
+
+.custom-select-trigger[data-placeholder] {
+  color: var(--text-muted);
+}
+
+.select-arrow {
+  color: var(--text-muted);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.custom-select-trigger[data-state='open'] .select-arrow {
+  transform: rotate(180deg);
+}
+
+.custom-select-content {
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-elevation-menu);
+  z-index: 260;
+  padding: 4px;
+}
+
+.custom-select-content[data-state='open'] {
+  animation: dropdownIn 0.15s ease-out;
+}
+
+@keyframes dropdownIn {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.custom-select-item {
+  position: relative;
+  padding: 8px 32px 8px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 5px;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  transition: background 0.12s;
+  user-select: none;
+}
+
+.custom-select-item[data-highlighted] {
+  background: var(--bg-hover);
+  outline: none;
+}
+
+.custom-select-item[data-state='checked'] {
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  font-weight: 500;
+}
+
+.custom-select-item .item-check {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  width: 14px;
+  height: 14px;
+}
+
+.custom-select-item[data-state='checked'] .item-check {
+  opacity: 1;
+}
+
+.custom-select-label {
+  padding: 6px 10px 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.custom-select-separator {
+  height: 1px;
+  background: var(--border-color);
+  margin: 4px 0;
+}
+
+

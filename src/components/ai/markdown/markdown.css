@@ -1,0 +1,114 @@
+.ai-markdown {
+  font-size: 13.5px;
+  line-height: 1.72;
+  color: var(--text-main);
+  word-break: break-word;
+  padding: 0 2px;
+}
+
+.ai-markdown > *:first-child {
+  margin-top: 0;
+}
+
+.ai-markdown > *:last-child {
+  margin-bottom: 0;
+}
+
+.ai-markdown p {
+  margin: 0 0 8px;
+}
+
+.ai-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-markdown strong {
+  font-weight: 600;
+}
+
+.ai-markdown a {
+  color: var(--text-success-dark);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ai-markdown a:hover {
+  opacity: 0.85;
+}
+
+.ai-markdown code:not(pre code) {
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--code-bg);
+  color: var(--code-keyword);
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 65%, transparent);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.ai-markdown pre {
+  margin: 10px 0;
+}
+
+.ai-markdown blockquote {
+  margin: 10px 0;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid var(--ai-thinking-line);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.ai-markdown blockquote blockquote {
+  margin-left: 8px;
+}
+
+.ai-markdown ul,
+.ai-markdown ol {
+  margin: 0 0 8px;
+  padding-left: 1.25rem;
+}
+
+.ai-markdown li {
+  margin-bottom: 2px;
+}
+
+.ai-markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border-color);
+  margin: 14px 0;
+}
+
+.ai-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10px 0;
+}
+
+.ai-markdown .data-table-container {
+  border-radius: 8px;
+  border-color: color-mix(in srgb, var(--border-color) 85%, transparent);
+}
+
+.ai-markdown .data-table th,
+.ai-markdown .data-table td {
+  font-size: 12.5px;
+  padding: 8px 12px;
+}
+
+.ai-markdown .data-table th {
+  background: color-mix(in srgb, var(--table-header-bg) 85%, var(--bg-white));
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.ai-markdown .data-table tr:hover td {
+  background: color-mix(in srgb, var(--table-row-hover) 75%, transparent);
+}
+
+.ai-markdown img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 75%, transparent);
+  margin: 6px 0;
+}

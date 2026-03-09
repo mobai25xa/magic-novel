@@ -1,0 +1,89 @@
+/* ============================================================
+   GLASSMORPHISM — glassmorphism.css
+   三级玻璃态效果 + 环境光晕。
+   依赖: design-tokens.css（变量定义）、dark-theme.css（暗色覆盖）
+============================================================ */
+
+/* ── 标准玻璃态（sidebar、通用面板） ── */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+}
+
+/* ── 加强玻璃态（AI 面板、创建页 glass-card） ── */
+.glass-panel-strong {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+}
+
+/* ── 柔和玻璃态（设置页 content-area） ── */
+.glass-panel-subtle {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: 24px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.03);
+}
+
+/* ── 暗色模式覆盖 ── */
+.dark .glass-panel {
+  background: rgba(24, 24, 27, 0.6);
+}
+
+.dark .glass-panel-strong {
+  background: rgba(24, 24, 27, 0.7);
+}
+
+.dark .glass-panel-subtle {
+  background: rgba(24, 24, 27, 0.55);
+}
+
+/* ── 环境光晕（左上） ── */
+.ambient-glow {
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  width: 600px;
+  height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(5, 150, 105, 0.12), transparent 70%);
+  top: -200px;
+  left: -200px;
+}
+
+/* ── 环境光晕（右下） ── */
+.ambient-glow-2 {
+  position: fixed;
+  pointer-events: none;
+  z-index: 0;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.08), transparent 70%);
+  bottom: -150px;
+  right: -150px;
+}
+
+/* ── 暗色模式：降低环境光晕亮度 ── */
+.dark .ambient-glow {
+  background: radial-gradient(circle, rgba(5, 150, 105, 0.06), transparent 70%);
+}
+.dark .ambient-glow-2 {
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.04), transparent 70%);
+}
+
+/* ── 暗色模式：玻璃面板阴影加深 ── */
+.dark .glass-panel,
+.dark .glass-panel-strong,
+.dark .glass-panel-subtle {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}

@@ -1,0 +1,130 @@
+/* magic-ui badge semantic layer */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+  letter-spacing: 0.02em;
+}
+
+.badge-sm {
+  height: 18px;
+  font-size: 10px;
+  padding: 0 5px;
+}
+
+.badge-md {
+  height: 22px;
+  font-size: 11px;
+}
+
+.badge-solid.badge-default {
+  background: var(--color-secondary-text);
+  color: var(--bg-white);
+}
+
+.badge-solid.badge-primary {
+  background: var(--text-main);
+  color: var(--bg-white);
+}
+
+.badge-solid.badge-success {
+  background: var(--text-success-dark);
+  color: var(--bg-white);
+}
+
+.badge-solid.badge-warning {
+  background: var(--color-warning);
+  color: var(--bg-white);
+}
+
+.badge-solid.badge-error {
+  background: var(--color-danger);
+  color: var(--bg-white);
+}
+
+.badge-solid.badge-info {
+  background: var(--color-info);
+  color: var(--bg-white);
+}
+
+.badge-soft.badge-default {
+  background: var(--color-secondary-bg);
+  color: var(--color-secondary-text);
+}
+
+.badge-soft.badge-primary {
+  background: var(--color-secondary-bg);
+  color: var(--text-main);
+}
+
+.badge-soft.badge-success {
+  background: var(--tag-green-bg);
+  color: var(--tag-green-text);
+}
+
+.badge-soft.badge-warning {
+  background: var(--tag-yellow-bg);
+  color: var(--tag-yellow-text);
+}
+
+.badge-soft.badge-error {
+  background: var(--tag-pink-bg);
+  color: var(--tag-pink-text);
+}
+
+.badge-soft.badge-info {
+  background: var(--tag-blue-bg);
+  color: var(--tag-blue-text);
+}
+
+.badge-outline.badge-default {
+  color: var(--color-secondary-text);
+  border-color: var(--border-color);
+}
+
+.badge-outline.badge-primary {
+  color: var(--text-main);
+  border-color: var(--text-main);
+}
+
+.badge-outline.badge-success {
+  color: var(--tag-green-text);
+  border-color: var(--tag-green-text);
+}
+
+.badge-outline.badge-warning {
+  color: var(--tag-yellow-text);
+  border-color: var(--tag-yellow-text);
+}
+
+.badge-outline.badge-error {
+  color: var(--tag-pink-text);
+  border-color: var(--tag-pink-text);
+}
+
+.badge-outline.badge-info {
+  color: var(--tag-blue-text);
+  border-color: var(--tag-blue-text);
+}
+
+.badge-dot {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 18px;
+  height: 18px;
+  font-size: 10px;
+  padding: 0 4px;
+  border: 2px solid var(--bg-white);
+  border-radius: 999px;
+}

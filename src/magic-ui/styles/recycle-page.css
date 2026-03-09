@@ -1,0 +1,355 @@
+/* ============================================================
+   RECYCLE PAGE — recycle-page.css
+   回收站 Bento 卡片样式
+   依赖: bento.css, glassmorphism.css, design-tokens.css
+============================================================ */
+
+/* ── 页面容器 ── */
+.recycle-page {
+  position: relative;
+  min-height: 100%;
+}
+
+.ambient-glow {
+  position: absolute;
+  top: -10%;
+  left: -10%;
+  width: 50vw;
+  height: 50vh;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.1) 0%, transparent 70%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ambient-glow-2 {
+  position: absolute;
+  bottom: -10%;
+  right: -10%;
+  width: 60vw;
+  height: 60vh;
+  background: radial-gradient(circle, rgba(5, 150, 105, 0.1) 0%, transparent 70%);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.content-scroll {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 40px;
+  scrollbar-width: none;
+}
+
+.content-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.recycle-page .bento-grid {
+  padding: 0;
+}
+
+.bento-grid.bento-grid-recycle {
+  grid-auto-rows: auto !important;
+}
+
+.recycle-page .bento-card {
+  border-radius: 28px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.02);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+}
+
+.recycle-page .bento-card:hover {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.06);
+  transform: none;
+}
+
+/* ── Hero 卡片 ── */
+.recycle-hero {
+  background: linear-gradient(145deg, var(--bg-white) 0%, rgba(239, 68, 68, 0.04) 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32px 40px;
+}
+.recycle-hero-info h1 {
+  font-size: 32px;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0 0 12px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.recycle-hero-info h1 svg {
+  color: var(--color-danger);
+}
+.recycle-hero-info p {
+  color: var(--text-secondary);
+  font-size: 15px;
+  margin: 0;
+  max-width: 520px;
+  line-height: 1.5;
+}
+.recycle-hero-illustration {
+  width: 120px;
+  height: 120px;
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.08) 0%, transparent 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.recycle-hero-illustration svg {
+  color: var(--color-danger);
+  opacity: 0.6;
+}
+.btn-danger-outline {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger-border);
+  padding: 0 24px;
+  height: 40px;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.btn-danger-outline:hover {
+  background: var(--color-danger-soft-hover);
+}
+
+/* ── 统计栏 ── */
+.recycle-stats-bar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.recycle-stat-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-white);
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+}
+.recycle-stat-chip .stat-num {
+  font-size: 16px;
+  font-weight: 800;
+  color: var(--text-main);
+}
+
+/* ── 过滤栏 ── */
+.recycle-filter-bar {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+.recycle-filter-bar::-webkit-scrollbar { display: none; }
+.recycle-filter-btn {
+  padding: 10px 20px;
+  min-height: 40px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  background: var(--bg-white);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.recycle-filter-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-main);
+}
+.recycle-filter-btn.active {
+  background: rgba(239, 68, 68, 0.08);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+/* ── 回收卡片 ── */
+.recycle-card {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.recycle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+.recycle-icon-wrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 2px 4px rgba(255,255,255,0.5), 0 4px 12px rgba(0,0,0,0.05);
+}
+.type-novel     { background: linear-gradient(135deg, #60a5fa, #3b82f6); color: white; }
+.type-chapter   { background: linear-gradient(135deg, #34d399, #10b981); color: white; }
+.type-character  { background: linear-gradient(135deg, #f472b6, #ec4899); color: white; }
+.type-outline   { background: linear-gradient(135deg, #fbbf24, #f59e0b); color: white; }
+
+.recycle-countdown {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 20px;
+}
+.countdown-safe   { background: rgba(16,185,129,0.1); color: #10b981; }
+.countdown-warn   { background: rgba(251,191,36,0.12); color: #d97706; }
+.countdown-urgent { background: rgba(239,68,68,0.1); color: #ef4444; }
+
+.recycle-content h3 {
+  margin: 0 0 6px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.recycle-content .recycle-origin {
+  margin: 0 0 4px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.recycle-content p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.recycle-meta {
+  margin-top: auto;
+  padding-top: 16px;
+  border-top: 1px dashed var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.recycle-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.recycle-actions {
+  display: flex;
+  gap: 6px;
+}
+.btn-restore {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--bg-success-light);
+  color: var(--text-success-dark);
+  border: 1px solid var(--border-success);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.btn-restore:hover {
+  background: var(--border-success);
+}
+.btn-delete-permanent {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+}
+.btn-delete-permanent:hover {
+  background: var(--color-danger-soft-bg);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+.recycle-stat-info-chip {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ── 空状态 ── */
+.recycle-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ============================================================
+   DARK MODE OVERRIDES
+============================================================ */
+
+/* ── Hero 卡片暗色 ── */
+.dark .recycle-hero {
+  background: linear-gradient(145deg, var(--bg-white) 0%, rgba(239, 68, 68, 0.06) 100%);
+}
+.dark .recycle-hero-illustration {
+  background: radial-gradient(circle, rgba(239, 68, 68, 0.12) 0%, transparent 70%);
+}
+
+/* ── 过滤栏暗色 ── */
+.dark .recycle-filter-btn.active {
+  background: rgba(248, 113, 113, 0.1);
+  color: #f87171;
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+/* ── 回收卡片暗色 ── */
+.dark .recycle-icon-wrapper {
+  box-shadow: inset 0 2px 4px rgba(255,255,255,0.1), 0 4px 12px rgba(0,0,0,0.2);
+}
+
+/* ── 倒计时徽章暗色 ── */
+.dark .countdown-safe   { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+.dark .countdown-warn   { background: rgba(251, 191, 36, 0.15); color: #fbbf24; }
+.dark .countdown-urgent { background: rgba(248, 113, 113, 0.15); color: #f87171; }
+
+/* ── 恢复/删除按钮暗色 ── */
+.dark .btn-restore:hover {
+  background: rgba(5, 150, 105, 0.2);
+}

@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+/* magic-ui design system layer */
+@import "./magic-ui/styles/index.css";
+
+/* app-level non-component styles */
+@import "./magic-ui/styles/editor.css";
+@import "./magic-ui/styles/ai-chat-input.css";
+@import "./magic-ui/styles/ai-animations.css";
+@import "./magic-ui/styles/ai-message.css";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chat-user: var(--chat-user);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* AI Chat color tokens */
+  --color-ai-tool-card-bg: var(--ai-tool-card-bg);
+  --color-ai-tool-card-border: var(--ai-tool-card-border);
+  --color-ai-tool-card-header-bg: var(--ai-tool-card-header-bg);
+  --color-ai-status-running: var(--ai-status-running);
+  --color-ai-status-waiting: var(--ai-status-waiting);
+  --color-ai-status-success: var(--ai-status-success);
+  --color-ai-status-error: var(--ai-status-error);
+  --color-ai-status-cancelled: var(--ai-status-cancelled);
+  --color-ai-approval-bg: var(--ai-approval-bg);
+  --color-ai-approval-border: var(--ai-approval-border);
+  --color-ai-feedback-positive: var(--ai-feedback-positive);
+  --color-ai-feedback-negative: var(--ai-feedback-negative);
+  --color-ai-thinking-line: var(--ai-thinking-line);
+  --color-ai-thinking-bg: var(--ai-thinking-bg);
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+* {
+  border-color: var(--border);
+}
+

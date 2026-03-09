@@ -1,0 +1,263 @@
+/* ============================================================
+   AI CHAT INPUT — ai-chat-input.css
+   聊天输入框排版、Mention 标签、Streaming 光标。
+   依赖: design-tokens.css（变量定义）、dark-theme.css（暗色覆盖）
+============================================================ */
+
+/* ── Streaming 光标 ── */
+
+.ai-streaming-cursor {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    background: currentColor;
+    vertical-align: text-bottom;
+    animation: ai-cursor-blink 1s step-end infinite;
+}
+
+/* ── Mention 标签 ── */
+
+.mention {
+    background: var(--ai-approval-bg);
+    border-radius: var(--ai-radius-sm, 4px);
+    padding: 1px 4px;
+    font-size: 0.9em;
+    color: var(--primary);
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.chat-input-runtime-hint {
+    border: 1px solid var(--ai-input-divider);
+    border-radius: 8px;
+    background: var(--ai-input-footer-bg);
+}
+
+/* ── Chat Input Shell（外层容器）── */
+
+.chat-input-shell {
+    border: 1.5px solid var(--ai-input-shell-border);
+    border-radius: 12px;
+    background: var(--ai-input-shell-bg);
+    overflow: hidden;
+    box-shadow: var(--ai-input-shell-shadow);
+    transition: border-color 0.18s, box-shadow 0.18s, background-color 0.18s;
+}
+
+.chat-input-shell:focus-within {
+    border-color: var(--ai-input-shell-border-focus);
+    box-shadow: 0 0 0 3px var(--ai-input-shell-focus-ring), var(--ai-input-shell-shadow);
+}
+
+.chat-input-shell[data-disabled="true"] {
+    opacity: 0.72;
+    background: var(--ai-input-shell-disabled-bg);
+}
+
+/* ── Chat Input TipTap 编辑器覆盖 ── */
+
+.chat-input-editor {
+    background: transparent;
+}
+
+.chat-input-editor .ProseMirror {
+    outline: none;
+    min-height: 92px;
+    max-height: 220px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 14px;
+    font-size: 0.875rem;
+    line-height: 1.6;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.chat-input-editor .ProseMirror[contenteditable='false'] {
+    cursor: not-allowed;
+}
+
+.chat-input-editor .ProseMirror p {
+    margin: 0;
+}
+
+.chat-input-editor .ProseMirror p + p {
+    margin-top: 0.45rem;
+}
+
+/* ── Chat Input Footer ── */
+
+.chat-input-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 8px 8px;
+    border-top: 1px solid var(--ai-input-divider);
+    background: var(--ai-input-footer-bg);
+    gap: 4px;
+}
+
+.chat-input-footer-left,
+.chat-input-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+/* ── @ mention icon button ── */
+
+.chat-input-icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.chat-input-icon-btn:hover {
+    background: var(--ai-input-icon-hover-bg);
+    color: var(--text-main);
+}
+
+/* ── Model selector button ── */
+
+.chat-input-model-wrap {
+    position: relative;
+    padding-left: 10px;
+    margin-left: 2px;
+}
+
+.chat-input-model-wrap::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 5px;
+    bottom: 5px;
+    width: 1px;
+    background: var(--ai-input-divider);
+}
+
+.chat-input-model-selector {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 6px;
+    height: 28px;
+    width: auto;
+    min-width: 0;
+    padding: 0 8px;
+    border: 1px solid var(--ai-input-model-border);
+    border-radius: 7px;
+    background: var(--ai-input-model-bg);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: none;
+    transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.chat-input-model-selector:hover {
+    color: var(--text-main);
+    background: var(--ai-input-model-hover-bg);
+    border-color: var(--border-focus);
+}
+
+.chat-input-model-selector:focus-visible {
+    outline: none;
+    border-color: var(--ai-input-shell-border-focus);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--ai-input-shell-focus-ring) 82%, transparent);
+}
+
+.chat-input-model-selector[data-state='open'] {
+    border-color: var(--ai-input-model-open-border);
+    background: var(--ai-input-model-open-bg);
+    color: var(--ai-input-model-open-color);
+}
+
+.chat-input-model-selector > span {
+    min-width: 0;
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.chat-input-model-selector svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.chat-model-chevron {
+    color: var(--text-muted);
+}
+
+/* ── Send button ── */
+
+.chat-input-send-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    border: none;
+    background: var(--ai-input-send-bg);
+    color: #ffffff;
+    cursor: pointer;
+    transition: background-color 0.2s, transform 0.12s, opacity 0.12s;
+}
+
+.chat-input-send-btn:hover:not(:disabled) {
+    background: var(--ai-input-send-hover-bg);
+    transform: scale(1.06);
+}
+
+.chat-input-send-btn:active:not(:disabled) {
+    transform: scale(0.94);
+}
+
+.chat-input-send-btn[data-running='true'] {
+    border-radius: 7px;
+    background: var(--ai-input-send-stop-bg);
+}
+
+.chat-input-send-btn[data-running='true']:hover:not(:disabled) {
+    background: var(--ai-input-send-stop-hover-bg);
+    transform: none;
+}
+
+.chat-input-send-btn:disabled {
+    background: var(--ai-input-send-disabled-bg);
+    color: var(--ai-input-send-disabled-color);
+    cursor: not-allowed;
+    transform: none;
+}
+
+.chat-input-send-btn svg {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
