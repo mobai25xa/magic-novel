@@ -14,6 +14,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   AiPanelCardShell,
   AiPanelIconButton,
+  Badge,
   Button,
 } from '@/magic-ui/components'
 import {
