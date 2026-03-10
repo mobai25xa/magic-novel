@@ -6,7 +6,9 @@
 //! Aligned with docs/magic_plan/plan_agent/02-llm-providers-and-streaming-accumulator.md
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::agent_engine::messages::{AgentMessage, ContentBlock, Role};
@@ -94,6 +96,19 @@ impl StreamAccumulator {
                     // Best-effort parse: try to parse after each delta
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
                         accum.parsed_args = parsed;
+                    } else {
+                        // Fallback: extract any closed fields from partial JSON so UI can show key args.
+                        let extracted = extract_closed_json_fields(&accum.raw_args);
+                        if !extracted.is_empty() {
+                            if !accum.parsed_args.is_object() {
+                                accum.parsed_args = serde_json::Value::Object(serde_json::Map::new());
+                            }
+                            if let Some(obj) = accum.parsed_args.as_object_mut() {
+                                for (k, v) in extracted {
+                                    obj.insert(k, v);
+                                }
+                            }
+                        }
                     }
                     // If parse fails, keep last-good parsed_args
                 }
@@ -104,6 +119,18 @@ impl StreamAccumulator {
                     // Final parse attempt
                     if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
                         accum.parsed_args = parsed;
+                    } else {
+                        let extracted = extract_closed_json_fields(&accum.raw_args);
+                        if !extracted.is_empty() {
+                            if !accum.parsed_args.is_object() {
+                                accum.parsed_args = serde_json::Value::Object(serde_json::Map::new());
+                            }
+                            if let Some(obj) = accum.parsed_args.as_object_mut() {
+                                for (k, v) in extracted {
+                                    obj.insert(k, v);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -112,9 +139,17 @@ impl StreamAccumulator {
                 output_tokens,
                 cache_read,
             } => {
-                self.usage.input_tokens = *input_tokens;
-                self.usage.output_tokens = *output_tokens;
-                self.usage.cache_read = *cache_read;
+                // Providers may report usage in multiple chunks (e.g. input first, output later).
+                // Preserve previously observed non-zero values.
+                if *input_tokens > 0 {
+                    self.usage.input_tokens = *input_tokens;
+                }
+                if *output_tokens > 0 {
+                    self.usage.output_tokens = *output_tokens;
+                }
+                if *cache_read > 0 {
+                    self.usage.cache_read = *cache_read;
+                }
             }
             LlmStreamEvent::Stop { reason } => {
                 self.stop_reason = Some(reason.clone());
@@ -195,6 +230,31 @@ impl Default for StreamAccumulator {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn extract_closed_json_fields(raw: &str) -> serde_json::Map<String, serde_json::Value> {
+    // Extract top-level closed primitive fields from a partial JSON object.
+    // This is intentionally conservative: strings + primitives only.
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r#"(?:^|[,{])\s*"(?P<key>[^"\\]+)"\s*:\s*(?P<val>"(?:\\.|[^"\\])*"|true|false|null|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)"#)
+            .expect("valid regex")
+    });
+
+    let mut out = serde_json::Map::new();
+    for caps in re.captures_iter(raw) {
+        let key = caps.name("key").map(|m| m.as_str()).unwrap_or("");
+        let val = caps.name("val").map(|m| m.as_str()).unwrap_or("");
+        if key.trim().is_empty() || val.trim().is_empty() {
+            continue;
+        }
+
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(val) {
+            out.insert(key.to_string(), value);
+        }
+    }
+
+    out
 }
 
 #[cfg(test)]

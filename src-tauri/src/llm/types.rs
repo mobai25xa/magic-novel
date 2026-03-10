@@ -54,6 +54,22 @@ fn default_true() -> bool {
     true
 }
 
+fn resolve_parallel_tool_calls(provider_name: &str, model: &str) -> bool {
+    if let Ok(raw) = std::env::var("MAGIC_PARALLEL_TOOL_CALLS") {
+        let normalized = raw.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "0" | "false" | "off" | "no" | "disabled" => return false,
+            "1" | "true" | "on" | "yes" | "enabled" => return true,
+            _ => {}
+        }
+    }
+
+    // Default: enabled. Providers/models with strict sequential semantics can be
+    // forced off via the env var above.
+    let _ = (provider_name, model);
+    true
+}
+
 fn default_temperature() -> f32 {
     0.2
 }
@@ -203,7 +219,7 @@ impl LlmRequest {
             messages,
             tools,
             tool_choice,
-            parallel_tool_calls: default_true(),
+            parallel_tool_calls: resolve_parallel_tool_calls(provider_name, model),
             temperature,
             reasoning: None,
         }

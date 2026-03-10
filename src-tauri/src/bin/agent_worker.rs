@@ -19,7 +19,10 @@ use magic_novel_lib::agent_engine::types::LoopConfig;
 use magic_novel_lib::llm::router::RetryConfig;
 use magic_novel_lib::llm::router_factory::build_router;
 use magic_novel_lib::llm::streaming_turn::StreamingTurnEngine;
-use magic_novel_lib::mission::types::HandoffEntry;
+use magic_novel_lib::mission::types::{HandoffEntry, INTEGRATOR_FEATURE_ID};
+use magic_novel_lib::mission::worker_profile::{
+    builtin_general_worker_profile, builtin_integrator_worker_profile, WorkerProfile,
+};
 use magic_novel_lib::mission::worker_protocol::*;
 
 #[derive(Clone)]
@@ -289,17 +292,59 @@ async fn execute_feature(
         return Err("missing base_url/api_key in worker start payload".into());
     }
 
+    let mission_id = payload.mission_id.trim();
+    let mission_id = if mission_id.is_empty() {
+        "unknown"
+    } else {
+        mission_id
+    };
+    let worker_id = payload.worker_id.trim();
+    let worker_id = if worker_id.is_empty() {
+        ws.worker_id.as_str()
+    } else {
+        worker_id
+    };
+
+    let mut worker_profile: WorkerProfile = payload
+        .worker_profile
+        .clone()
+        .unwrap_or_else(|| {
+            if payload.feature.id == INTEGRATOR_FEATURE_ID
+                || payload.feature.skill.trim().eq_ignore_ascii_case("integrator")
+            {
+                builtin_integrator_worker_profile()
+            } else {
+                builtin_general_worker_profile()
+            }
+        });
+    if worker_profile.tool_whitelist.is_empty() {
+        worker_profile.tool_whitelist = builtin_general_worker_profile().tool_whitelist;
+    }
+
+    let effective_model = worker_profile
+        .model
+        .as_deref()
+        .unwrap_or(payload.model.as_str())
+        .trim()
+        .to_string();
+
+    let tools_list = if worker_profile.tool_whitelist.is_empty() {
+        "(none)".to_string()
+    } else {
+        worker_profile.tool_whitelist.join(", ")
+    };
+
     // Build system prompt
     let system_prompt = format!(
-        "You are a writing assistant worker completing a mission feature.\n\
-         Feature ID: {}\n\
-         Feature Description: {}\n\
-         Project Path: {}\n\
-         Mission Dir: {}\n\n\
-         Complete the feature using the available tools (read, edit, create, ls, grep).\n\
-         Use todowrite only for milestone-level updates with user-verifiable tasks and keep one in_progress item.\n\
-         Policy: edit/create without a prior successful todowrite in the same round will be rejected.",
-        payload.feature.id, payload.feature.description, ws.project_path, ws.mission_dir,
+        "{}\n\n[Mission Context]\nMission ID: {}\nWorker ID: {}\nFeature ID: {}\nFeature Description: {}\nProject Path: {}\nMission Dir: {}\n\nAvailable tools: {}\n\nPolicy: for multi-step changes, call todowrite first with milestone-level, user-verifiable tasks and keep one in_progress item.",
+        worker_profile.system_prompt.trim(),
+        mission_id,
+        worker_id,
+        payload.feature.id,
+        payload.feature.description,
+        ws.project_path,
+        ws.mission_dir,
+        tools_list,
     );
 
     // Build user message
@@ -326,20 +371,28 @@ async fn execute_feature(
     conv.messages.push(AgentMessage::system(system_prompt));
     conv.messages.push(AgentMessage::user(user_text));
 
+    // Infer active chapter path (best-effort)
+    let active_chapter_path = infer_active_chapter_path(&payload.feature.write_paths);
+
     // Build StdoutEventSink (turn_id = 1 for worker-initiated turns)
-    let sink = StdoutEventSink::new(payload.session_id.clone(), 1);
+    let sink = StdoutEventSink::new(
+        payload.session_id.clone(),
+        1,
+        mission_id.to_string(),
+        worker_id.to_string(),
+    );
 
     // Emit turn_started
     use magic_novel_lib::agent_engine::emitter::EventSink;
     sink.turn_started(
         &payload.feature.description,
         &payload.provider,
-        &payload.model,
+        &effective_model,
     )
     .ok();
 
     // Build loop config (auto approval + headless clarification for worker execution)
-    let loop_config = LoopConfig::headless_worker(20, 80);
+    let loop_config = LoopConfig::headless_worker(worker_profile.max_rounds, worker_profile.max_tool_calls);
 
     // Build and run AgentLoop
     let agent_loop = AgentLoop::new(
@@ -350,9 +403,16 @@ async fn execute_feature(
     )
     .with_provider_info(
         payload.provider.clone(),
-        payload.model.clone(),
+        effective_model.clone(),
         base_url.clone(),
         api_key.clone(),
+    )
+    .with_tool_whitelist(Some(worker_profile.tool_whitelist.clone()))
+    .with_active_chapter_path(active_chapter_path)
+    .with_active_skill(
+        Some(payload.feature.skill.clone())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty()),
     );
 
     let router = build_router(&payload.provider, base_url, api_key, RetryConfig::worker());
@@ -360,7 +420,7 @@ async fn execute_feature(
         router,
         sink,
         payload.provider.clone(),
-        payload.model.clone(),
+        effective_model,
     )
     .with_cancel_token(cancel_token);
 
@@ -397,6 +457,24 @@ async fn execute_feature(
         });
 
     Ok(summary)
+}
+
+fn infer_active_chapter_path(write_paths: &[String]) -> Option<String> {
+    if write_paths.len() != 1 {
+        return None;
+    }
+
+    let raw = write_paths[0].trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let normalized = raw.replace('\\', "/");
+    if normalized.ends_with(".json") {
+        Some(normalized)
+    } else {
+        None
+    }
 }
 
 /// Write a WorkerEvent as NDJSON to stdout with mandatory flush.

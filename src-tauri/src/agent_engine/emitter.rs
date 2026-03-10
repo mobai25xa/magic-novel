@@ -432,13 +432,17 @@ impl EventSink for AgentEventEmitter {
 pub struct StdoutEventSink {
     pub session_id: String,
     pub turn_id: u32,
+    pub worker_id: String,
+    pub mission_id: String,
 }
 
 impl StdoutEventSink {
-    pub fn new(session_id: String, turn_id: u32) -> Self {
+    pub fn new(session_id: String, turn_id: u32, mission_id: String, worker_id: String) -> Self {
         Self {
             session_id,
             turn_id,
+            worker_id,
+            mission_id,
         }
     }
 }
@@ -454,8 +458,8 @@ impl EventSink for StdoutEventSink {
             "turn_id": self.turn_id,
             "source": {
                 "kind": "worker",
-                "worker_id": serde_json::Value::Null,
-                "mission_id": serde_json::Value::Null,
+                "worker_id": self.worker_id,
+                "mission_id": self.mission_id,
             },
             "type": event_type,
             "payload": payload,
@@ -493,7 +497,12 @@ mod tests {
 
     #[test]
     fn stdout_sink_envelope_includes_event_id_and_source() {
-        let sink = StdoutEventSink::new("session_test".to_string(), 7);
+        let sink = StdoutEventSink::new(
+            "session_test".to_string(),
+            7,
+            "mis_test".to_string(),
+            "wk_test".to_string(),
+        );
         let payload = serde_json::json!({ "delta": "hello" });
 
         let envelope = serde_json::json!({
@@ -503,8 +512,8 @@ mod tests {
             "turn_id": sink.turn_id,
             "source": {
                 "kind": "worker",
-                "worker_id": serde_json::Value::Null,
-                "mission_id": serde_json::Value::Null,
+                "worker_id": sink.worker_id,
+                "mission_id": sink.mission_id,
             },
             "type": "ASSISTANT_TEXT_DELTA",
             "payload": payload,
@@ -530,7 +539,7 @@ mod tests {
             .and_then(|v| v.as_object())
             .expect("source must be object");
         assert_eq!(source.get("kind").and_then(|v| v.as_str()), Some("worker"));
-        assert!(source.contains_key("worker_id"));
-        assert!(source.contains_key("mission_id"));
+        assert_eq!(source.get("worker_id").and_then(|v| v.as_str()), Some("wk_test"));
+        assert_eq!(source.get("mission_id").and_then(|v| v.as_str()), Some("mis_test"));
     }
 }

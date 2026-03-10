@@ -19,7 +19,12 @@ use crate::mission::types::*;
 use crate::mission::worker_protocol::{
     FeatureCompletedPayload, StartFeaturePayload, WorkerEventType,
 };
+use crate::mission::worker_profile::{
+    builtin_general_worker_profile, builtin_integrator_worker_profile, WorkerProfile,
+    WorkerProfileSummary, WorkerRunEntry,
+};
 use crate::models::{AppError, ErrorCode};
+use crate::services::global_config;
 
 use crate::agent_engine::types::{DEFAULT_MODEL, DEFAULT_PROVIDER};
 
@@ -48,11 +53,13 @@ async fn start_feature_on_worker(
     orch: &Orchestrator<'_>,
     worker: &WorkerProcess,
     emitter: &MissionEventEmitter,
+    project_path: &std::path::Path,
     mission_id: &str,
     feature: Feature,
     run_config: &MissionRunConfig,
     worker_id: &str,
     attempt: u32,
+    worker_profile: WorkerProfile,
     rollback_to_pending_on_start_error: bool,
     emit_orchestrator_transition: bool,
 ) -> Result<String, AppError> {
@@ -62,6 +69,30 @@ async fn start_feature_on_worker(
         feature.id,
         attempt,
         chrono::Utc::now().timestamp_millis()
+    );
+
+    let effective_model = worker_profile
+        .model
+        .as_deref()
+        .unwrap_or(run_config.model.as_str())
+        .trim()
+        .to_string();
+    let profile_summary = WorkerProfileSummary::from_profile(&worker_profile);
+
+    let _ = artifacts::append_worker_run(
+        project_path,
+        mission_id,
+        &WorkerRunEntry {
+            schema_version: MISSION_SCHEMA_VERSION,
+            ts: chrono::Utc::now().timestamp_millis(),
+            mission_id: mission_id.to_string(),
+            feature_id: feature.id.clone(),
+            worker_id: worker_id.to_string(),
+            attempt,
+            profile: profile_summary,
+            provider: run_config.provider.clone(),
+            model: effective_model.clone(),
+        },
     );
 
     orch.start_feature(&feature.id, worker_id, attempt)?;
@@ -74,10 +105,15 @@ async fn start_feature_on_worker(
         .start_feature(StartFeaturePayload {
             feature: feature.clone(),
             session_id,
-            model: run_config.model.clone(),
+            model: effective_model,
             provider: run_config.provider.clone(),
             base_url: run_config.base_url.clone(),
             api_key: run_config.api_key.clone(),
+            mission_id: mission_id.to_string(),
+            worker_id: worker_id.to_string(),
+            worker_profile: Some(worker_profile),
+            parent_session_id: None,
+            parent_turn_id: None,
         })
         .await
     {
@@ -285,6 +321,94 @@ fn enrich_integrator_feature_context(
     Ok(())
 }
 
+fn select_worker_profile_for_feature(
+    feature: &Feature,
+    worker_defs: &[global_config::WorkerDefinition],
+) -> WorkerProfile {
+    let skill = feature.skill.trim();
+    if !skill.is_empty() {
+        if let Some(def) = worker_defs
+            .iter()
+            .find(|d| d.name.trim().eq_ignore_ascii_case(skill))
+        {
+            let mut profile = WorkerProfile::from_definition(def);
+            if profile.tool_whitelist.is_empty() {
+                profile.tool_whitelist = builtin_general_worker_profile().tool_whitelist;
+            }
+            return profile;
+        }
+
+        if skill.eq_ignore_ascii_case("integrator") || feature.id == INTEGRATOR_FEATURE_ID {
+            return builtin_integrator_worker_profile();
+        }
+    }
+
+    if feature.id == INTEGRATOR_FEATURE_ID {
+        // Prefer user-defined integrator worker if present.
+        if let Some(def) = worker_defs
+            .iter()
+            .find(|d| d.name.trim().eq_ignore_ascii_case("integrator"))
+        {
+            let mut profile = WorkerProfile::from_definition(def);
+            if profile.tool_whitelist.is_empty() {
+                profile.tool_whitelist = builtin_integrator_worker_profile().tool_whitelist;
+            }
+            return profile;
+        }
+        return builtin_integrator_worker_profile();
+    }
+
+    let desc = feature.description.to_lowercase();
+    let mut best: Option<(&global_config::WorkerDefinition, usize)> = None;
+    for def in worker_defs {
+        if def.match_keywords.is_empty() {
+            continue;
+        }
+        let matches = def
+            .match_keywords
+            .iter()
+            .map(|k| k.trim().to_lowercase())
+            .filter(|k| !k.is_empty())
+            .filter(|k| desc.contains(k))
+            .count();
+        if matches == 0 {
+            continue;
+        }
+
+        if best
+            .as_ref()
+            .map(|(_, best_matches)| matches > *best_matches)
+            .unwrap_or(true)
+        {
+            best = Some((def, matches));
+        }
+    }
+
+    if let Some((def, _)) = best {
+        let mut profile = WorkerProfile::from_definition(def);
+        if profile.tool_whitelist.is_empty() {
+            profile.tool_whitelist = builtin_general_worker_profile().tool_whitelist;
+        }
+        return profile;
+    }
+
+    // Prefer conventional default worker names when present.
+    for name in ["general-worker", "draft-worker", "general", "draft"] {
+        if let Some(def) = worker_defs
+            .iter()
+            .find(|d| d.name.trim().eq_ignore_ascii_case(name))
+        {
+            let mut profile = WorkerProfile::from_definition(def);
+            if profile.tool_whitelist.is_empty() {
+                profile.tool_whitelist = builtin_general_worker_profile().tool_whitelist;
+            }
+            return profile;
+        }
+    }
+
+    builtin_general_worker_profile()
+}
+
 fn update_worker_assignment_heartbeat(
     project_path: &std::path::Path,
     mission_id: &str,
@@ -354,11 +478,15 @@ async fn schedule_ready_features(
         return Ok(Vec::new());
     }
 
+    let worker_defs = global_config::load_worker_definitions();
+
     let mut started = Vec::new();
 
     for (idx, feature) in ready_features.into_iter().enumerate() {
         let mut feature = feature;
         let _ = enrich_integrator_feature_context(project_path, mission_id, &mut feature);
+
+        let worker_profile = select_worker_profile_for_feature(&feature, &worker_defs);
 
         let (worker_id, worker_arc) =
             spawn_and_initialize_worker(project_path, project_path_str, mission_id).await?;
@@ -370,11 +498,13 @@ async fn schedule_ready_features(
                 orch,
                 &*worker,
                 emitter,
+                project_path,
                 mission_id,
                 feature.clone(),
                 &start_config.run_config,
                 &worker_id,
                 attempt,
+                worker_profile,
                 true,
                 emit_orchestrator_transition && idx == 0,
             )
@@ -664,7 +794,7 @@ async fn try_recover_worker(
     }
 
     let new_worker_arc = Arc::new(TokioMutex::new(new_worker));
-    let feature = {
+    let mut feature = {
         let features_doc = orch.get_features()?;
         features_doc
             .features
@@ -674,17 +804,28 @@ async fn try_recover_worker(
             .ok_or_else(|| AppError::not_found(format!("feature not found: {}", ctx.feature_id)))?
     };
 
+    let _ = enrich_integrator_feature_context(
+        std::path::Path::new(&ctx.project_path),
+        &ctx.mission_id,
+        &mut feature,
+    );
+
+    let worker_defs = global_config::load_worker_definitions();
+    let worker_profile = select_worker_profile_for_feature(&feature, &worker_defs);
+
     let start_result = {
         let w = new_worker_arc.lock().await;
         start_feature_on_worker(
             orch,
             &*w,
             emitter,
+            std::path::Path::new(&ctx.project_path),
             &ctx.mission_id,
             feature,
             &ctx.run_config,
             &new_worker_id,
             next_attempt,
+            worker_profile,
             true,
             false,
         )
@@ -959,9 +1100,14 @@ fn spawn_worker_supervision_tasks(
                 Some(Ok(worker_event)) => match worker_event.event_type {
                     WorkerEventType::AgentEvent => {
                         use tauri::Emitter;
+                        let enriched = enrich_worker_agent_event_payload(
+                            worker_event.payload,
+                            &mission_id,
+                            &worker_id,
+                        );
                         let _ = app_handle.emit(
                             crate::agent_engine::events::AGENT_EVENT_CHANNEL,
-                            &worker_event.payload,
+                            &enriched,
                         );
                     }
                     WorkerEventType::FeatureCompleted => {
@@ -1136,6 +1282,32 @@ fn spawn_worker_supervision_tasks(
             "worker event monitor task exiting"
         );
     });
+}
+
+fn enrich_worker_agent_event_payload(
+    mut payload: serde_json::Value,
+    mission_id: &str,
+    worker_id: &str,
+) -> serde_json::Value {
+    let Some(obj) = payload.as_object_mut() else {
+        return payload;
+    };
+
+    // Ensure source object exists.
+    let source = obj
+        .entry("source".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if !source.is_object() {
+        *source = serde_json::json!({});
+    }
+
+    if let Some(src) = source.as_object_mut() {
+        src.insert("kind".to_string(), serde_json::json!("worker"));
+        src.insert("worker_id".to_string(), serde_json::json!(worker_id));
+        src.insert("mission_id".to_string(), serde_json::json!(mission_id));
+    }
+
+    payload
 }
 
 // ── Input/Output DTOs ───────────────────────────────────────────

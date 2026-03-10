@@ -14,6 +14,7 @@ use crate::models::AppError;
 use crate::utils::atomic_write::atomic_write_json;
 
 use super::types::*;
+use super::worker_profile::WorkerRunEntry;
 
 // ── Path helpers ────────────────────────────────────────────────
 
@@ -44,6 +45,10 @@ pub fn handoffs_path(project_path: &Path, mission_id: &str) -> PathBuf {
     mission_dir(project_path, mission_id).join("handoffs.jsonl")
 }
 
+pub fn worker_runs_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join("worker_runs.jsonl")
+}
+
 // ── Init ────────────────────────────────────────────────────────
 
 /// Create the mission directory and write initial artifacts.
@@ -68,6 +73,9 @@ pub fn init_mission_dir(
 
     // Create empty handoffs.jsonl
     std::fs::write(handoffs_path(project_path, mission_id), "")?;
+
+    // Create empty worker_runs.jsonl (append-only)
+    std::fs::write(worker_runs_path(project_path, mission_id), "")?;
 
     Ok(dir)
 }
@@ -209,6 +217,23 @@ pub fn append_handoff(
     Ok(())
 }
 
+pub fn append_worker_run(
+    project_path: &Path,
+    mission_id: &str,
+    entry: &WorkerRunEntry,
+) -> Result<(), AppError> {
+    let path = worker_runs_path(project_path, mission_id);
+    let line = serde_json::to_string(entry)? + "\n";
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    file.write_all(line.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+
 // ── List missions ───────────────────────────────────────────────
 
 pub fn list_missions(project_path: &Path) -> Result<Vec<String>, AppError> {
@@ -301,6 +326,7 @@ mod tests {
         assert!(features_path(&project, mission_id).exists());
         assert!(state_path(&project, mission_id).exists());
         assert!(handoffs_path(&project, mission_id).exists());
+        assert!(worker_runs_path(&project, mission_id).exists());
 
         // Read back
         let md = read_mission_md(&project, mission_id).unwrap();

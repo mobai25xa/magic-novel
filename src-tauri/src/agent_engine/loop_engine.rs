@@ -23,9 +23,7 @@ use super::tool_routing::resolve_turn_tool_exposure;
 use super::tool_scheduler::ToolScheduler;
 use super::turn::TurnEngine;
 use super::types::{LoopConfig, StopReason, ToolCallInfo, DEFAULT_MODEL, DEFAULT_PROVIDER};
-use super::worker_dispatch::{
-    dispatch_worker_items, extract_worker_todo_items, format_worker_results, has_worker_items,
-};
+use super::worker_dispatch::{extract_worker_todo_items, has_worker_items};
 
 /// Result from a complete agent loop run
 #[derive(Debug, Clone)]
@@ -259,16 +257,14 @@ impl<S: EventSink> AgentLoop<S> {
             // Check cancellation before each round
             if self.cancel_token.is_cancelled() {
                 let latency_ms = loop_start.elapsed().as_millis() as u64;
-                self.emitter.turn_completed_with_meta(
-                    &StopReason::Cancel,
-                    latency_ms,
-                    false,
-                    Some(with_turn_outcome_meta(
-                        &tool_exposure_payload,
-                        total_tool_calls,
-                        rounds_executed,
-                    )),
-                )?;
+                let mut payload =
+                    with_turn_outcome_meta(&tool_exposure_payload, total_tool_calls, rounds_executed);
+                if let Some(map) = payload.as_object_mut() {
+                    map.insert("stop_reason".to_string(), json!(StopReason::Cancel));
+                    map.insert("latency_ms".to_string(), json!(latency_ms));
+                }
+                self.emitter
+                    .emit_raw(super::events::event_types::TURN_CANCELLED, payload)?;
                 return Ok(LoopResult {
                     stop_reason: StopReason::Cancel,
                     rounds_executed,
@@ -308,16 +304,18 @@ impl<S: EventSink> AgentLoop<S> {
 
                     if error_code == "E_CANCELLED" {
                         let latency_ms = loop_start.elapsed().as_millis() as u64;
-                        self.emitter.turn_completed_with_meta(
-                            &StopReason::Cancel,
-                            latency_ms,
-                            false,
-                            Some(with_turn_outcome_meta(
-                                &tool_exposure_payload,
-                                total_tool_calls,
-                                rounds_executed,
-                            )),
-                        )?;
+                        let mut payload = with_turn_outcome_meta(
+                            &tool_exposure_payload,
+                            total_tool_calls,
+                            rounds_executed,
+                        );
+                        if let Some(map) = payload.as_object_mut() {
+                            map.insert("stop_reason".to_string(), json!(StopReason::Cancel));
+                            map.insert("latency_ms".to_string(), json!(latency_ms));
+                            map.insert("error_code".to_string(), json!("E_CANCELLED"));
+                        }
+                        self.emitter
+                            .emit_raw(super::events::event_types::TURN_CANCELLED, payload)?;
                         return Ok(LoopResult {
                             stop_reason: StopReason::Cancel,
                             rounds_executed,
@@ -422,11 +420,71 @@ impl<S: EventSink> AgentLoop<S> {
                 self.project_path.clone(),
                 self.config.approval_mode,
                 self.config.clarification_mode,
+                self.cancel_token.clone(),
             )
             .with_active_chapter_path(self.active_chapter_path.clone())
-            .with_active_skill(active_skill.clone());
+            .with_active_skill(active_skill.clone())
+            .with_allowed_tools(Some(tool_schema_bundle.exposed_tools.clone()));
 
-            let exec_result = scheduler.execute_batch(turn_out.tool_calls).await?;
+            let exec_result = match scheduler.execute_batch(turn_out.tool_calls).await {
+                Ok(res) => res,
+                Err(e) => {
+                    let error_code = e
+                        .details
+                        .as_ref()
+                        .and_then(|d| d.get("code"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("E_TOOL_SCHEDULER_FAILED");
+
+                    if error_code == "E_CANCELLED" {
+                        let latency_ms = loop_start.elapsed().as_millis() as u64;
+                        let mut payload = with_turn_outcome_meta(
+                            &tool_exposure_payload,
+                            total_tool_calls,
+                            rounds_executed,
+                        );
+                        if let Some(map) = payload.as_object_mut() {
+                            map.insert("stop_reason".to_string(), json!(StopReason::Cancel));
+                            map.insert("latency_ms".to_string(), json!(latency_ms));
+                            map.insert("error_code".to_string(), json!("E_CANCELLED"));
+                        }
+                        self.emitter
+                            .emit_raw(super::events::event_types::TURN_CANCELLED, payload)?;
+                        return Ok(LoopResult {
+                            stop_reason: StopReason::Cancel,
+                            rounds_executed,
+                            total_tool_calls,
+                            latency_ms,
+                            active_skill: active_skill.clone(),
+                        });
+                    }
+
+                    let error_detail = enrich_turn_failure_detail(
+                        e.details.clone(),
+                        error_code,
+                        &provider_name,
+                        &model_name,
+                        &resolved_tool_exposure.telemetry,
+                        &tool_schema_bundle.exposed_tools,
+                        &tool_schema_bundle.skipped_tools,
+                        total_tool_calls,
+                        rounds_executed,
+                    );
+                    emit_turn_failed_observability_metrics(
+                        &state.session_id,
+                        &provider_name,
+                        &model_name,
+                        &resolved_tool_exposure.telemetry,
+                        error_code,
+                        error_detail.as_ref(),
+                        total_tool_calls,
+                        rounds_executed,
+                    );
+                    self.emitter
+                        .turn_failed(error_code, &e.message, error_detail)?;
+                    return Err(e);
+                }
+            };
 
             total_tool_calls += exec_result.executed_count;
             state.total_tool_calls = total_tool_calls;
@@ -452,35 +510,16 @@ impl<S: EventSink> AgentLoop<S> {
                 state.messages.push(msg);
             }
 
-            // (D') Worker dispatch
+            // (D') Legacy todo-worker dispatch is retired. Keep parsing for compatibility,
+            // but do not execute worker-assigned todo items.
             let todo_items = extract_worker_todo_items(&tool_calls_snapshot);
-            if self.config.worker_dispatch_enabled && has_worker_items(&todo_items) {
+            if has_worker_items(&todo_items) {
                 tracing::info!(
                     target: "agent_engine",
                     session_id = %state.session_id,
                     worker_items = todo_items.iter().filter(|i| i.worker.is_some()).count(),
-                    "dispatching worker sub-loops"
+                    "worker todo items detected but legacy dispatch is retired; ignoring"
                 );
-                let worker_results = dispatch_worker_items(
-                    &todo_items,
-                    &self.emitter,
-                    &self.project_path,
-                    &self.provider_name,
-                    &self.model,
-                    &self.base_url,
-                    &self.api_key,
-                    self.active_chapter_path.as_deref(),
-                    &self.cancel_token,
-                )
-                .await?;
-
-                if !worker_results.is_empty() {
-                    let summary = format_worker_results(&worker_results);
-                    state.messages.push(AgentMessage::system(summary));
-                    let worker_tool_count: u32 = worker_results.len() as u32;
-                    total_tool_calls += worker_tool_count;
-                    state.total_tool_calls = total_tool_calls;
-                }
             }
 
             // Check safety valve
