@@ -14,7 +14,6 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   AiPanelCardShell,
   AiPanelIconButton,
-  Badge,
   Button,
 } from '@/magic-ui/components'
 import {
@@ -31,82 +30,23 @@ import {
   missionGetStatusFeature,
 } from '@/features/agent-chat'
 
+import { AiStatusBadge } from './status-badge'
+import { WorkerStepCard } from './worker-step-card'
+
 // ── Sub-components ───────────────────────────────────────────────
-
-function StateBadge({ state }: { state: string }) {
-  const colorMap: Record<string, 'default' | 'info' | 'success' | 'warning' | 'error'> = {
-    awaiting_input: 'default',
-    initializing: 'info',
-    running: 'info',
-    paused: 'warning',
-    orchestrator_turn: 'info',
-    completed: 'success',
-  }
-  const color = colorMap[state] ?? 'default'
-  return (
-    <Badge color={color} variant="soft" size="sm">
-      {state.replace('_', ' ')}
-    </Badge>
-  )
-}
-
-function FeatureStatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, 'default' | 'info' | 'success' | 'error'> = {
-    pending: 'default',
-    in_progress: 'info',
-    completed: 'success',
-    failed: 'error',
-    cancelled: 'default',
-  }
-  const color = colorMap[status] ?? 'default'
-  return (
-    <Badge color={color} variant="soft" size="sm" className={status === 'cancelled' ? 'line-through' : undefined}>
-      {status.replace('_', ' ')}
-    </Badge>
-  )
-}
-
-function WorkerRow({
-  workerId,
-  info,
-}: {
-  workerId: string
-  info: { featureId: string; status: string; summary?: string; updatedAt: number }
-}) {
-  return (
-    <div className="flex items-start gap-2 py-1 text-xs border-b border-b-border last:border-0">
-      <span className="font-mono text-muted-foreground truncate max-w-[90px]" title={workerId}>
-        {workerId.slice(0, 10)}…
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1">
-          <span className="truncate opacity-80">{info.featureId}</span>
-          <FeatureStatusBadge status={info.status} />
-        </div>
-        {info.summary && (
-          <p className="text-muted-foreground truncate mt-0.5">{info.summary}</p>
-        )}
-      </div>
-    </div>
-  )
-}
-
 function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string }> }) {
   if (entries.length === 0) return null
   return (
-    <div className="mt-2">
-      <p className="text-xs font-medium text-secondary-foreground mb-1">Progress</p>
-      <div className="max-h-28 overflow-y-auto space-y-0.5 text-xs font-mono">
-        {entries
-          .slice()
-          .reverse()
-          .map((e, i) => (
-            <div key={i} className="">
-              <span className="opacity-50">{new Date(e.ts).toLocaleTimeString()} </span>
-              {e.message}
-            </div>
-          ))}
-      </div>
+    <div className="mt-2 max-h-28 overflow-y-auto space-y-0.5 text-xs font-mono">
+      {entries
+        .slice()
+        .reverse()
+        .map((e, i) => (
+          <div key={i}>
+            <span className="opacity-50">{new Date(e.ts).toLocaleTimeString()} </span>
+            {e.message}
+          </div>
+        ))}
     </div>
   )
 }
@@ -122,6 +62,37 @@ interface MissionPanelProps {
 
 type MissionStatusPayload = Awaited<ReturnType<typeof missionGetStatusFeature>>
 
+function resolveWorkersDefaultOpen(input: {
+  liveState: string
+  workerEntries: Array<[string, { status: string }]>
+  failedHandoffs: number
+}) {
+  if (input.failedHandoffs > 0) {
+    return true
+  }
+
+  const hasRunning = input.workerEntries.some(([, info]) => info.status === 'running')
+  if (hasRunning) {
+    return true
+  }
+
+  return input.liveState === 'running' || input.liveState === 'initializing'
+}
+
+function computeIssueCountByWorkerId(handoffs: MissionStatusPayload['handoffs']) {
+  const counts: Record<string, number> = {}
+  for (const entry of handoffs) {
+    const wid = String(entry.worker_id ?? '')
+    if (!wid) {
+      continue
+    }
+
+    const issues = Array.isArray(entry.issues) ? entry.issues.length : 0
+    counts[wid] = (counts[wid] ?? 0) + issues
+  }
+  return counts
+}
+
 export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelProps) {
   const [missionUi, setMissionUi] = useState<MissionUiState | null>(
     getMissionUiState,
@@ -131,10 +102,21 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [featuresOpen, setFeaturesOpen] = useState(false)
+  const [workersOpenOverride, setWorkersOpenOverride] = useState<boolean | null>(null)
+  const [handoffsOpenOverride, setHandoffsOpenOverride] = useState<boolean | null>(null)
+  const [progressOpen, setProgressOpen] = useState(false)
+  const [handoffOpenByKey, setHandoffOpenByKey] = useState<Record<string, boolean>>({})
+
   useEffect(() => {
     setInitialLoading(true)
     setStatusDetail(null)
     setMissionUi(getMissionUiState())
+    setFeaturesOpen(false)
+    setWorkersOpenOverride(null)
+    setHandoffsOpenOverride(null)
+    setProgressOpen(false)
+    setHandoffOpenByKey({})
   }, [missionId])
 
   // Subscribe to live mission events
@@ -237,12 +219,29 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const progressLog = missionUi?.progressLog ?? []
   const workerEntries = Object.entries(workerStatuses).sort(([, left], [, right]) => right.updatedAt - left.updatedAt)
 
+  const completedFeatureCount = features.filter((f) => f.status === 'completed').length
+  const failedFeatureCount = features.filter((f) => f.status === 'failed').length
+  const runningWorkersCount = workerEntries.filter(([, info]) => info.status === 'running').length
+  const failedWorkersCount = workerEntries.filter(([, info]) => info.status === 'failed').length
+  const failedHandoffCount = handoffs.filter((h) => !h.ok).length
+  const issueCountByWorkerId = computeIssueCountByWorkerId(handoffs)
+  const lastProgress = progressLog.length > 0 ? progressLog[progressLog.length - 1] : null
+
   const isRunning = liveState === 'running' || liveState === 'initializing'
   const isPaused = liveState === 'paused'
   const isCompleted = liveState === 'completed'
   const canStart = liveState === 'awaiting_input' || liveState === 'orchestrator_turn'
   const canPause = isRunning
   const canCancel = !isCompleted
+
+  const workersDefaultOpen = resolveWorkersDefaultOpen({
+    liveState,
+    workerEntries,
+    failedHandoffs: failedHandoffCount,
+  })
+
+  const workersOpen = workersOpenOverride ?? workersDefaultOpen
+  const handoffsOpen = handoffsOpenOverride ?? (failedHandoffCount > 0)
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -252,7 +251,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="font-semibold text-foreground">Mission</span>
-          <StateBadge state={liveState} />
+          <AiStatusBadge status={liveState} />
         </div>
         <div className="flex items-center gap-1">
           <AiPanelIconButton
@@ -276,6 +275,45 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       <p className="text-xs text-muted-foreground font-mono truncate" title={missionId}>
         {missionId}
       </p>
+
+      <div className="rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-xs">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span className="text-muted-foreground">Features</span>
+          <span className="font-medium text-foreground">
+            {completedFeatureCount}/{features.length}
+          </span>
+          {failedFeatureCount > 0 ? (
+            <span className="text-destructive">{`failed ${failedFeatureCount}`}</span>
+          ) : null}
+
+          <span className="text-muted-foreground">Workers</span>
+          <span className="font-medium text-foreground">
+            {workerEntries.length}
+          </span>
+          {runningWorkersCount > 0 ? (
+            <span className="text-ai-status-running">{`running ${runningWorkersCount}`}</span>
+          ) : null}
+          {failedWorkersCount > 0 ? (
+            <span className="text-destructive">{`failed ${failedWorkersCount}`}</span>
+          ) : null}
+
+          {handoffs.length > 0 ? (
+            <>
+              <span className="text-muted-foreground">Handoffs</span>
+              <span className="font-medium text-foreground">{handoffs.length}</span>
+              {failedHandoffCount > 0 ? (
+                <span className="text-destructive">{`failed ${failedHandoffCount}`}</span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+
+        {lastProgress?.message ? (
+          <div className="mt-1.5 text-muted-foreground truncate" title={lastProgress.message}>
+            {lastProgress.message}
+          </div>
+        ) : null}
+      </div>
 
       {initialLoading && !statusDetail ? (
         <p className="text-xs text-muted-foreground">Loading mission status…</p>
@@ -335,17 +373,19 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       )}
 
       {/* Features list */}
-      {features.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-secondary-foreground mb-1">
-            Features ({features.filter((f) => f.status === 'completed').length}/{features.length})
-          </p>
-          <div className="space-y-1">
+      {features.length > 0 ? (
+        <details
+          className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+          open={featuresOpen}
+          onToggle={(event) => setFeaturesOpen(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+            {`Features (${completedFeatureCount}/${features.length})`}
+          </summary>
+
+          <div className="mt-2 space-y-1">
             {features.map((f) => (
-              <div
-                key={f.id}
-                className="flex items-start gap-2 text-xs py-0.5"
-              >
+              <div key={f.id} className="flex items-start gap-2 text-xs py-0.5">
                 <span className="mt-0.5">
                   {f.status === 'completed' ? '✓' :
                    f.status === 'failed' ? '✗' :
@@ -353,49 +393,169 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
                    f.status === 'cancelled' ? '–' : '○'}
                 </span>
                 <div className="flex-1 min-w-0">
-                  <span className="opacity-80 truncate block">{f.description}</span>
-                  <FeatureStatusBadge status={f.status} />
+                  <div className="flex items-center gap-2">
+                    <span className="opacity-80 truncate block" title={f.description}>{f.description}</span>
+                    <AiStatusBadge status={f.status} />
+                  </div>
+                  {f.skill ? (
+                    <div className="mt-0.5 font-mono text-[11px] text-muted-foreground truncate" title={f.skill}>
+                      {f.skill}
+                    </div>
+                  ) : null}
                 </div>
               </div>
             ))}
           </div>
-        </div>
-      )}
+        </details>
+      ) : null}
 
       {/* Active workers */}
-      {workerEntries.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-secondary-foreground mb-1">Workers ({workerEntries.length})</p>
-          <div className="max-h-48 overflow-y-auto pr-1">
-            {workerEntries.map(([wid, info]) => (
-              <WorkerRow key={wid} workerId={wid} info={info} />
-            ))}
+      {workerEntries.length > 0 ? (
+        <details
+          className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+          open={workersOpen}
+          onToggle={(event) => setWorkersOpenOverride(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+            {`Workers (${workerEntries.length})`}
+          </summary>
+
+          <div className="mt-2 space-y-2 max-h-60 overflow-y-auto pr-1">
+            {workerEntries.map(([wid, info]) => {
+              const issueCount = issueCountByWorkerId[wid] ?? 0
+              const summary = issueCount > 0
+                ? [info.summary, `issues ${issueCount}`].filter(Boolean).join(' · ')
+                : info.summary
+
+              return (
+                <WorkerStepCard
+                  key={wid}
+                  workerId={wid}
+                  status={info.status}
+                  featureId={info.featureId}
+                  summary={summary}
+                  updatedAt={info.updatedAt}
+                />
+              )
+            })}
           </div>
-        </div>
-      )}
+        </details>
+      ) : null}
 
       {/* Recent handoffs */}
-      {handoffs.length > 0 && (
-        <div>
-          <p className="text-xs font-medium text-secondary-foreground mb-1">Handoffs</p>
-          <div className="space-y-1 max-h-24 overflow-y-auto">
-            {handoffs.map((h, i) => (
-              <div key={i} className="text-xs flex items-start gap-1">
-                <span className={h.ok ? 'text-ai-status-success' : 'text-destructive'}>
-                  {h.ok ? '✓' : '✗'}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <span className="opacity-70 truncate block">{h.feature_id}</span>
-                  <span className="text-muted-foreground truncate block">{h.summary}</span>
-                </div>
-              </div>
-            ))}
+      {handoffs.length > 0 ? (
+        <details
+          className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+          open={handoffsOpen}
+          onToggle={(event) => setHandoffsOpenOverride(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+            {`Handoffs (${handoffs.length})`}
+          </summary>
+
+          <div className="mt-2 space-y-2 max-h-56 overflow-y-auto pr-1">
+            {handoffs.map((h, i) => {
+              const issues = Array.isArray(h.issues) ? h.issues : []
+              const artifacts = Array.isArray(h.artifacts) ? h.artifacts : []
+              const commandsRun = Array.isArray(h.commands_run) ? h.commands_run : []
+              const ok = Boolean(h.ok)
+
+              const handoffKey = `${h.worker_id}-${h.feature_id}-${i}`
+              const defaultEntryOpen = !ok || issues.length > 0
+              const entryOpen = handoffOpenByKey[handoffKey] ?? defaultEntryOpen
+
+              return (
+                <details
+                  key={handoffKey}
+                  className="rounded-md border border-border/60 bg-background px-2.5 py-2 text-xs"
+                  open={entryOpen}
+                  onToggle={(event) => {
+                    const next = event.currentTarget.open
+                    setHandoffOpenByKey((prev) => {
+                      if (prev[handoffKey] === next) {
+                        return prev
+                      }
+                      return {
+                        ...prev,
+                        [handoffKey]: next,
+                      }
+                    })
+                  }}
+                >
+                  <summary className="cursor-pointer select-none">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={ok ? 'text-ai-status-success' : 'text-destructive'}>
+                            {ok ? '✓' : '✗'}
+                          </span>
+                          <span className="font-mono text-muted-foreground truncate" title={h.worker_id}>{h.worker_id}</span>
+                          <span className="truncate opacity-80" title={h.feature_id}>{h.feature_id}</span>
+                        </div>
+                        <div className="mt-0.5 text-muted-foreground truncate" title={h.summary}>
+                          {h.summary}
+                        </div>
+                      </div>
+
+                      <AiStatusBadge
+                        status={ok ? 'completed' : 'failed'}
+                        label={issues.length > 0 ? `issues ${issues.length}` : undefined}
+                      />
+                    </div>
+                  </summary>
+
+                  {issues.length > 0 ? (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-medium text-secondary-foreground">Issues</div>
+                      <ul className="mt-1 space-y-1 text-muted-foreground">
+                        {issues.map((issue, idx) => (
+                          <li key={idx} className="break-words">{issue}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {artifacts.length > 0 ? (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-medium text-secondary-foreground">Artifacts</div>
+                      <ul className="mt-1 space-y-1 font-mono text-[11px] text-muted-foreground">
+                        {artifacts.map((path, idx) => (
+                          <li key={idx} className="break-all">{path}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+
+                  {commandsRun.length > 0 ? (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-medium text-secondary-foreground">Commands</div>
+                      <ul className="mt-1 space-y-1 font-mono text-[11px] text-muted-foreground">
+                        {commandsRun.map((cmd, idx) => (
+                          <li key={idx} className="break-words">{cmd}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                </details>
+              )
+            })}
           </div>
-        </div>
-      )}
+        </details>
+      ) : null}
 
       {/* Progress log */}
-      <ProgressLog entries={progressLog} />
+      {progressLog.length > 0 ? (
+        <details
+          className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+          open={progressOpen}
+          onToggle={(event) => setProgressOpen(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+            Progress
+          </summary>
+          <ProgressLog entries={progressLog} />
+        </details>
+      ) : null}
     </AiPanelCardShell>
   )
 }

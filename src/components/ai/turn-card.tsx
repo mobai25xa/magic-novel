@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useState } from 'react'
 
 import type { AgentPendingAskUserRequest } from '@/agent/types'
 import type { AgentUiTurnView } from '@/lib/agent-chat/types'
@@ -6,7 +6,7 @@ import type { AiChatViewMode } from '@/state/settings'
 import { useAgentChatStore } from '@/state/agent'
 import { resumeAgentTurnFeature } from '@/features/agent-chat'
 
-import { PhaseTimeline } from './message/phase-timeline'
+import { TurnCardContent } from './message/turn-card-content'
 import { TurnCardUserBlock } from './message/turn-card-user-block'
 import { TimelineBlocksRenderer } from './timeline/TimelineBlocksRenderer'
 import { resolveTurnTimeline } from './timeline/resolve-turn-timeline'
@@ -14,6 +14,8 @@ import { useTurnRenderMetric } from './turn-metrics'
 import { TurnErrorCard } from './error/TurnErrorCard'
 import { classifyTurnError } from './error/classify-error'
 import { useAiTranslations } from './ai-hooks'
+import { TurnExecutionToggle } from './turn-execution-toggle'
+import { TurnExecutionTimeline } from './turn-execution-timeline'
 
 type TurnCardProps = {
   view: AgentUiTurnView
@@ -77,6 +79,23 @@ function readTurnToolExposure(view: AgentUiTurnView) {
   }
 }
 
+function stripThinkingPrefix(answer: string, thinking: string) {
+  const normalizedAnswer = answer.trimStart()
+  const normalizedThinking = thinking.trim()
+  if (!normalizedThinking) {
+    return answer
+  }
+
+  if (normalizedAnswer.startsWith(normalizedThinking)) {
+    const prefixIndex = answer.indexOf(normalizedThinking)
+    if (prefixIndex >= 0) {
+      return answer.slice(prefixIndex + normalizedThinking.length).trimStart()
+    }
+  }
+
+  return answer
+}
+
 export function TurnCard(input: TurnCardProps) {
   const ai = useAiTranslations()
 
@@ -106,6 +125,26 @@ export function TurnCard(input: TurnCardProps) {
     ? input.pendingAskUser
     : undefined
   const toolExposure = input.viewMode === 'debug' ? readTurnToolExposure(input.view) : null
+
+  const executionBlocks = timeline.blocks.filter((block) => block.type !== 'assistant_segment')
+  const toolCallCount = executionBlocks.filter((block) => block.type === 'tool_call').length
+  const hasThinkingPanel = executionBlocks.some((block) => block.type === 'thinking_panel' && block.hasContent)
+  const hasWaitingConfirmation = input.view.toolSteps.some(
+    (step) => step.status === 'waiting_confirmation' && step.progress === 'waiting_confirmation',
+  )
+  const forceOpenExecution = input.viewMode === 'compact'
+    && allowResumeAction
+    && (hasWaitingConfirmation || Boolean(turnPendingAskUser))
+
+  const [executionOpenByUser, setExecutionOpenByUser] = useState(() => forceOpenExecution)
+  const executionOpen = forceOpenExecution ? true : executionOpenByUser
+
+  const handleToggleExecution = useCallback(() => {
+    if (forceOpenExecution) {
+      return
+    }
+    setExecutionOpenByUser((value) => !value)
+  }, [forceOpenExecution])
 
   const handleRetry = useCallback(() => {
     // Retry is handled at the panel level; this is a placeholder for future wiring
@@ -180,24 +219,71 @@ export function TurnCard(input: TurnCardProps) {
           </div>
         ) : null}
 
-        <TimelineBlocksRenderer
-          blocks={timeline.blocks}
-          turn={input.view.state}
-          toolSteps={input.view.toolSteps}
-          sessionId={input.sessionId}
-          running={activeTurn}
-          viewMode={input.viewMode}
-          onRetryStep={input.onRetryStep}
-          onRetryTurn={handleRetry}
-          onApprove={allowResumeAction ? handleApprove : undefined}
-          onSkip={allowResumeAction ? handleSkip : undefined}
-          pendingAskUser={allowResumeAction ? turnPendingAskUser : undefined}
-          onResolveAskUser={input.onResolveAskUser}
-          onCancelAskUser={input.onCancelAskUser}
-          hideInlineLoadingIndicator={activeTurn && input.running}
-        />
+        {input.viewMode === 'debug' ? (
+          <TimelineBlocksRenderer
+            blocks={timeline.blocks}
+            turn={input.view.state}
+            toolSteps={input.view.toolSteps}
+            sessionId={input.sessionId}
+            running={activeTurn}
+            viewMode={input.viewMode}
+            onRetryStep={input.onRetryStep}
+            onRetryTurn={handleRetry}
+            onApprove={allowResumeAction ? handleApprove : undefined}
+            onSkip={allowResumeAction ? handleSkip : undefined}
+            pendingAskUser={allowResumeAction ? turnPendingAskUser : undefined}
+            onResolveAskUser={input.onResolveAskUser}
+            onCancelAskUser={input.onCancelAskUser}
+            hideInlineLoadingIndicator={activeTurn && input.running}
+          />
+        ) : (
+          <>
+            <TurnCardContent
+              text={stripThinkingPrefix(input.view.answerText ?? '', input.view.thinkingText ?? '')}
+              turn={input.view.state}
+              running={activeTurn}
+              retryable={!activeTurn && input.view.state.phase === 'failed'}
+              hideInlineLoadingIndicator={activeTurn && input.running}
+              onRetry={input.onRetryTurn}
+            />
 
-        <PhaseTimeline
+            {toolCallCount > 0 || hasThinkingPanel ? (
+              <div className="space-y-1.5">
+                <TurnExecutionToggle
+                  open={executionOpen}
+                  disabled={forceOpenExecution}
+                  running={activeTurn && input.running}
+                  toolCount={toolCallCount}
+                  hasThinking={hasThinkingPanel}
+                  onToggle={handleToggleExecution}
+                />
+
+                {executionOpen ? (
+                  <div className="space-y-2">
+                    <TimelineBlocksRenderer
+                      blocks={executionBlocks}
+                      turn={input.view.state}
+                      toolSteps={input.view.toolSteps}
+                      sessionId={input.sessionId}
+                      running={activeTurn}
+                      viewMode={input.viewMode}
+                      onRetryStep={input.onRetryStep}
+                      onRetryTurn={handleRetry}
+                      onApprove={allowResumeAction ? handleApprove : undefined}
+                      onSkip={allowResumeAction ? handleSkip : undefined}
+                      pendingAskUser={allowResumeAction ? turnPendingAskUser : undefined}
+                      onResolveAskUser={input.onResolveAskUser}
+                      onCancelAskUser={input.onCancelAskUser}
+                      hideInlineLoadingIndicator={activeTurn && input.running}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
+
+        <TurnExecutionTimeline
           phase={input.view.state.phase}
           stage={timeline.stage}
           running={activeTurn && input.running}

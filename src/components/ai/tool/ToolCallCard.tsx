@@ -70,11 +70,17 @@ function useToolCardActions(input: {
   turnId: number
   onRetryStep: (turnId: number, callId: string) => void
 }) {
-  const [collapsed, setCollapsed] = useState(true)
+  const shouldAutoExpand = input.step.status === 'waiting_confirmation'
+    && input.step.progress === 'waiting_confirmation'
+  const [collapsedByUser, setCollapsedByUser] = useState(() => !shouldAutoExpand)
+  const collapsed = shouldAutoExpand ? false : collapsedByUser
 
   const handleToggle = useCallback((next?: boolean) => {
-    setCollapsed((value) => next ?? !value)
-  }, [])
+    if (shouldAutoExpand) {
+      return
+    }
+    setCollapsedByUser((value) => next ?? !value)
+  }, [shouldAutoExpand])
 
   const handleRetry = useCallback(() => {
     input.onRetryStep(input.turnId, input.step.callId)
