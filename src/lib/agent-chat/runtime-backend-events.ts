@@ -821,6 +821,10 @@ export interface MissionUiState {
   currentFeatureId?: string
   workerStatuses: Record<string, { featureId: string; status: string; summary?: string; updatedAt: number }>
   progressLog: Array<{ ts: number; message: string }>
+  /** Optional P1: used to trigger UI refresh when Layer1 artifacts change. */
+  layer1UpdatedAt?: number
+  /** Optional P1: used to trigger UI refresh when ContextPack is rebuilt. */
+  contextPackBuiltAt?: number
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -839,6 +843,8 @@ function createMissionUiState(missionId: string): MissionUiState {
     state: 'unknown',
     workerStatuses: {},
     progressLog: [],
+    layer1UpdatedAt: undefined,
+    contextPackBuiltAt: undefined,
   }
 }
 
@@ -848,6 +854,8 @@ function resetMissionTransientState(state: MissionUiState): MissionUiState {
     currentFeatureId: undefined,
     workerStatuses: {},
     progressLog: [],
+    layer1UpdatedAt: undefined,
+    contextPackBuiltAt: undefined,
   }
 }
 
@@ -1139,6 +1147,22 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
 
     case 'MISSION_HEARTBEAT': {
       // No-op for now, could update last-seen timestamp
+      break
+    }
+
+    case 'MISSION_LAYER1_UPDATED': {
+      nextState = {
+        ...base,
+        layer1UpdatedAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_CONTEXTPACK_BUILT': {
+      nextState = {
+        ...base,
+        contextPackBuiltAt: envelope.ts,
+      }
       break
     }
 
