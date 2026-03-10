@@ -56,7 +56,9 @@ use commands::jvm::{
 };
 use commands::mission::{
     mission_cancel, mission_create, mission_get_status, mission_list, mission_pause,
-    mission_resume, mission_start,
+    mission_resume, mission_start, mission_layer1_get, mission_layer1_upsert,
+    mission_contextpack_get_latest, mission_contextpack_build, mission_contextpack_status,
+    mission_contextpack_rebuild_if_stale,
 };
 use commands::project::{
     create_project, get_project_tree, open_project, scan_projects_directory, trash_project,
@@ -188,6 +190,12 @@ macro_rules! app_commands {
             mission_pause,
             mission_resume,
             mission_cancel,
+            mission_layer1_get,
+            mission_layer1_upsert,
+            mission_contextpack_get_latest,
+            mission_contextpack_build,
+            mission_contextpack_status,
+            mission_contextpack_rebuild_if_stale,
             list_skills,
             save_skill,
             delete_skill,

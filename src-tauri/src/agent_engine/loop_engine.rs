@@ -40,6 +40,7 @@ pub struct AgentLoop<S: EventSink> {
     emitter: S,
     config: LoopConfig,
     project_path: String,
+    mission_id: Option<String>,
     cancel_token: CancellationToken,
     active_chapter_path: Option<String>,
     active_skill: Option<String>,
@@ -64,6 +65,7 @@ impl<S: EventSink> AgentLoop<S> {
             emitter,
             config,
             project_path,
+            mission_id: None,
             cancel_token,
             active_chapter_path: None,
             active_skill: None,
@@ -74,6 +76,13 @@ impl<S: EventSink> AgentLoop<S> {
             base_url: String::new(),
             api_key: String::new(),
         }
+    }
+
+    pub fn with_mission_id(mut self, mission_id: Option<String>) -> Self {
+        self.mission_id = mission_id
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        self
     }
 
     /// Set provider info for suspend/resume state capture.
@@ -247,6 +256,7 @@ impl<S: EventSink> AgentLoop<S> {
             inject_unified_context(
                 state,
                 &self.project_path,
+                &self.mission_id,
                 &self.active_chapter_path,
                 &active_skill,
                 &self.editor_state,

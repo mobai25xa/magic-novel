@@ -401,6 +401,7 @@ async fn execute_feature(
         ws.project_path.clone(),
         cancel_token.clone(),
     )
+    .with_mission_id(Some(mission_id.to_string()))
     .with_provider_info(
         payload.provider.clone(),
         effective_model.clone(),

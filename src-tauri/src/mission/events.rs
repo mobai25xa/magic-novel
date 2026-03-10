@@ -15,6 +15,8 @@ pub mod mission_event_types {
     pub const MISSION_STATE_CHANGED: &str = "MISSION_STATE_CHANGED";
     pub const MISSION_FEATURES_CHANGED: &str = "MISSION_FEATURES_CHANGED";
     pub const MISSION_PROGRESS_ENTRY: &str = "MISSION_PROGRESS_ENTRY";
+    pub const MISSION_LAYER1_UPDATED: &str = "MISSION_LAYER1_UPDATED";
+    pub const MISSION_CONTEXTPACK_BUILT: &str = "MISSION_CONTEXTPACK_BUILT";
     pub const WORKER_STARTED: &str = "WORKER_STARTED";
     pub const WORKER_COMPLETED: &str = "WORKER_COMPLETED";
     pub const MISSION_HEARTBEAT: &str = "MISSION_HEARTBEAT";
@@ -111,6 +113,35 @@ impl MissionEventEmitter {
             MISSION_PROGRESS_ENTRY,
             json!({
                 "message": message,
+            }),
+        )
+    }
+
+    // ── Layer1 / ContextPack (M2+) ─────────────────────────────
+
+    pub fn layer1_updated(&self, kind: &str) -> Result<(), AppError> {
+        use mission_event_types::MISSION_LAYER1_UPDATED;
+        self.emit(
+            MISSION_LAYER1_UPDATED,
+            json!({
+                "kind": kind,
+            }),
+        )
+    }
+
+    pub fn contextpack_built(
+        &self,
+        scope_ref: &str,
+        token_budget: &str,
+        generated_at: i64,
+    ) -> Result<(), AppError> {
+        use mission_event_types::MISSION_CONTEXTPACK_BUILT;
+        self.emit(
+            MISSION_CONTEXTPACK_BUILT,
+            json!({
+                "scope_ref": scope_ref,
+                "token_budget": token_budget,
+                "generated_at": generated_at,
             }),
         )
     }
