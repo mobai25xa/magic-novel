@@ -14,7 +14,6 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   AiPanelCardShell,
   AiPanelIconButton,
-  Badge,
   Button,
 } from '@/magic-ui/components'
 import {
@@ -36,6 +35,8 @@ import {
 
 import { AiStatusBadge } from './status-badge'
 import { WorkerStepCard } from './worker-step-card'
+import { Layer1ArtifactsCard } from './layer1-artifacts-card'
+import { ContextPackCard } from './contextpack-card'
 
 // ── Sub-components ───────────────────────────────────────────────
 function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string }> }) {
@@ -67,15 +68,6 @@ interface MissionPanelProps {
 type MissionStatusPayload = Awaited<ReturnType<typeof missionGetStatusFeature>>
 type Layer1SnapshotPayload = Awaited<ReturnType<typeof missionLayer1GetFeature>>
 type ContextPackPayload = Awaited<ReturnType<typeof missionContextpackGetLatestFeature>>
-
-function formatMaybeTime(ts?: number | null): string {
-  if (!ts || !Number.isFinite(ts)) return '—'
-  try {
-    return new Date(ts).toLocaleString()
-  } catch {
-    return String(ts)
-  }
-}
 
 function maxUpdatedAt(layer1: Layer1SnapshotPayload | null): number {
   if (!layer1) return 0
@@ -135,10 +127,6 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [layer1Error, setLayer1Error] = useState<string | null>(null)
   const [contextPackError, setContextPackError] = useState<string | null>(null)
   const [buildingContextPack, setBuildingContextPack] = useState(false)
-  const [layer1Open, setLayer1Open] = useState(false)
-  const [layer1UserToggled, setLayer1UserToggled] = useState(false)
-  const [contextPackOpen, setContextPackOpen] = useState(false)
-  const [contextPackUserToggled, setContextPackUserToggled] = useState(false)
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -157,17 +145,12 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setLayer1Error(null)
     setContextPackError(null)
     setBuildingContextPack(false)
-    setLayer1UserToggled(false)
-    setContextPackUserToggled(false)
     setMissionUi(getMissionUiState())
     setFeaturesOpen(false)
     setWorkersOpenOverride(null)
     setHandoffsOpenOverride(null)
     setProgressOpen(false)
     setHandoffOpenByKey({})
-
-    setLayer1Open(false)
-    setContextPackOpen(false)
 
     lastLayer1UpdatedAtRef.current = 0
     lastContextPackBuiltAtRef.current = 0
@@ -388,24 +371,9 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const chapterCard = layer1?.chapter_card ?? null
   const recentFacts = layer1?.recent_facts ?? null
   const activeCast = layer1?.active_cast ?? null
-  const layer1IsEmpty = !chapterCard && !recentFacts && !activeCast
-  const layer1Missing = !chapterCard || !recentFacts || !activeCast
   const layer1LastUpdatedAt = maxUpdatedAt(layer1)
   const contextPackGeneratedAt = contextPack?.generated_at ?? 0
   const contextPackStale = contextPack != null && layer1LastUpdatedAt > contextPackGeneratedAt
-
-  const layer1HasProblem = !!layer1Error || layer1IsEmpty || layer1Missing
-  const contextPackHasProblem = !!contextPackError || !contextPack || contextPackStale
-
-  useEffect(() => {
-    if (layer1UserToggled) return
-    setLayer1Open(layer1HasProblem)
-  }, [layer1HasProblem, layer1UserToggled])
-
-  useEffect(() => {
-    if (contextPackUserToggled) return
-    setContextPackOpen(contextPackHasProblem)
-  }, [contextPackHasProblem, contextPackUserToggled])
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -538,204 +506,54 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
       {/* M2: Layer1 / ContextPack */}
       <div className="space-y-2">
-        <details
-          open={layer1Open}
-          onToggle={(e) => {
-            setLayer1UserToggled(true)
-            setLayer1Open((e.target as HTMLDetailsElement).open)
-          }}
-          className="rounded border border-border px-2 py-1"
-        >
-          <summary className="cursor-pointer select-none list-none flex items-center justify-between text-xs font-medium text-secondary-foreground">
-            <span>Layer1</span>
-            <span className="flex items-center gap-1">
-              {layer1Error ? (
-                <Badge color="error" variant="soft" size="sm">error</Badge>
-              ) : layer1IsEmpty ? (
-                <Badge color="warning" variant="soft" size="sm">empty</Badge>
-              ) : layer1Missing ? (
-                <Badge color="warning" variant="soft" size="sm">missing</Badge>
-              ) : (
-                <Badge color="success" variant="soft" size="sm">ok</Badge>
-              )}
-            </span>
-          </summary>
+        {layer1Error ? (
+          <p className="text-xs text-muted-foreground">Layer1 unavailable: {layer1Error}</p>
+        ) : null}
 
-          <div className="mt-2 text-xs space-y-2">
-            {layer1Error ? (
-              <p className="text-muted-foreground">Layer1 unavailable: {layer1Error}</p>
-            ) : null}
+        <Layer1ArtifactsCard
+          chapter_card={chapterCard}
+          recent_facts={recentFacts}
+          active_cast={activeCast}
+          onBuildContextPack={handleBuildContextPack}
+        />
 
-            <div className="space-y-1">
-              <p className="font-medium">chapter_card</p>
-              {chapterCard ? (
-                <div className="text-muted-foreground space-y-0.5">
-                  <p><span className="opacity-70">objective:</span> {chapterCard.objective}</p>
-                  <p className="flex gap-2 flex-wrap">
-                    <span className="opacity-70">workflow:</span> <span className="font-mono">{chapterCard.workflow_kind}</span>
-                    <span className="opacity-70">status:</span> <span className="font-mono">{chapterCard.status}</span>
-                    <span className="opacity-70">updated:</span> <span className="font-mono">{formatMaybeTime(chapterCard.updated_at)}</span>
-                  </p>
-                  {chapterCard.hard_constraints?.length ? (
-                    <p><span className="opacity-70">constraints:</span> {chapterCard.hard_constraints.length}</p>
-                  ) : null}
-                  {chapterCard.success_criteria?.length ? (
-                    <p><span className="opacity-70">success:</span> {chapterCard.success_criteria.length}</p>
-                  ) : null}
-                </div>
-              ) : (
-                <p className="text-muted-foreground">missing</p>
-              )}
-            </div>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={handleBuildContextPack}
+            disabled={buildingContextPack}
+          >
+            {buildingContextPack ? 'Building…' : 'Build/Refresh'}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs"
+            onClick={async () => {
+              try {
+                const latest = await missionContextpackGetLatestFeature(projectPath, missionId)
+                setContextPack(latest)
+                setContextPackError(null)
+              } catch (e) {
+                setContextPackError(String(e))
+              }
+            }}
+            disabled={buildingContextPack}
+          >
+            Fetch latest
+          </Button>
+        </div>
 
-            <div className="space-y-1">
-              <p className="font-medium">recent_facts ({recentFacts?.facts?.length ?? 0})</p>
-              {recentFacts?.facts?.length ? (
-                <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
-                  {recentFacts.facts.slice(0, 8).map((f, idx) => (
-                    <li key={idx}>
-                      {f.summary} <span className="font-mono opacity-70">[{f.confidence}]</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-muted-foreground">{recentFacts ? 'empty' : 'missing'}</p>
-              )}
-            </div>
+        {contextPackError ? (
+          <p className="text-xs text-muted-foreground">ContextPack unavailable: {contextPackError}</p>
+        ) : null}
 
-            <div className="space-y-1">
-              <p className="font-medium">active_cast ({activeCast?.cast?.length ?? 0})</p>
-              {activeCast?.cast?.length ? (
-                <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
-                  {activeCast.cast.slice(0, 8).map((c, idx) => (
-                    <li key={idx}>
-                      <span className="font-mono">{c.character_ref}</span>: {c.current_state_summary}
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-muted-foreground">{activeCast ? 'empty' : 'missing'}</p>
-              )}
-            </div>
-          </div>
-        </details>
-
-        <details
-          open={contextPackOpen}
-          onToggle={(e) => {
-            setContextPackUserToggled(true)
-            setContextPackOpen((e.target as HTMLDetailsElement).open)
-          }}
-          className="rounded border border-border px-2 py-1"
-        >
-          <summary className="cursor-pointer select-none list-none flex items-center justify-between text-xs font-medium text-secondary-foreground">
-            <span>ContextPack</span>
-            <span className="flex items-center gap-1">
-              {contextPackError ? (
-                <Badge color="error" variant="soft" size="sm">error</Badge>
-              ) : !contextPack ? (
-                <Badge color="warning" variant="soft" size="sm">missing</Badge>
-              ) : contextPackStale ? (
-                <Badge color="warning" variant="soft" size="sm">stale</Badge>
-              ) : (
-                <Badge color="success" variant="soft" size="sm">ok</Badge>
-              )}
-              {contextPack?.token_budget ? (
-                <Badge color="default" variant="soft" size="sm">{contextPack.token_budget}</Badge>
-              ) : null}
-            </span>
-          </summary>
-
-          <div className="mt-2 text-xs space-y-2">
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={handleBuildContextPack}
-                disabled={buildingContextPack}
-              >
-                {buildingContextPack ? 'Building…' : 'Build/Refresh'}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs"
-                onClick={async () => {
-                  try {
-                    const latest = await missionContextpackGetLatestFeature(projectPath, missionId)
-                    setContextPack(latest)
-                    setContextPackError(null)
-                  } catch (e) {
-                    setContextPackError(String(e))
-                  }
-                }}
-                disabled={buildingContextPack}
-              >
-                Fetch latest
-              </Button>
-            </div>
-
-            {contextPackError ? (
-              <p className="text-muted-foreground">ContextPack unavailable: {contextPackError}</p>
-            ) : null}
-
-            {contextPack ? (
-              <div className="space-y-2">
-                <div className="text-muted-foreground space-y-0.5">
-                  <p><span className="opacity-70">objective:</span> {contextPack.objective_summary}</p>
-                  <p className="flex gap-2 flex-wrap">
-                    <span className="opacity-70">generated:</span> <span className="font-mono">{formatMaybeTime(contextPack.generated_at)}</span>
-                    {layer1LastUpdatedAt ? (
-                      <>
-                        <span className="opacity-70">layer1_updated:</span> <span className="font-mono">{formatMaybeTime(layer1LastUpdatedAt)}</span>
-                      </>
-                    ) : null}
-                  </p>
-                </div>
-
-                {contextPack.active_constraints?.length ? (
-                  <div>
-                    <p className="font-medium">constraints</p>
-                    <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
-                      {contextPack.active_constraints.slice(0, 10).map((c, idx) => (
-                        <li key={idx}>{c}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-
-                {contextPack.key_facts?.length ? (
-                  <div>
-                    <p className="font-medium">key_facts</p>
-                    <ul className="list-disc pl-4 text-muted-foreground space-y-0.5">
-                      {contextPack.key_facts.slice(0, 10).map((f, idx) => (
-                        <li key={idx}>{f}</li>
-                      ))}
-                    </ul>
-                  </div>
-                ) : null}
-
-                {contextPack.evidence_snippets?.length ? (
-                  <div>
-                    <p className="font-medium">evidence (top {Math.min(contextPack.evidence_snippets.length, 6)})</p>
-                    <div className="space-y-1">
-                      {contextPack.evidence_snippets.slice(0, 6).map((ev, idx) => (
-                        <div key={idx} className="rounded border border-border p-2">
-                          <p className="font-mono opacity-80">{ev.source_ref}</p>
-                          <p className="text-muted-foreground mt-0.5"><span className="opacity-70">reason:</span> {ev.reason}</p>
-                          <p className="text-muted-foreground mt-0.5 whitespace-pre-wrap">{ev.snippet}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <p className="text-muted-foreground">missing</p>
-            )}
-          </div>
-        </details>
+        <ContextPackCard
+          contextpack={contextPack}
+          stale={contextPackStale}
+        />
       </div>
 
       {/* Features list */}
