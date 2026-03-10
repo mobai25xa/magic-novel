@@ -9,12 +9,15 @@ import {
   appendChapterHistoryEvent,
   getOpenAiProviderSettings,
   saveOpenAiProviderSettings,
+  missionCreate as missionCreateCommand,
   missionStart as missionStartCommand,
   missionPause as missionPauseCommand,
   missionResume as missionResumeCommand,
   missionCancel as missionCancelCommand,
   missionGetStatus as missionGetStatusCommand,
   missionList as missionListCommand,
+  type MissionCreateInput,
+  type MissionCreateOutput,
   type MissionStartInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
@@ -166,6 +169,10 @@ export async function resumeAgentTurnFeature(input: AgentTurnResumeInputFeature)
 
 export async function missionStartFeature(input: MissionStartInput): Promise<void> {
   await missionStartCommand(input)
+}
+
+export async function missionCreateFeature(input: MissionCreateInput): Promise<MissionCreateOutput> {
+  return missionCreateCommand(input)
 }
 
 export async function missionPauseFeature(projectPath: string, missionId: string): Promise<void> {

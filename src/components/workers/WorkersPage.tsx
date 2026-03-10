@@ -16,6 +16,11 @@ import {
   type WorkerDefinition,
 } from '@/features/global-config'
 import {
+  loadAgentProviderSettings,
+  missionCreateFeature,
+  missionStartFeature,
+} from '@/features/agent-chat'
+import {
   Modal,
   ModalContent,
   ModalDescription,
@@ -33,6 +38,7 @@ import { WorkerHero } from './WorkerHero'
 import { TerminalCard } from './TerminalCard'
 import { WorkerCard } from './WorkerCard'
 import type { WorkerCardData } from './types'
+import { useProjectStore } from '@/state/project'
 import {
   AVAILABLE_WORKER_TOOLS,
   createEmptyWorkerForm,
@@ -104,6 +110,8 @@ const TOOL_ICON_BY_NAME = {
 export function WorkersPage() {
   const { translations } = useTranslation()
   const wp = translations.workersPage
+
+  const projectPath = useProjectStore((state) => state.projectPath ?? '')
 
   const [workers, setWorkers] = useState<WorkerDefinition[]>([])
   const [loading, setLoading] = useState(true)
@@ -240,6 +248,52 @@ export function WorkersPage() {
     }
   }, [wp.export, wp.exported, wp.operationFailed])
 
+  const handleRunWorker = useCallback(async (worker: WorkerCardData) => {
+    if (!projectPath) {
+      toast.warning(wp.operationFailed, 'No project open')
+      return
+    }
+
+    try {
+      const settings = await loadAgentProviderSettings()
+      const created = await missionCreateFeature({
+        project_path: projectPath,
+        title: `Sandbox · ${worker.title}`,
+        mission_text: `Sandbox mission to validate worker profile: ${worker.id}`,
+        features: [{
+          id: 'sandbox_1',
+          status: 'pending',
+          description: `Validate worker ${worker.id} can run its allowed tools (safe: ls/read only).`,
+          skill: worker.id,
+          preconditions: [],
+          depends_on: [],
+          expected_behavior: [
+            'Runs safely within the project directory.',
+            'Uses only whitelisted tools.',
+            'Produces a short summary and exits.',
+          ],
+          verification_steps: [
+            'Check MissionPanel for worker tool activity and completion status.',
+          ],
+        }],
+      })
+
+      await missionStartFeature({
+        project_path: projectPath,
+        mission_id: created.mission_id,
+        max_workers: 1,
+        provider: 'openai-compatible',
+        model: settings.openai_model,
+        base_url: settings.openai_base_url,
+        api_key: settings.openai_api_key,
+      })
+
+      toast.success('Mission started', created.mission_id)
+    } catch (error) {
+      toast.error(wp.operationFailed, String(error))
+    }
+  }, [projectPath, wp.operationFailed])
+
   if (loading) {
     return (
       <div className="bento-grid">
@@ -299,7 +353,7 @@ export function WorkersPage() {
                 setSelectedWorkerName(worker.id)
                 setManagingOpen(true)
               }}
-              onRun={() => toast.info(worker.primaryAction)}
+              onRun={() => void handleRunWorker(worker)}
             />
           ))
         )}
