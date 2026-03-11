@@ -34,6 +34,7 @@ import { AiStatusBadge } from './status-badge'
 import { WorkerStepCard } from './worker-step-card'
 import { Layer1ArtifactsCard } from './layer1-artifacts-card'
 import { ContextPackCard } from './contextpack-card'
+import { MissionReviewSection } from './mission-review-section'
 
 // ── Sub-components ───────────────────────────────────────────────
 function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string }> }) {
@@ -384,6 +385,10 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       <ContextPackCard
         key={`${missionId}-contextpack`}
         contextpack={null}
+      />
+
+      <MissionReviewSection
+        report={null}
       />
 
       {/* Features list */}

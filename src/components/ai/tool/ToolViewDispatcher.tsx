@@ -6,6 +6,7 @@ import { CreateToolView } from './tools/CreateToolView'
 import { LsToolView } from './tools/LsToolView'
 import { GrepToolView } from './tools/GrepToolView'
 import { GenericToolView } from './tools/GenericToolView'
+import { ReviewToolView } from './tools/ReviewToolView'
 
 type ToolViewDispatcherProps = {
   step: AgentUiToolStep
@@ -29,6 +30,8 @@ export function ToolViewDispatcher({ step }: ToolViewDispatcherProps) {
       return <LsToolView step={step} />
     case 'grep':
       return <GrepToolView step={step} />
+    case 'review_check':
+      return <ReviewToolView step={step} />
     case 'todowrite':
       return <GenericToolView step={step} />
     default:
