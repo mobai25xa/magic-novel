@@ -32,6 +32,8 @@ use crate::mission::worker_profile::{
 use crate::models::{AppError, ErrorCode};
 use crate::services::global_config;
 
+use crate::review::{engine as review_engine, types as review_types};
+
 use crate::agent_engine::types::{DEFAULT_MODEL, DEFAULT_PROVIDER};
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 5;
@@ -40,6 +42,8 @@ const WORKER_MAX_RECOVERY_ATTEMPTS: u32 = 2;
 const WORKER_RECOVERY_BACKOFF_MS: u64 = 1500;
 const MISSION_PROGRESS_LOG_MAX_ENTRIES: usize = 200;
 const DEFAULT_MISSION_MAX_WORKERS: usize = 1;
+
+const REVIEW_FIXUP_MAX_ATTEMPTS: u32 = 2;
 
 #[derive(Debug, Clone)]
 struct MissionRunConfig {
@@ -229,6 +233,46 @@ fn list_worker_handles(mission_id: &str) -> Vec<(String, MissionWorkerHandle)> {
 fn paused_config_registry() -> &'static PausedConfigRegistry {
     static REGISTRY: std::sync::OnceLock<PausedConfigRegistry> = std::sync::OnceLock::new();
     REGISTRY.get_or_init(DashMap::new)
+}
+
+// ── M3: Review Gate fixup tracking ─────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ReviewFixupTracker {
+    key: String,
+    attempts: u32,
+}
+
+type ReviewFixupRegistry = DashMap<String, ReviewFixupTracker>;
+
+fn review_fixup_registry() -> &'static ReviewFixupRegistry {
+    static REGISTRY: std::sync::OnceLock<ReviewFixupRegistry> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(DashMap::new)
+}
+
+fn normalize_review_target_ref(raw: &str) -> Option<String> {
+    let mut p = raw.trim().replace('\\', "/");
+    if p.is_empty() {
+        return None;
+    }
+    while p.starts_with("./") {
+        p = p[2..].to_string();
+    }
+    while p.contains("//") {
+        p = p.replace("//", "/");
+    }
+    Some(p)
+}
+
+fn review_fixup_key_for_targets(target_refs: &[String]) -> String {
+    let mut refs = target_refs
+        .iter()
+        .filter_map(|r| normalize_review_target_ref(r))
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs.dedup();
+    refs.join("|")
 }
 
 fn clamp_max_workers(max_workers: Option<usize>) -> usize {
@@ -691,6 +735,391 @@ fn pause_mission_with_log(
     }
 }
 
+// ── M3: Review Gate helpers ───────────────────────────────────
+
+fn infer_review_scope_ref(project_path: &std::path::Path, mission_id: &str) -> String {
+    artifacts::read_layer1_chapter_card(project_path, mission_id)
+        .ok()
+        .flatten()
+        .map(|cc| cc.scope_ref)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("mission:{mission_id}"))
+}
+
+fn persist_review_report(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    report: &review_types::ReviewReport,
+) -> Result<(), AppError> {
+    artifacts::write_review_latest(project_path, mission_id, report)?;
+    let _ = artifacts::append_review_report(project_path, mission_id, report);
+    Ok(())
+}
+
+fn upsert_risk_ledger_from_review(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    report: &review_types::ReviewReport,
+) -> Result<(), AppError> {
+    use serde_json::json;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let path = artifacts::layer1_risk_ledger_path(project_path, mission_id);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut ledger: serde_json::Value = if path.exists() {
+        let raw = std::fs::read_to_string(&path)?;
+        serde_json::from_str(&raw).unwrap_or_else(|_| json!({}))
+    } else {
+        json!({})
+    };
+
+    if !ledger.is_object() {
+        ledger = json!({});
+    }
+
+    let obj = ledger.as_object_mut().expect("object");
+    obj.entry("ref".to_string())
+        .or_insert_with(|| json!(format!("risk_ledger:{}", uuid::Uuid::new_v4())));
+    obj.entry("scope_ref".to_string())
+        .or_insert_with(|| json!(report.scope_ref.clone()));
+
+    if !obj.get("items").map(|v| v.is_array()).unwrap_or(false) {
+        obj.insert("items".to_string(), json!([]));
+    }
+
+    let items = obj
+        .get_mut("items")
+        .and_then(|v| v.as_array_mut())
+        .expect("items array");
+
+    // Build lookup by (severity|summary) for review-sourced items.
+    let mut key_to_index: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (idx, it) in items.iter().enumerate() {
+        let source = it.get("source").and_then(|v| v.as_str()).unwrap_or("");
+        if source != "review" {
+            continue;
+        }
+        let sev = it.get("severity").and_then(|v| v.as_str()).unwrap_or("");
+        let summary = it.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+        if sev.is_empty() || summary.is_empty() {
+            continue;
+        }
+        key_to_index.insert(format!("{sev}|{summary}"), idx);
+    }
+
+    for issue in &report.issues {
+        let (sev_str, status_str) = match issue.severity {
+            review_types::ReviewSeverity::Warn => ("warn", "deferred"),
+            review_types::ReviewSeverity::Block => ("block", "open"),
+            _ => continue,
+        };
+        let key = format!("{sev_str}|{}", issue.summary.trim());
+
+        let new_item = {
+            let mut item = json!({
+                "risk_id": format!("risk_{}", uuid::Uuid::new_v4()),
+                "severity": sev_str,
+                "summary": issue.summary,
+                "source": "review",
+                "status": status_str,
+            });
+            if !issue.evidence_refs.is_empty() {
+                item["evidence_refs"] = serde_json::to_value(&issue.evidence_refs).unwrap_or(json!([]));
+            }
+            item
+        };
+
+        if let Some(&idx) = key_to_index.get(&key) {
+            // Update existing item in place.
+            if let Some(existing) = items.get_mut(idx) {
+                *existing = new_item;
+            }
+        } else {
+            key_to_index.insert(key, items.len());
+            items.push(new_item);
+        }
+    }
+
+    obj.insert("updated_at".to_string(), json!(now));
+
+    crate::utils::atomic_write::atomic_write_json(&path, &ledger)
+}
+
+fn review_has_non_auto_fixable_block(report: &review_types::ReviewReport) -> bool {
+    report
+        .issues
+        .iter()
+        .any(|i| i.severity == review_types::ReviewSeverity::Block && !i.auto_fixable)
+}
+
+fn review_block_is_auto_fixable(report: &review_types::ReviewReport) -> bool {
+    let mut has_block = false;
+    for i in &report.issues {
+        if i.severity == review_types::ReviewSeverity::Block {
+            has_block = true;
+            if !i.auto_fixable {
+                return false;
+            }
+        }
+    }
+    has_block
+}
+
+fn build_review_decision_request(
+    report: &review_types::ReviewReport,
+    feature_id: Option<String>,
+) -> review_types::ReviewDecisionRequest {
+    let mut summaries = report
+        .issues
+        .iter()
+        .filter(|i| i.severity == review_types::ReviewSeverity::Block)
+        .map(|i| i.summary.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .take(6)
+        .collect::<Vec<_>>();
+    if summaries.is_empty() {
+        summaries.push("review blocked".to_string());
+    }
+
+    review_types::ReviewDecisionRequest {
+        schema_version: review_types::REVIEW_DECISION_SCHEMA_VERSION,
+        review_id: report.review_id.clone(),
+        feature_id,
+        scope_ref: report.scope_ref.clone(),
+        target_refs: Some(report.target_refs.clone()),
+        question: format!(
+            "ReviewGate 阻断：{}。请选择下一步。",
+            summaries.join("；")
+        ),
+        options: vec![
+            "manual_fix_then_resume".to_string(),
+            "auto_fix".to_string(),
+        ],
+        context_summary: report.evidence_summary.clone(),
+        created_at: chrono::Utc::now().timestamp_millis(),
+    }
+}
+
+fn build_fixup_instruction_lines(report: &review_types::ReviewReport) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push("只修复以下问题，不改变已通过部分：".to_string());
+
+    let mut idx = 0;
+    for issue in &report.issues {
+        if issue.severity == review_types::ReviewSeverity::Block {
+            idx += 1;
+            let mut line = format!("{idx}. {}", issue.summary.trim());
+            if let Some(sf) = issue.suggested_fix.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                line.push_str(&format!("（建议：{}）", sf));
+            }
+            lines.push(line);
+        }
+    }
+
+    if idx == 0 {
+        lines.push("(no block issues listed)".to_string());
+    }
+
+    lines
+}
+
+fn build_fixup_feature(
+    mut feature: Feature,
+    report: &review_types::ReviewReport,
+    fixup_attempt: u32,
+) -> Feature {
+    let targets = report
+        .target_refs
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut expected = Vec::new();
+    expected.push(format!(
+        "Fixup attempt {}/{} for review_id={} targets=[{}]",
+        fixup_attempt,
+        REVIEW_FIXUP_MAX_ATTEMPTS,
+        report.review_id,
+        targets
+    ));
+    expected.extend(build_fixup_instruction_lines(report));
+    if !feature.expected_behavior.is_empty() {
+        expected.push("----".to_string());
+        expected.extend(feature.expected_behavior.clone());
+    }
+
+    let mut verify = Vec::new();
+    verify.push("修复后重新 review，直到 pass 或用户接受 warn".to_string());
+    if !feature.verification_steps.is_empty() {
+        verify.push("----".to_string());
+        verify.extend(feature.verification_steps.clone());
+    }
+
+    feature.description = format!(
+        "[ReviewFixup {}/{}] {}",
+        fixup_attempt,
+        REVIEW_FIXUP_MAX_ATTEMPTS,
+        feature.description.trim()
+    );
+    feature.expected_behavior = expected;
+    feature.verification_steps = verify;
+    feature
+}
+
+async fn stop_all_workers_for_review_block(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    exclude_worker_id: Option<&str>,
+) {
+    for (wid, handle) in list_worker_handles(mission_id) {
+        if exclude_worker_id.is_some_and(|ex| ex == wid.as_str()) {
+            continue;
+        }
+
+        // Remove handle first so event monitors skip recovery.
+        let _ = remove_worker_handle(mission_id, &wid);
+        clear_worker_from_state(project_path, mission_id, &wid);
+
+        let worker = handle.worker.lock().await;
+        if let Err(e) = worker.kill(Duration::from_secs(2)).await {
+            tracing::warn!(
+                target: "mission",
+                mission_id = %mission_id,
+                worker_id = %wid,
+                error = %e,
+                "failed to stop worker during review block"
+            );
+        }
+    }
+}
+
+async fn start_review_fixup_attempt(
+    app_handle: tauri::AppHandle,
+    orch: &Orchestrator<'_>,
+    emitter: &MissionEventEmitter,
+    start_cfg: &MissionStartConfig,
+    project_path: &std::path::Path,
+    project_path_str: &str,
+    mission_id: &str,
+    feature_id: &str,
+    report: &review_types::ReviewReport,
+) -> Result<(), AppError> {
+    let fix_key = review_fixup_key_for_targets(&report.target_refs);
+
+    let fixup_attempt = {
+        if let Some(mut entry) = review_fixup_registry().get_mut(mission_id) {
+            if entry.key != fix_key {
+                entry.key = fix_key;
+                entry.attempts = 0;
+            }
+            if entry.attempts >= REVIEW_FIXUP_MAX_ATTEMPTS {
+                return Err(AppError::invalid_argument(
+                    "review fixup attempts exhausted",
+                ));
+            }
+            entry.attempts += 1;
+            entry.attempts
+        } else {
+            review_fixup_registry().insert(
+                mission_id.to_string(),
+                ReviewFixupTracker {
+                    key: fix_key,
+                    attempts: 1,
+                },
+            );
+            1
+        }
+    };
+
+    let feature = orch
+        .get_features()?
+        .features
+        .into_iter()
+        .find(|f| f.id == feature_id)
+        .ok_or_else(|| AppError::not_found(format!("feature not found: {feature_id}")))?;
+    let fix_feature = build_fixup_feature(feature, report, fixup_attempt);
+
+    let old_state = orch
+        .get_state()
+        .ok()
+        .map(|s| s.state)
+        .unwrap_or(MissionState::Paused);
+
+    let (worker_id, worker_arc) =
+        spawn_and_initialize_worker(project_path, project_path_str, mission_id).await?;
+
+    let worker_profile = builtin_general_worker_profile();
+    let attempt = 0_u32;
+    let start_result = {
+        let worker = worker_arc.lock().await;
+        start_feature_on_worker(
+            orch,
+            &*worker,
+            emitter,
+            project_path,
+            mission_id,
+            fix_feature.clone(),
+            &start_cfg.run_config,
+            &worker_id,
+            attempt,
+            worker_profile,
+            true,
+            false,
+        )
+        .await
+    };
+
+    match start_result {
+        Ok(_feature_id_started) => {
+            insert_worker_handle(
+                mission_id,
+                worker_id.clone(),
+                MissionWorkerHandle {
+                    worker: Arc::clone(&worker_arc),
+                    attempt,
+                },
+            );
+
+            spawn_worker_supervision_tasks(
+                app_handle,
+                mission_id.to_string(),
+                project_path_str.to_string(),
+                worker_id.clone(),
+                start_cfg.run_config.clone(),
+                start_cfg.max_workers,
+            );
+
+            let old_state_str = serde_json::to_string(&old_state)
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string();
+            if old_state != MissionState::Running {
+                let _ = emitter.state_changed(&old_state_str, "running");
+            }
+
+            let _ = emitter.fixup_progress(fixup_attempt as i32, "auto fixup started");
+            append_mission_recovery_log(
+                project_path,
+                mission_id,
+                format!("review fixup attempt {fixup_attempt}/{REVIEW_FIXUP_MAX_ATTEMPTS} started"),
+            );
+
+            Ok(())
+        }
+        Err(e) => {
+            clear_worker_from_state(project_path, mission_id, &worker_id);
+            let _ = remove_worker_handle(mission_id, &worker_id);
+            Err(e)
+        }
+    }
+}
+
 fn build_recovery_handoff(
     feature_id: &str,
     worker_id: &str,
@@ -983,6 +1412,18 @@ fn spawn_worker_supervision_tasks(
             match event_result {
                 None => {
                     let _runtime_lock = acquire_mission_runtime_lock(&mission_id).await;
+
+                    // If the worker handle was already removed (e.g. intentional stop),
+                    // do not attempt recovery.
+                    if get_worker_handle(&mission_id, &worker_id).is_none() {
+                        tracing::info!(
+                            target: "mission",
+                            mission_id = %mission_id,
+                            worker_id = %worker_id,
+                            "worker stdout closed after handle removal; skipping recovery"
+                        );
+                        break;
+                    }
                     tracing::warn!(
                         target: "mission",
                         mission_id = %mission_id,
@@ -1155,6 +1596,180 @@ fn spawn_worker_supervision_tasks(
                                             &worker_id,
                                         );
 
+                                        // ── M3 Review Gate: run after chapter-level writes ─
+                                        let mut gate_blocked = false;
+                                        if completed.ok {
+                                            if let Ok(features_doc) = orch_bg.get_features() {
+                                                let feature_opt = features_doc
+                                                    .features
+                                                    .iter()
+                                                    .find(|f| f.id == completed.feature_id)
+                                                    .cloned();
+                                                if let Some(feature) = feature_opt {
+                                                    if !feature.write_paths.is_empty() {
+                                                        let _ = emitter_bg.progress_entry(
+                                                            "ReviewGate: running review after chapter write...",
+                                                        );
+
+                                                        let scope_ref = infer_review_scope_ref(
+                                                            std::path::Path::new(&project_path_bg),
+                                                            &mission_id,
+                                                        );
+                                                        let review_input = review_types::ReviewRunInput {
+                                                            scope_ref,
+                                                            target_refs: feature.write_paths.clone(),
+                                                            branch_id: None,
+                                                            review_types: vec![review_types::ReviewType::WordCount],
+                                                            task_card_ref: None,
+                                                            context_pack_ref: None,
+                                                            effective_rules_fingerprint: None,
+                                                            severity_threshold: None,
+                                                        };
+
+                                                        match review_engine::run_review(
+                                                            std::path::Path::new(&project_path_bg),
+                                                            review_input,
+                                                        ) {
+                                                            Ok(report) => {
+                                                                if let Err(e) = persist_review_report(
+                                                                    std::path::Path::new(&project_path_bg),
+                                                                    &mission_id,
+                                                                    &report,
+                                                                ) {
+                                                                    gate_blocked = true;
+                                                                    pause_mission_with_log(
+                                                                        &orch_bg,
+                                                                        &emitter_bg,
+                                                                        std::path::Path::new(&project_path_bg),
+                                                                        &mission_id,
+                                                                        &start_cfg_bg,
+                                                                        format!("ReviewGate failed to persist report: {e}"),
+                                                                    );
+                                                                } else {
+                                                                    if let Err(e) = upsert_risk_ledger_from_review(
+                                                                        std::path::Path::new(&project_path_bg),
+                                                                        &mission_id,
+                                                                        &report,
+                                                                    ) {
+                                                                        tracing::warn!(
+                                                                            target: "mission",
+                                                                            mission_id = %mission_id,
+                                                                            error = %e,
+                                                                            "failed to write risk_ledger from review"
+                                                                        );
+                                                                    } else {
+                                                                        let _ = emitter_bg.layer1_updated("risk_ledger");
+                                                                    }
+
+                                                                    let _ = emitter_bg.review_recorded(&report);
+
+                                                                    match report.overall_status {
+                                                                        review_types::ReviewOverallStatus::Pass
+                                                                        | review_types::ReviewOverallStatus::Warn => {
+                                                                            // Clear any pending block state.
+                                                                            review_fixup_registry()
+                                                                                .remove(mission_id.as_str());
+                                                                            let _ = artifacts::clear_pending_review_decision(
+                                                                                std::path::Path::new(&project_path_bg),
+                                                                                &mission_id,
+                                                                            );
+                                                                        }
+                                                                        review_types::ReviewOverallStatus::Block => {
+                                                                            gate_blocked = true;
+
+                                                                            // Stop other workers and pause scheduling.
+                                                                            stop_all_workers_for_review_block(
+                                                                                std::path::Path::new(&project_path_bg),
+                                                                                &mission_id,
+                                                                                None,
+                                                                            )
+                                                                            .await;
+
+                                                                            if review_block_is_auto_fixable(&report)
+                                                                                && !review_has_non_auto_fixable_block(&report)
+                                                                            {
+                                                                                match start_review_fixup_attempt(
+                                                                                    app_handle.clone(),
+                                                                                    &orch_bg,
+                                                                                    &emitter_bg,
+                                                                                    &start_cfg_bg,
+                                                                                    std::path::Path::new(&project_path_bg),
+                                                                                    &project_path_bg,
+                                                                                    &mission_id,
+                                                                                    &completed.feature_id,
+                                                                                    &report,
+                                                                                )
+                                                                                .await
+                                                                                {
+                                                                                    Ok(()) => {
+                                                                                        let _ = emitter_bg.progress_entry(
+                                                                                            "ReviewGate: auto fixup dispatched",
+                                                                                        );
+                                                                                    }
+                                                                                    Err(e) => {
+                                                                                        let req = build_review_decision_request(
+                                                                                            &report,
+                                                                                            Some(completed.feature_id.clone()),
+                                                                                        );
+                                                                                        let _ = artifacts::write_pending_review_decision(
+                                                                                            std::path::Path::new(&project_path_bg),
+                                                                                            &mission_id,
+                                                                                            &req,
+                                                                                        );
+                                                                                        let _ = emitter_bg.review_decision_required(&req);
+                                                                                        pause_mission_with_log(
+                                                                                            &orch_bg,
+                                                                                            &emitter_bg,
+                                                                                            std::path::Path::new(&project_path_bg),
+                                                                                            &mission_id,
+                                                                                            &start_cfg_bg,
+                                                                                            format!("ReviewGate blocked; auto fixup failed: {e}"),
+                                                                                        );
+                                                                                    }
+                                                                                }
+                                                                            } else {
+                                                                                let mut req = build_review_decision_request(
+                                                                                    &report,
+                                                                                    Some(completed.feature_id.clone()),
+                                                                                );
+                                                                                // If auto-fix isn't eligible, remove the option.
+                                                                                req.options.retain(|o| o != "auto_fix");
+                                                                                let _ = artifacts::write_pending_review_decision(
+                                                                                    std::path::Path::new(&project_path_bg),
+                                                                                    &mission_id,
+                                                                                    &req,
+                                                                                );
+                                                                                let _ = emitter_bg.review_decision_required(&req);
+                                                                                pause_mission_with_log(
+                                                                                    &orch_bg,
+                                                                                    &emitter_bg,
+                                                                                    std::path::Path::new(&project_path_bg),
+                                                                                    &mission_id,
+                                                                                    &start_cfg_bg,
+                                                                                    "ReviewGate blocked; user decision required",
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                gate_blocked = true;
+                                                                pause_mission_with_log(
+                                                                    &orch_bg,
+                                                                    &emitter_bg,
+                                                                    std::path::Path::new(&project_path_bg),
+                                                                    &mission_id,
+                                                                    &start_cfg_bg,
+                                                                    format!("ReviewGate execution failed: {e}"),
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                         let actual_state =
                                             orch_bg.get_state().ok().map(|s| s.state);
                                         let should_schedule = matches!(
@@ -1165,7 +1780,8 @@ fn spawn_worker_supervision_tasks(
                                             )
                                         );
 
-                                        if should_schedule
+                                        if !gate_blocked
+                                            && should_schedule
                                             && (next_state == MissionState::OrchestratorTurn
                                                 || next_state == MissionState::Running)
                                         {
@@ -1641,6 +2257,74 @@ pub async fn mission_resume(
         }
     };
 
+    // Gate: if a pending review decision exists, do not allow resume.
+    match artifacts::read_pending_review_decision(project_path, &input.mission_id) {
+        Ok(Some(_req)) => {
+            paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+            return Err(AppError::invalid_argument(
+                "mission blocked: pending review decision required",
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+            return Err(e);
+        }
+    }
+
+    // Gate: if latest review is still blocking, re-run review before resuming scheduling.
+    if let Ok(Some(latest)) = artifacts::read_review_latest(project_path, &input.mission_id) {
+        if latest.overall_status == review_types::ReviewOverallStatus::Block {
+            let scope_ref = if latest.scope_ref.trim().is_empty() {
+                infer_review_scope_ref(project_path, &input.mission_id)
+            } else {
+                latest.scope_ref.clone()
+            };
+
+            let review_input = review_types::ReviewRunInput {
+                scope_ref,
+                target_refs: latest.target_refs.clone(),
+                branch_id: None,
+                review_types: if latest.review_types.is_empty() {
+                    vec![review_types::ReviewType::WordCount]
+                } else {
+                    latest.review_types.clone()
+                },
+                task_card_ref: None,
+                context_pack_ref: None,
+                effective_rules_fingerprint: None,
+                severity_threshold: None,
+            };
+
+            match review_engine::run_review(project_path, review_input) {
+                Ok(report) => {
+                    if let Err(e) = persist_review_report(project_path, &input.mission_id, &report) {
+                        paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+                        return Err(e);
+                    }
+                    let _ = upsert_risk_ledger_from_review(project_path, &input.mission_id, &report);
+                    let _ = MissionEventEmitter::new(app_handle.clone(), input.mission_id.clone())
+                        .review_recorded(&report);
+
+                    if report.overall_status == review_types::ReviewOverallStatus::Block {
+                        paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+                        return Err(AppError::invalid_argument(
+                            "mission still blocked by ReviewGate",
+                        ));
+                    }
+
+                    // Clear any stale fixup tracker/decision.
+                    review_fixup_registry().remove(input.mission_id.as_str());
+                    let _ = artifacts::clear_pending_review_decision(project_path, &input.mission_id);
+                }
+                Err(e) => {
+                    paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+                    return Err(e);
+                }
+            }
+        }
+    }
+
     let old_state_str = serde_json::to_string(&current_state.state)
         .unwrap_or_default()
         .trim_matches('"')
@@ -1700,6 +2384,9 @@ pub async fn mission_resume(
             return Err(e);
         }
     }
+
+    // Keep run config available for subsequent pause/fixup actions.
+    paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
 
     append_mission_recovery_log(project_path, &input.mission_id, "mission resumed");
 
@@ -1767,6 +2454,127 @@ pub async fn mission_cancel(
         mission_id = %input.mission_id,
         "mission cancelled"
     );
+
+    Ok(())
+}
+
+// ── M3: Review Gate commands ──────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionReviewGetLatestInput {
+    pub project_path: String,
+    pub mission_id: String,
+}
+
+#[command]
+pub async fn mission_review_get_latest(
+    input: MissionReviewGetLatestInput,
+) -> Result<Option<review_types::ReviewReport>, AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    artifacts::read_review_latest(project_path, &input.mission_id)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionReviewListInput {
+    pub project_path: String,
+    pub mission_id: String,
+}
+
+#[command]
+pub async fn mission_review_list(
+    input: MissionReviewListInput,
+) -> Result<Vec<review_types::ReviewReport>, AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    artifacts::read_review_reports(project_path, &input.mission_id)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionReviewGetPendingDecisionInput {
+    pub project_path: String,
+    pub mission_id: String,
+}
+
+#[command]
+pub async fn mission_review_get_pending_decision(
+    input: MissionReviewGetPendingDecisionInput,
+) -> Result<Option<review_types::ReviewDecisionRequest>, AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    artifacts::read_pending_review_decision(project_path, &input.mission_id)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionReviewAnswerInput {
+    pub project_path: String,
+    pub mission_id: String,
+    pub answer: review_types::ReviewDecisionAnswer,
+}
+
+#[command]
+pub async fn mission_review_answer(
+    app_handle: tauri::AppHandle,
+    input: MissionReviewAnswerInput,
+) -> Result<(), AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let orch = Orchestrator::new(project_path, input.mission_id.clone());
+    let emitter = MissionEventEmitter::new(app_handle.clone(), input.mission_id.clone());
+    let _mission_lock = acquire_mission_runtime_lock(&input.mission_id).await;
+
+    let pending = artifacts::read_pending_review_decision(project_path, &input.mission_id)?
+        .ok_or_else(|| AppError::invalid_argument("no pending review decision"))?;
+
+    if pending.review_id != input.answer.review_id {
+        return Err(AppError::invalid_argument(
+            "review_id mismatch for decision answer",
+        ));
+    }
+
+    append_mission_recovery_log(
+        project_path,
+        &input.mission_id,
+        format!(
+            "review decision answered: review_id={} option={}",
+            input.answer.review_id,
+            input.answer.selected_option
+        ),
+    );
+
+    if input.answer.selected_option.trim() == "auto_fix" {
+        let Some(feature_id) = pending.feature_id.clone().filter(|s| !s.trim().is_empty()) else {
+            return Err(AppError::invalid_argument(
+                "pending decision missing feature_id for auto_fix",
+            ));
+        };
+
+        let start_cfg = paused_config_registry()
+            .get(&input.mission_id)
+            .map(|cfg| cfg.clone())
+            .ok_or_else(|| AppError::invalid_argument("missing mission run config"))?;
+
+        let latest = artifacts::read_review_latest(project_path, &input.mission_id)?
+            .ok_or_else(|| AppError::invalid_argument("no latest review report found"))?;
+
+        if latest.review_id != pending.review_id {
+            return Err(AppError::invalid_argument(
+                "latest review_id mismatch; cannot auto_fix",
+            ));
+        }
+
+        start_review_fixup_attempt(
+            app_handle,
+            &orch,
+            &emitter,
+            &start_cfg,
+            project_path,
+            &input.project_path,
+            &input.mission_id,
+            &feature_id,
+            &latest,
+        )
+        .await?;
+    }
+
+    // Clear pending decision after processing.
+    artifacts::clear_pending_review_decision(project_path, &input.mission_id)?;
 
     Ok(())
 }

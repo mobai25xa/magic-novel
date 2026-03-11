@@ -42,6 +42,10 @@ fn merge_payload_meta(
 pub trait EventSink: Send + Sync + Clone + 'static {
     fn emit_raw(&self, event_type: &str, payload: serde_json::Value) -> Result<(), AppError>;
 
+    fn source_kind(&self) -> &'static str {
+        "agent"
+    }
+
     fn persist_user_message(&self, _text: &str, _turn: u32) -> Result<(), AppError> {
         Ok(())
     }
@@ -488,6 +492,10 @@ impl EventSink for StdoutEventSink {
         );
 
         Ok(())
+    }
+
+    fn source_kind(&self) -> &'static str {
+        "worker"
     }
 }
 

@@ -14,6 +14,7 @@ use super::contextpack_types::ContextPack;
 use super::layer1_types::{ActiveCast, ChapterCard, Layer1Snapshot, RecentFacts};
 
 use crate::models::AppError;
+use crate::review::types::{ReviewDecisionRequest, ReviewReport};
 use crate::utils::atomic_write::atomic_write_json;
 
 use super::types::*;
@@ -54,6 +55,7 @@ pub fn worker_runs_path(project_path: &Path, mission_id: &str) -> PathBuf {
 
 pub const LAYER1_DIR: &str = "layer1";
 pub const CONTEXTPACKS_DIR: &str = "contextpacks";
+pub const REVIEWS_DIR: &str = "reviews";
 
 pub fn layer1_dir(project_path: &Path, mission_id: &str) -> PathBuf {
     mission_dir(project_path, mission_id).join(LAYER1_DIR)
@@ -61,6 +63,10 @@ pub fn layer1_dir(project_path: &Path, mission_id: &str) -> PathBuf {
 
 pub fn contextpacks_dir(project_path: &Path, mission_id: &str) -> PathBuf {
     mission_dir(project_path, mission_id).join(CONTEXTPACKS_DIR)
+}
+
+pub fn reviews_dir(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join(REVIEWS_DIR)
 }
 
 pub fn layer1_chapter_card_path(project_path: &Path, mission_id: &str) -> PathBuf {
@@ -89,6 +95,18 @@ pub fn layer1_risk_ledger_path(project_path: &Path, mission_id: &str) -> PathBuf
 
 pub fn latest_contextpack_path(project_path: &Path, mission_id: &str) -> PathBuf {
     contextpacks_dir(project_path, mission_id).join("contextpack.json")
+}
+
+pub fn review_latest_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("latest.json")
+}
+
+pub fn review_reports_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("reports.jsonl")
+}
+
+pub fn pending_review_decision_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("pending_decision.json")
 }
 
 // ── Init ────────────────────────────────────────────────────────
@@ -278,6 +296,43 @@ pub fn read_latest_contextpack(
     read_optional_json(&latest_contextpack_path(project_path, mission_id))
 }
 
+// ── Read: Reviews (M3) ────────────────────────────────────────
+
+pub fn read_review_latest(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ReviewReport>, AppError> {
+    read_optional_json(&review_latest_path(project_path, mission_id))
+}
+
+pub fn read_review_reports(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Vec<ReviewReport>, AppError> {
+    let path = review_reports_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let entries: Vec<ReviewReport> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            serde_json::from_str(l)
+                .map_err(|e| tracing::warn!(target: "mission", line = %l, "review report parse error: {e}"))
+                .ok()
+        })
+        .collect();
+    Ok(entries)
+}
+
+pub fn read_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ReviewDecisionRequest>, AppError> {
+    read_optional_json(&pending_review_decision_path(project_path, mission_id))
+}
+
 // ── Write (update) ──────────────────────────────────────────────
 
 pub fn write_features(
@@ -373,6 +428,54 @@ pub fn write_latest_contextpack(
     let path = latest_contextpack_path(project_path, mission_id);
     ensure_parent_dir(&path)?;
     atomic_write_json(&path, doc)
+}
+
+// ── Write: Reviews (M3) ───────────────────────────────────────
+
+pub fn write_review_latest(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ReviewReport,
+) -> Result<(), AppError> {
+    let path = review_latest_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn append_review_report(
+    project_path: &Path,
+    mission_id: &str,
+    entry: &ReviewReport,
+) -> Result<(), AppError> {
+    let path = review_reports_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    let line = serde_json::to_string(entry)? + "\n";
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    file.write_all(line.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+
+pub fn write_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ReviewDecisionRequest,
+) -> Result<(), AppError> {
+    let path = pending_review_decision_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn clear_pending_review_decision(project_path: &Path, mission_id: &str) -> Result<(), AppError> {
+    let path = pending_review_decision_path(project_path, mission_id);
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
 }
 
 // ── List missions ───────────────────────────────────────────────

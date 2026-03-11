@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -18,8 +19,10 @@ use tokio_util::sync::CancellationToken;
 use crate::agent_tools::contracts::ConfirmationPolicy;
 use crate::agent_tools::registry::get_manifest;
 use crate::models::{AppError, ErrorCode};
+use crate::review::{engine as review_engine, types as review_types};
 
 use super::emitter::EventSink;
+use super::events::event_types;
 use super::messages::AgentMessage;
 use super::tool_dispatch::execute_tool_call;
 use super::tool_errors::{
@@ -367,6 +370,16 @@ impl<S: EventSink> ToolScheduler<S> {
                         .tool_call_finished(&tc, &call_id, status, trace)
                         .ok();
 
+                    maybe_emit_post_write_review(
+                        &emitter,
+                        &cancel_token,
+                        &project_path,
+                        &tc,
+                        &call_id,
+                        &result,
+                    )
+                    .await;
+
                     build_tool_message(&tc, &result)
                 }
             })
@@ -452,6 +465,16 @@ impl<S: EventSink> ToolScheduler<S> {
         let trace = Some(build_tool_trace(&tc.tool_name, &result));
         self.emitter
             .tool_call_finished(tc, &call_id, status, trace)?;
+
+        maybe_emit_post_write_review(
+            &self.emitter,
+            &self.cancel_token,
+            &self.project_path,
+            tc,
+            &call_id,
+            &result,
+        )
+        .await;
 
         Ok(build_tool_message(tc, &result))
     }
@@ -548,6 +571,132 @@ impl<S: EventSink> ToolScheduler<S> {
 
         requires_confirmation(manifest.confirmation, self.approval_mode)
     }
+}
+
+fn extract_post_write_review_target_ref(
+    tc: &ToolCallInfo,
+    result: &crate::agent_tools::contracts::ToolResult<serde_json::Value>,
+) -> Option<String> {
+    if tc.tool_name != "edit" {
+        return None;
+    }
+    if !result.ok {
+        return None;
+    }
+    let data = result.data.as_ref()?;
+
+    let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+    if mode != "commit" {
+        return None;
+    }
+    let target = data.get("target").and_then(|v| v.as_str()).unwrap_or("");
+    if target != "chapter_content" {
+        return None;
+    }
+    let accepted = data
+        .get("accepted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !accepted {
+        return None;
+    }
+
+    let path = data.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let path = path.trim();
+    if path.is_empty() || !path.ends_with(".json") {
+        return None;
+    }
+
+    Some(path.to_string())
+}
+
+async fn maybe_emit_post_write_review<S: EventSink>(
+    emitter: &S,
+    cancel_token: &CancellationToken,
+    project_path: &str,
+    tc: &ToolCallInfo,
+    call_id: &str,
+    result: &crate::agent_tools::contracts::ToolResult<serde_json::Value>,
+) {
+    if cancel_token.is_cancelled() {
+        return;
+    }
+    if emitter.source_kind() != "agent" {
+        return;
+    }
+
+    let Some(target_ref) = extract_post_write_review_target_ref(tc, result) else {
+        return;
+    };
+
+    let project_path = project_path.to_string();
+    let target_ref_for_run = target_ref.clone();
+
+    let report = match tokio::task::spawn_blocking(move || {
+        let input = review_types::ReviewRunInput {
+            scope_ref: format!("chapter:{target_ref_for_run}"),
+            target_refs: vec![target_ref_for_run],
+            branch_id: None,
+            review_types: vec![review_types::ReviewType::WordCount],
+            task_card_ref: None,
+            context_pack_ref: None,
+            effective_rules_fingerprint: None,
+            severity_threshold: None,
+        };
+        review_engine::run_review(Path::new(&project_path), input)
+    })
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "review",
+                error = %e,
+                target_ref = %target_ref,
+                "post-write review failed"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "review",
+                error = %e,
+                target_ref = %target_ref,
+                "post-write review join error"
+            );
+            return;
+        }
+    };
+
+    let mut warn = 0_i32;
+    let mut block = 0_i32;
+    for i in &report.issues {
+        match i.severity {
+            review_types::ReviewSeverity::Warn => warn += 1,
+            review_types::ReviewSeverity::Block => block += 1,
+            _ => {}
+        }
+    }
+
+    let payload = json!({
+        "hook": "post_write",
+        "call_id": call_id,
+        "llm_call_id": tc.llm_call_id.as_str(),
+        "tool_name": tc.tool_name.as_str(),
+        "target_ref": target_ref,
+        "revision_after": result.meta.revision_after,
+        "issue_counts": {
+            "total": report.issues.len() as i32,
+            "warn": warn,
+            "block": block,
+        },
+        "overall_status": report.overall_status,
+        "recommended_action": report.recommended_action,
+        "generated_at": report.generated_at,
+        "report": report,
+    });
+
+    let _ = emitter.emit_raw(event_types::REVIEW_RECORDED, payload);
 }
 
 fn tool_is_allowed(allowed_tools: Option<&HashSet<String>>, tool_name: &str) -> bool {

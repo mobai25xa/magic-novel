@@ -16,6 +16,7 @@ mod interfaces;
 mod kernel;
 pub mod llm;
 pub mod mission;
+pub mod review;
 pub use services::{load_openai_search_settings, OpenAiSearchSettings};
 
 use application::command_usecases::global_config::{export_skill, import_skill};
@@ -57,6 +58,8 @@ use commands::jvm::{
 use commands::mission::{
     mission_cancel, mission_create, mission_get_status, mission_list, mission_pause,
     mission_resume, mission_start, mission_layer1_get, mission_layer1_upsert,
+    mission_review_get_latest, mission_review_list, mission_review_get_pending_decision,
+    mission_review_answer,
     mission_contextpack_get_latest, mission_contextpack_build, mission_contextpack_status,
     mission_contextpack_rebuild_if_stale,
 };
@@ -190,6 +193,10 @@ macro_rules! app_commands {
             mission_pause,
             mission_resume,
             mission_cancel,
+            mission_review_get_latest,
+            mission_review_list,
+            mission_review_get_pending_decision,
+            mission_review_answer,
             mission_layer1_get,
             mission_layer1_upsert,
             mission_contextpack_get_latest,
