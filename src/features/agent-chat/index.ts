@@ -20,6 +20,10 @@ import {
   missionLayer1Upsert as missionLayer1UpsertCommand,
   missionContextpackGetLatest as missionContextpackGetLatestCommand,
   missionContextpackBuild as missionContextpackBuildCommand,
+  missionReviewGetLatest as missionReviewGetLatestCommand,
+  missionReviewList as missionReviewListCommand,
+  missionReviewGetPendingDecision as missionReviewGetPendingDecisionCommand,
+  missionReviewAnswer as missionReviewAnswerCommand,
   type MissionCreateInput,
   type MissionCreateOutput,
   type MissionLayer1Snapshot,
@@ -29,7 +33,7 @@ import {
   type MissionContextpackBuildInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
-import type { MissionGetStatusOutput } from '@/lib/tauri-commands/mission'
+import type { MissionGetStatusOutput, MissionReviewAnswerInput } from '@/lib/tauri-commands/mission'
 
 type ErrorRecord = Record<string, unknown>
 
@@ -228,4 +232,29 @@ export async function missionContextpackBuildFeature(
   input: MissionContextpackBuildInput,
 ): Promise<ContextPack> {
   return missionContextpackBuildCommand(input)
+}
+
+export async function missionReviewGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionReviewListFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewListCommand(projectPath, missionId)
+}
+
+export async function missionReviewGetPendingDecisionFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetPendingDecisionCommand(projectPath, missionId)
+}
+
+export async function missionReviewAnswerFeature(input: MissionReviewAnswerInput): Promise<void> {
+  await missionReviewAnswerCommand(input)
 }

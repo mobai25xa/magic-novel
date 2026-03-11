@@ -7,6 +7,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { z } from 'zod'
 
+import type {
+  ReviewDecisionAnswer,
+  ReviewDecisionRequest,
+  ReviewReport,
+} from '@/types/review'
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -164,6 +170,145 @@ export async function missionCancel(
   return invoke<void>('mission_cancel', {
     input: { project_path: projectPath, mission_id: missionId },
   })
+}
+
+// ── M3 Review Gate ───────────────────────────────────────────
+
+const ReviewIssueSchema = z
+  .object({
+    issue_id: z.string(),
+    review_type: z.string(),
+    severity: z.string(),
+    summary: z.string(),
+    subject_refs: z.array(z.string()).default([]),
+    evidence_refs: z.array(z.string()).default([]),
+    confidence: z.string(),
+    suggested_fix: z.string().optional(),
+    auto_fixable: z.boolean(),
+  })
+  .passthrough()
+
+const ReviewReportSchema = z
+  .object({
+    schema_version: z.number(),
+    review_id: z.string(),
+    scope_ref: z.string(),
+    target_refs: z.array(z.string()).default([]),
+    review_types: z.array(z.string()).default([]),
+    overall_status: z.string(),
+    issues: z.array(ReviewIssueSchema).default([]),
+    evidence_summary: z.array(z.string()).default([]),
+    recommended_action: z.string(),
+    generated_at: z.number(),
+  })
+  .passthrough()
+
+const ReviewDecisionRequestSchema = z
+  .object({
+    schema_version: z.number(),
+    review_id: z.string(),
+    feature_id: z.string().optional().nullable(),
+    scope_ref: z.string(),
+    target_refs: z.array(z.string()).optional().nullable(),
+    question: z.string(),
+    options: z.array(z.string()).default([]),
+    context_summary: z.array(z.string()).default([]),
+    created_at: z.number(),
+  })
+  .passthrough()
+
+function parseReviewReport(value: unknown): ReviewReport | null {
+  if (value == null) return null
+  const parsed = ReviewReportSchema.safeParse(value)
+  if (parsed.success) return parsed.data as ReviewReport
+  console.warn(`[mission] review report schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function parseReviewReports(value: unknown): ReviewReport[] {
+  if (value == null) return []
+  const parsed = z.array(ReviewReportSchema).safeParse(value)
+  if (parsed.success) return parsed.data as ReviewReport[]
+  console.warn(`[mission] review list schema mismatch:`, zodErrorSummary(parsed.error))
+  return []
+}
+
+function parseReviewDecisionRequest(value: unknown): ReviewDecisionRequest | null {
+  if (value == null) return null
+  const parsed = ReviewDecisionRequestSchema.safeParse(value)
+  if (parsed.success) return parsed.data as ReviewDecisionRequest
+  console.warn(`[mission] review decision schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function unwrapReviewReportPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'review')
+  value = unwrapMaybeWrapped(value, 'review_report')
+  value = unwrapMaybeWrapped(value, 'report')
+  value = unwrapMaybeWrapped(value, 'latest')
+  return value
+}
+
+function unwrapReviewReportsPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'reviews')
+  value = unwrapMaybeWrapped(value, 'reports')
+  value = unwrapMaybeWrapped(value, 'list')
+  return value
+}
+
+function unwrapReviewDecisionPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'pending_decision')
+  value = unwrapMaybeWrapped(value, 'decision')
+  return value
+}
+
+export async function missionReviewGetLatest(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewReport | null> {
+  const raw = await invoke<unknown>('mission_review_get_latest', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewReportPayload(raw)
+  return parseReviewReport(resolved)
+}
+
+export async function missionReviewList(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewReport[]> {
+  const raw = await invoke<unknown>('mission_review_list', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewReportsPayload(raw)
+  return parseReviewReports(resolved)
+}
+
+export async function missionReviewGetPendingDecision(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewDecisionRequest | null> {
+  const raw = await invoke<unknown>('mission_review_get_pending_decision', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewDecisionPayload(raw)
+  return parseReviewDecisionRequest(resolved)
+}
+
+export interface MissionReviewAnswerInput {
+  project_path: string
+  mission_id: string
+  answer: ReviewDecisionAnswer
+}
+
+export async function missionReviewAnswer(input: MissionReviewAnswerInput): Promise<void> {
+  await invoke<void>('mission_review_answer', { input })
 }
 
 // ── M2 Layer1 / ContextPack ────────────────────────────────────

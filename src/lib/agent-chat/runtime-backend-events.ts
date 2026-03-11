@@ -825,6 +825,19 @@ export interface MissionUiState {
   layer1UpdatedAt?: number
   /** Optional P1: used to trigger UI refresh when ContextPack is rebuilt. */
   contextPackBuiltAt?: number
+
+  /** Optional M3: used to trigger UI refresh when ReviewReport is recorded. */
+  reviewUpdatedAt?: number
+  /** Optional M3: backend indicates a decision is required to proceed. */
+  reviewDecisionRequired?: boolean
+  /** Optional M3: last decision payload (when emitted). */
+  reviewDecision?: Record<string, unknown> | null
+
+  /** Optional M3: auto-fix loop progress. */
+  fixupAttempt?: number
+  fixupMessage?: string
+  fixupUpdatedAt?: number
+  fixupInProgress?: boolean
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -845,6 +858,13 @@ function createMissionUiState(missionId: string): MissionUiState {
     progressLog: [],
     layer1UpdatedAt: undefined,
     contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    fixupAttempt: undefined,
+    fixupMessage: undefined,
+    fixupUpdatedAt: undefined,
+    fixupInProgress: undefined,
   }
 }
 
@@ -856,6 +876,13 @@ function resetMissionTransientState(state: MissionUiState): MissionUiState {
     progressLog: [],
     layer1UpdatedAt: undefined,
     contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    fixupAttempt: undefined,
+    fixupMessage: undefined,
+    fixupUpdatedAt: undefined,
+    fixupInProgress: undefined,
   }
 }
 
@@ -1162,6 +1189,41 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
       nextState = {
         ...base,
         contextPackBuiltAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_RECORDED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: false,
+        reviewDecision: null,
+        fixupInProgress: false,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_DECISION_REQUIRED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: true,
+        reviewDecision: payload,
+      }
+      break
+    }
+
+    case 'MISSION_FIXUP_PROGRESS': {
+      const attempt = typeof payload.attempt === 'number'
+        ? payload.attempt
+        : Number(String(payload.attempt ?? ''))
+      nextState = {
+        ...base,
+        fixupAttempt: Number.isFinite(attempt) ? attempt : base.fixupAttempt,
+        fixupMessage: typeof payload.message === 'string' ? payload.message : base.fixupMessage,
+        fixupUpdatedAt: envelope.ts,
+        fixupInProgress: true,
       }
       break
     }
