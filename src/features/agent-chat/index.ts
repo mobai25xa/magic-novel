@@ -24,6 +24,12 @@ import {
   missionReviewList as missionReviewListCommand,
   missionReviewGetPendingDecision as missionReviewGetPendingDecisionCommand,
   missionReviewAnswer as missionReviewAnswerCommand,
+  missionKnowledgeGetLatest as missionKnowledgeGetLatestCommand,
+  missionKnowledgeDecide as missionKnowledgeDecideCommand,
+  missionKnowledgeApply as missionKnowledgeApplyCommand,
+  missionKnowledgeRollback as missionKnowledgeRollbackCommand,
+  missionMacroCreate as missionMacroCreateCommand,
+  missionMacroGetState as missionMacroGetStateCommand,
   type MissionCreateInput,
   type MissionCreateOutput,
   type MissionLayer1Snapshot,
@@ -33,7 +39,16 @@ import {
   type MissionContextpackBuildInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
-import type { MissionGetStatusOutput, MissionReviewAnswerInput } from '@/lib/tauri-commands/mission'
+import type {
+  MissionGetStatusOutput,
+  MissionReviewAnswerInput,
+  MissionKnowledgeDecideInput,
+} from '@/lib/tauri-commands/mission'
+import type {
+  MacroCreateInput,
+  MacroCreateOutput,
+  MacroGetStateOutput,
+} from '@/types/macro-workflow'
 
 type ErrorRecord = Record<string, unknown>
 
@@ -257,4 +272,45 @@ export async function missionReviewGetPendingDecisionFeature(
 
 export async function missionReviewAnswerFeature(input: MissionReviewAnswerInput): Promise<void> {
   await missionReviewAnswerCommand(input)
+}
+
+export async function missionKnowledgeGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionKnowledgeGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionKnowledgeDecideFeature(input: MissionKnowledgeDecideInput): Promise<void> {
+  await missionKnowledgeDecideCommand(input)
+}
+
+export async function missionKnowledgeApplyFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await missionKnowledgeApplyCommand(projectPath, missionId)
+}
+
+export async function missionKnowledgeRollbackFeature(
+  projectPath: string,
+  missionId: string,
+  token?: string,
+): Promise<void> {
+  await missionKnowledgeRollbackCommand(projectPath, missionId, token)
+}
+
+// ── M5: Macro Workflow ──────────────────────────────────────────
+
+export async function missionMacroCreateFeature(
+  input: MacroCreateInput,
+): Promise<MacroCreateOutput> {
+  return missionMacroCreateCommand(input)
+}
+
+export async function missionMacroGetStateFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<MacroGetStateOutput> {
+  return missionMacroGetStateCommand(projectPath, missionId)
 }
