@@ -7,7 +7,6 @@ import { LsToolView } from './tools/LsToolView'
 import { GrepToolView } from './tools/GrepToolView'
 import { ReviewToolView } from './tools/ReviewToolView'
 import { GenericToolView } from './tools/GenericToolView'
-import { ReviewToolView } from './tools/ReviewToolView'
 
 type ToolViewDispatcherProps = {
   step: AgentUiToolStep
