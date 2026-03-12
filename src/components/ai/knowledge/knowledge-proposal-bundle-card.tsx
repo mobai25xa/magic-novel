@@ -6,6 +6,7 @@ import { Badge, ShowMore, Tab, TabPanel, Tabs } from '@/magic-ui/components'
 
 import { CopyPill } from './copy-pill'
 import { JsonDiffView } from './json-diff-view'
+import { JsonPatchOpsView } from './json-patch-ops-view'
 
 export type KnowledgeProposalItemLike = {
   item_id: string
@@ -146,10 +147,42 @@ function extractBeforeAfter(fields: unknown): { before: unknown; after: unknown 
   return { before, after }
 }
 
+function extractPatchOps(fields: unknown): unknown[] | null {
+  if (!fields || typeof fields !== 'object') {
+    return null
+  }
+
+  const record = fields as Record<string, unknown>
+  const candidate = record.patch_ops
+    ?? record.patchOps
+    ?? record.json_patch
+    ?? record.jsonPatch
+    ?? record.patch
+    ?? record.ops
+
+  if (!Array.isArray(candidate) || candidate.length === 0) {
+    return null
+  }
+
+  const looksLikePatch = candidate.some((entry) => {
+    if (!entry || typeof entry !== 'object') {
+      return false
+    }
+    const e = entry as Record<string, unknown>
+    return typeof e.op === 'string' || typeof e.path === 'string' || typeof e.from === 'string'
+  })
+
+  return looksLikePatch ? candidate : null
+}
+
 function ProposalItemCard({ item, policy }: { item: KnowledgeProposalItemLike; policy: NormalizedAcceptPolicy }) {
   const op = normalizeOp(item.op)
   const fieldsText = safeStringify(item.fields)
   const diffPayload = extractBeforeAfter(item.fields)
+  const patchOps = extractPatchOps(item.fields)
+  const hasDiff = Boolean(diffPayload)
+  const hasPatch = Boolean(patchOps && patchOps.length > 0)
+  const defaultTab = hasDiff ? 'diff' : hasPatch ? 'patch' : 'json'
 
   return (
     <details className="rounded-md border border-border/60 bg-muted/10 px-2.5 py-2 text-xs">
@@ -219,18 +252,32 @@ function ProposalItemCard({ item, policy }: { item: KnowledgeProposalItemLike; p
         <div>
           <div className="text-[11px] font-medium text-secondary-foreground">Fields</div>
 
-          {diffPayload ? (
-            <Tabs defaultValue="diff" className="mt-1">
-              <Tab value="diff" className="text-[11px]">
-                Diff
-              </Tab>
+          {hasDiff || hasPatch ? (
+            <Tabs defaultValue={defaultTab} className="mt-1">
+              {hasDiff ? (
+                <Tab value="diff" className="text-[11px]">
+                  Diff
+                </Tab>
+              ) : null}
+              {hasPatch ? (
+                <Tab value="patch" className="text-[11px]">
+                  Patch
+                </Tab>
+              ) : null}
               <Tab value="json" className="text-[11px]">
                 JSON
               </Tab>
 
-              <TabPanel value="diff" className="mt-2">
-                <JsonDiffView before={diffPayload.before} after={diffPayload.after} />
-              </TabPanel>
+              {diffPayload ? (
+                <TabPanel value="diff" className="mt-2">
+                  <JsonDiffView before={diffPayload.before} after={diffPayload.after} />
+                </TabPanel>
+              ) : null}
+              {patchOps ? (
+                <TabPanel value="patch" className="mt-2">
+                  <JsonPatchOpsView ops={patchOps} />
+                </TabPanel>
+              ) : null}
               <TabPanel value="json" className="mt-2">
                 <ShowMore maxLines={8}>
                   <pre className="whitespace-pre-wrap break-words font-mono text-[11px] text-muted-foreground">

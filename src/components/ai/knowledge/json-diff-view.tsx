@@ -19,6 +19,7 @@ export type JsonDiffViewProps = {
   before: unknown
   after: unknown
   maxEntries?: number
+  maxDepth?: number
   className?: string
 }
 
@@ -76,39 +77,144 @@ function isDeepEqual(a: unknown, b: unknown) {
   return safeStableStringify(a) === safeStableStringify(b)
 }
 
-function computeShallowDiff(before: unknown, after: unknown): DiffEntry[] {
+function computeDeepDiff(
+  before: unknown,
+  after: unknown,
+  options: { maxDepth: number; limit: number },
+): { entries: DiffEntry[]; truncated: boolean } {
   if (isDeepEqual(before, after)) {
-    return []
+    return { entries: [], truncated: false }
   }
-
-  if (!isPlainObject(before) || !isPlainObject(after)) {
-    return [{ path: '(root)', kind: 'changed', before, after }]
-  }
-
-  const keys = new Set<string>([...Object.keys(before), ...Object.keys(after)])
-  const sorted = Array.from(keys).sort((a, b) => a.localeCompare(b))
 
   const entries: DiffEntry[] = []
-  for (const key of sorted) {
-    const hasBefore = Object.prototype.hasOwnProperty.call(before, key)
-    const hasAfter = Object.prototype.hasOwnProperty.call(after, key)
-    if (!hasBefore && hasAfter) {
-      entries.push({ path: key, kind: 'added', after: after[key] })
-      continue
-    }
-    if (hasBefore && !hasAfter) {
-      entries.push({ path: key, kind: 'removed', before: before[key] })
-      continue
-    }
+  let truncated = false
 
-    const left = before[key]
-    const right = after[key]
-    if (!isDeepEqual(left, right)) {
-      entries.push({ path: key, kind: 'changed', before: left, after: right })
+  const beforeStack = new WeakSet<object>()
+  const afterStack = new WeakSet<object>()
+
+  const pushEntry = (entry: DiffEntry) => {
+    if (truncated) {
+      return
+    }
+    entries.push(entry)
+    if (entries.length >= options.limit) {
+      truncated = true
     }
   }
 
-  return entries
+  const joinObjectPath = (parent: string, key: string) => (parent === '(root)' ? key : `${parent}.${key}`)
+  const joinArrayPath = (parent: string, index: number) => (parent === '(root)' ? `[${index}]` : `${parent}[${index}]`)
+
+  const walk = (left: unknown, right: unknown, path: string, depth: number) => {
+    if (truncated) {
+      return
+    }
+
+    if (Object.is(left, right)) {
+      return
+    }
+
+    if (depth >= options.maxDepth) {
+      if (!isDeepEqual(left, right)) {
+        pushEntry({ path, kind: 'changed', before: left, after: right })
+      }
+      return
+    }
+
+    const isLeftObj = Boolean(left) && typeof left === 'object'
+    const isRightObj = Boolean(right) && typeof right === 'object'
+    const leftObj = isLeftObj ? (left as object) : null
+    const rightObj = isRightObj ? (right as object) : null
+
+    if (leftObj && beforeStack.has(leftObj)) {
+      if (!isDeepEqual(left, right)) {
+        pushEntry({ path, kind: 'changed', before: left, after: right })
+      }
+      return
+    }
+
+    if (rightObj && afterStack.has(rightObj)) {
+      if (!isDeepEqual(left, right)) {
+        pushEntry({ path, kind: 'changed', before: left, after: right })
+      }
+      return
+    }
+
+    if (leftObj) {
+      beforeStack.add(leftObj)
+    }
+    if (rightObj) {
+      afterStack.add(rightObj)
+    }
+
+    try {
+      if (Array.isArray(left) && Array.isArray(right)) {
+        const maxLen = Math.max(left.length, right.length)
+        for (let i = 0; i < maxLen; i += 1) {
+          if (truncated) {
+            return
+          }
+
+          const hasLeft = i < left.length
+          const hasRight = i < right.length
+          const nextPath = joinArrayPath(path, i)
+
+          if (!hasLeft && hasRight) {
+            pushEntry({ path: nextPath, kind: 'added', after: right[i] })
+            continue
+          }
+          if (hasLeft && !hasRight) {
+            pushEntry({ path: nextPath, kind: 'removed', before: left[i] })
+            continue
+          }
+          walk(left[i], right[i], nextPath, depth + 1)
+        }
+        return
+      }
+
+      if (isPlainObject(left) && isPlainObject(right)) {
+        const keys = new Set<string>([...Object.keys(left), ...Object.keys(right)])
+        const sorted = Array.from(keys).sort((a, b) => a.localeCompare(b))
+
+        for (const key of sorted) {
+          if (truncated) {
+            return
+          }
+
+          const hasLeft = Object.prototype.hasOwnProperty.call(left, key)
+          const hasRight = Object.prototype.hasOwnProperty.call(right, key)
+          const nextPath = joinObjectPath(path, key)
+
+          if (!hasLeft && hasRight) {
+            pushEntry({ path: nextPath, kind: 'added', after: right[key] })
+            continue
+          }
+          if (hasLeft && !hasRight) {
+            pushEntry({ path: nextPath, kind: 'removed', before: left[key] })
+            continue
+          }
+
+          walk(left[key], right[key], nextPath, depth + 1)
+        }
+        return
+      }
+
+      if (!isDeepEqual(left, right)) {
+        pushEntry({ path, kind: 'changed', before: left, after: right })
+      }
+    } finally {
+      if (leftObj) {
+        beforeStack.delete(leftObj)
+      }
+      if (rightObj) {
+        afterStack.delete(rightObj)
+      }
+    }
+  }
+
+  walk(before, after, '(root)', 0)
+
+  return { entries, truncated }
 }
 
 function resolveKindColor(kind: DiffKind): BadgeProps['color'] {
@@ -137,10 +243,17 @@ function resolveKindLabel(kind: DiffKind) {
   }
 }
 
-export function JsonDiffView({ before, after, maxEntries = 60, className }: JsonDiffViewProps) {
-  const rawEntries = useMemo(() => computeShallowDiff(before, after), [before, after])
-  const entries = rawEntries.slice(0, Math.max(0, maxEntries))
-  const truncated = rawEntries.length > entries.length
+export function JsonDiffView({ before, after, maxEntries = 60, maxDepth = 4, className }: JsonDiffViewProps) {
+  const computeLimit = Math.max(0, maxEntries) * 6 + 40
+  const effectiveMaxDepth = Math.max(0, Math.floor(maxDepth))
+
+  const raw = useMemo(
+    () => computeDeepDiff(before, after, { maxDepth: effectiveMaxDepth, limit: computeLimit }),
+    [before, after, computeLimit, effectiveMaxDepth],
+  )
+
+  const entries = raw.entries.slice(0, Math.max(0, maxEntries))
+  const truncated = raw.truncated || raw.entries.length > entries.length
 
   const counts = useMemo(() => {
     const result: Record<DiffKind, number> = { added: 0, removed: 0, changed: 0 }
@@ -150,7 +263,7 @@ export function JsonDiffView({ before, after, maxEntries = 60, className }: Json
     return result
   }, [entries])
 
-  if (rawEntries.length === 0) {
+  if (raw.entries.length === 0) {
     return <div className={cn('text-[11px] text-muted-foreground', className)}>No changes.</div>
   }
 
@@ -158,7 +271,7 @@ export function JsonDiffView({ before, after, maxEntries = 60, className }: Json
     <div className={cn('space-y-2', className)}>
       <div className="flex flex-wrap items-center gap-2">
         <Badge color="info" variant="soft" size="sm">
-          {`diff ${rawEntries.length}`}
+          {`diff ${raw.entries.length}${raw.truncated ? '+' : ''}`}
         </Badge>
         {counts.added > 0 ? (
           <Badge color="success" variant="outline" size="sm">
@@ -176,7 +289,7 @@ export function JsonDiffView({ before, after, maxEntries = 60, className }: Json
           </Badge>
         ) : null}
         {truncated ? (
-          <span className="text-[11px] text-muted-foreground">{`showing ${entries.length}/${rawEntries.length}`}</span>
+          <span className="text-[11px] text-muted-foreground">{`showing ${entries.length}/${raw.entries.length}${raw.truncated ? '+' : ''}`}</span>
         ) : null}
       </div>
 

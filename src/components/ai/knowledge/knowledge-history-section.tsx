@@ -19,6 +19,27 @@ export type KnowledgeHistorySectionProps = {
   className?: string
 }
 
+function coerceTimeToNumber(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = new Date(value).getTime()
+    return Number.isNaN(parsed) ? 0 : parsed
+  }
+  return 0
+}
+
+function resolveSortKey(entry: KnowledgeHistoryEntryLike): number {
+  const delta = entry.delta ?? null
+  const bundle = entry.bundle ?? null
+  return (
+    coerceTimeToNumber(delta?.applied_at)
+    || coerceTimeToNumber(delta?.generated_at)
+    || coerceTimeToNumber(bundle?.generated_at)
+  )
+}
+
 function resolveSummary(input: KnowledgeHistoryEntryLike): {
   status: KnowledgeSummaryStatus
   items?: number
@@ -69,7 +90,11 @@ function resolveSummary(input: KnowledgeHistoryEntryLike): {
 
 export function KnowledgeHistorySection({ entries, maxItems = 5, className }: KnowledgeHistorySectionProps) {
   const items = useMemo(
-    () => (Array.isArray(entries) ? entries : []).filter((e) => Boolean(e?.bundle || e?.delta)).slice(0, Math.max(0, maxItems)),
+    () => (Array.isArray(entries) ? entries : [])
+      .filter((e) => Boolean(e?.bundle || e?.delta))
+      .slice()
+      .sort((a, b) => resolveSortKey(b) - resolveSortKey(a))
+      .slice(0, Math.max(0, maxItems)),
     [entries, maxItems],
   )
   const [open, setOpen] = useState(false)
