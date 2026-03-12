@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 pub const REVIEW_SCHEMA_VERSION: i32 = 1;
 pub const REVIEW_DECISION_SCHEMA_VERSION: i32 = 1;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewType {
     WordCount,

@@ -314,13 +314,22 @@ pub fn read_layer1_active_cast(
     read_optional_json(&layer1_active_cast_path(project_path, mission_id))
 }
 
-pub fn read_layer1_snapshot(project_path: &Path, mission_id: &str) -> Result<Layer1Snapshot, AppError> {
+pub fn read_layer1_snapshot(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Layer1Snapshot, AppError> {
     Ok(Layer1Snapshot {
         chapter_card: read_layer1_chapter_card(project_path, mission_id)?,
         recent_facts: read_layer1_recent_facts(project_path, mission_id)?,
         active_cast: read_layer1_active_cast(project_path, mission_id)?,
-        active_foreshadowing: read_optional_json(&layer1_active_foreshadowing_path(project_path, mission_id))?,
-        previous_summary: read_optional_json(&layer1_previous_summary_path(project_path, mission_id))?,
+        active_foreshadowing: read_optional_json(&layer1_active_foreshadowing_path(
+            project_path,
+            mission_id,
+        ))?,
+        previous_summary: read_optional_json(&layer1_previous_summary_path(
+            project_path,
+            mission_id,
+        ))?,
         risk_ledger: read_optional_json(&layer1_risk_ledger_path(project_path, mission_id))?,
     })
 }
@@ -529,7 +538,10 @@ pub fn write_pending_review_decision(
     atomic_write_json(&path, doc)
 }
 
-pub fn clear_pending_review_decision(project_path: &Path, mission_id: &str) -> Result<(), AppError> {
+pub fn clear_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<(), AppError> {
     let path = pending_review_decision_path(project_path, mission_id);
     if path.exists() {
         std::fs::remove_file(&path)?;
@@ -643,11 +655,11 @@ pub fn list_missions(project_path: &Path) -> Result<Vec<String>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use crate::mission::contextpack_types::{TokenBudget, CONTEXTPACK_SCHEMA_VERSION};
     use crate::mission::layer1_types::{
         ChapterCardStatus, ChapterWorkflowKind, LAYER1_SCHEMA_VERSION,
     };
+    use std::fs;
 
     fn temp_project_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("magic_test_{}", uuid::Uuid::new_v4()));

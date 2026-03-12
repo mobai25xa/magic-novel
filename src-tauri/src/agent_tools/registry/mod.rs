@@ -11,11 +11,13 @@ use crate::agent_tools::definition::{ToolDefinition, ToolManifest, ToolSchemaCon
 
 mod context;
 mod discovery;
+mod review;
 mod utility;
 mod writing;
 
 use context::{CHARACTER_SHEET_TOOL, OUTLINE_TOOL, SEARCH_KNOWLEDGE_TOOL};
 use discovery::{GREP_TOOL, LS_TOOL};
+use review::REVIEW_CHECK_TOOL;
 use utility::{ASKUSER_TOOL, SKILL_TOOL, TODOWRITE_TOOL};
 use writing::{CREATE_TOOL, DELETE_TOOL, EDIT_TOOL, MOVE_TOOL, READ_TOOL};
 
@@ -31,6 +33,7 @@ static TOOL_REGISTRY: &[&dyn ToolDefinition] = &[
     &MOVE_TOOL,
     &LS_TOOL,
     &GREP_TOOL,
+    &REVIEW_CHECK_TOOL,
     &ASKUSER_TOOL,
     &SKILL_TOOL,
     &TODOWRITE_TOOL,
@@ -127,7 +130,9 @@ pub fn get_schema(tool_name: &str, context: &ToolSchemaContext) -> Option<serde_
 
 fn tool_layer(tool_name: &str) -> ToolLayer {
     match tool_name {
-        "read" | "edit" | "create" | "delete" | "move" | "ls" | "grep" => ToolLayer::CoreResource,
+        "read" | "edit" | "create" | "delete" | "move" | "ls" | "grep" | "review_check" => {
+            ToolLayer::CoreResource
+        }
         "outline" | "character_sheet" | "search_knowledge" => ToolLayer::DerivedView,
         "askuser" | "todowrite" | "skill" => ToolLayer::SessionControl,
         _ => ToolLayer::CoreResource,
@@ -428,6 +433,7 @@ mod tests {
             "move",
             "ls",
             "grep",
+            "review_check",
             "askuser",
             "skill",
             "todowrite",
@@ -537,7 +543,7 @@ mod tests {
 
         assert_eq!(
             tools.len(),
-            13,
+            14,
             "all writing-mode tools should build successfully"
         );
 
@@ -556,8 +562,8 @@ mod tests {
         let context = ToolSchemaContext::default();
         let report = build_openai_tool_schema_report(AgentMode::Writing, &context);
 
-        assert_eq!(report.tools.len(), 13);
-        assert_eq!(report.exposed_tools.len(), 13);
+        assert_eq!(report.tools.len(), 14);
+        assert_eq!(report.exposed_tools.len(), 14);
         assert!(report.skipped_tools.is_empty());
     }
 
@@ -565,9 +571,9 @@ mod tests {
     fn test_build_tool_schema_inventory_covers_registered_tools() {
         let inventory = build_tool_schema_inventory(&ToolSchemaContext::default());
 
-        assert_eq!(inventory.total_tools, 13);
-        assert_eq!(inventory.provider_safe_tools, 13);
-        assert_eq!(inventory.tools.len(), 13);
+        assert_eq!(inventory.total_tools, 14);
+        assert_eq!(inventory.provider_safe_tools, 14);
+        assert_eq!(inventory.tools.len(), 14);
         assert!(inventory
             .tools
             .iter()
@@ -690,8 +696,8 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_has_13_tools() {
-        assert_eq!(TOOL_REGISTRY.len(), 13);
+    fn test_registry_has_14_tools() {
+        assert_eq!(TOOL_REGISTRY.len(), 14);
     }
 
     #[test]
@@ -704,7 +710,16 @@ mod tests {
                 name
             );
         }
-        for name in ["read", "edit", "create", "delete", "move", "ls", "grep"] {
+        for name in [
+            "read",
+            "edit",
+            "create",
+            "delete",
+            "move",
+            "ls",
+            "grep",
+            "review_check",
+        ] {
             let def = TOOL_REGISTRY.iter().find(|t| t.name() == name).unwrap();
             assert!(
                 !def.externally_handled(),
@@ -730,10 +745,11 @@ mod tests {
     #[test]
     fn test_writing_mode_includes_all_tools() {
         let visible = visible_tools_for_mode(AgentMode::Writing);
-        assert_eq!(visible.len(), 13);
+        assert_eq!(visible.len(), 14);
         assert!(visible.contains(&"edit"));
         assert!(visible.contains(&"create"));
         assert!(visible.contains(&"delete"));
         assert!(visible.contains(&"move"));
+        assert!(visible.contains(&"review_check"));
     }
 }

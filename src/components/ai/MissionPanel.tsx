@@ -31,12 +31,18 @@ import {
   missionLayer1GetFeature,
   missionContextpackGetLatestFeature,
   missionContextpackBuildFeature,
+  missionReviewGetLatestFeature,
+  missionReviewListFeature,
+  missionReviewGetPendingDecisionFeature,
+  missionReviewAnswerFeature,
 } from '@/features/agent-chat'
 
 import { AiStatusBadge } from './status-badge'
 import { WorkerStepCard } from './worker-step-card'
 import { Layer1ArtifactsCard } from './layer1-artifacts-card'
 import { ContextPackCard } from './contextpack-card'
+import { MissionReviewSection } from './mission-review-section'
+import type { ReviewReportLike } from './review-report-card'
 
 // ── Sub-components ───────────────────────────────────────────────
 function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string }> }) {
@@ -68,6 +74,9 @@ interface MissionPanelProps {
 type MissionStatusPayload = Awaited<ReturnType<typeof missionGetStatusFeature>>
 type Layer1SnapshotPayload = Awaited<ReturnType<typeof missionLayer1GetFeature>>
 type ContextPackPayload = Awaited<ReturnType<typeof missionContextpackGetLatestFeature>>
+type ReviewReportPayload = Awaited<ReturnType<typeof missionReviewGetLatestFeature>>
+type ReviewHistoryPayload = Awaited<ReturnType<typeof missionReviewListFeature>>
+type ReviewDecisionPayload = Awaited<ReturnType<typeof missionReviewGetPendingDecisionFeature>>
 
 function maxUpdatedAt(layer1: Layer1SnapshotPayload | null): number {
   if (!layer1) return 0
@@ -116,7 +125,9 @@ function computeIssueCountByWorkerId(handoffs: MissionStatusPayload['handoffs'])
 export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelProps) {
   const lastLayer1UpdatedAtRef = useRef<number>(0)
   const lastContextPackBuiltAtRef = useRef<number>(0)
+  const lastReviewUpdatedAtRef = useRef<number>(0)
   const pendingAutoRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reviewDecisionRef = useRef<HTMLDivElement | null>(null)
 
   const [missionUi, setMissionUi] = useState<MissionUiState | null>(
     getMissionUiState,
@@ -124,9 +135,15 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [statusDetail, setStatusDetail] = useState<MissionStatusPayload | null>(null)
   const [layer1, setLayer1] = useState<Layer1SnapshotPayload | null>(null)
   const [contextPack, setContextPack] = useState<ContextPackPayload>(null)
+  const [reviewReport, setReviewReport] = useState<ReviewReportPayload>(null)
+  const [reviewHistory, setReviewHistory] = useState<ReviewHistoryPayload>(null)
+  const [reviewDecision, setReviewDecision] = useState<ReviewDecisionPayload>(null)
   const [layer1Error, setLayer1Error] = useState<string | null>(null)
   const [contextPackError, setContextPackError] = useState<string | null>(null)
+  const [reviewError, setReviewError] = useState<string | null>(null)
   const [buildingContextPack, setBuildingContextPack] = useState(false)
+  const [reviewActionLoading, setReviewActionLoading] = useState(false)
+  const [reviewActionError, setReviewActionError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [initialLoading, setInitialLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -142,9 +159,15 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setStatusDetail(null)
     setLayer1(null)
     setContextPack(null)
+    setReviewReport(null)
+    setReviewHistory(null)
+    setReviewDecision(null)
     setLayer1Error(null)
     setContextPackError(null)
+    setReviewError(null)
     setBuildingContextPack(false)
+    setReviewActionLoading(false)
+    setReviewActionError(null)
     setMissionUi(getMissionUiState())
     setFeaturesOpen(false)
     setWorkersOpenOverride(null)
@@ -154,6 +177,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
     lastLayer1UpdatedAtRef.current = 0
     lastContextPackBuiltAtRef.current = 0
+    lastReviewUpdatedAtRef.current = 0
     if (pendingAutoRefreshRef.current) {
       clearTimeout(pendingAutoRefreshRef.current)
       pendingAutoRefreshRef.current = null
@@ -172,10 +196,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
   // Load initial status from backend
   const refreshStatus = useCallback(async () => {
-    const [statusRes, layer1Res, packRes] = await Promise.allSettled([
+    const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes] = await Promise.allSettled([
       missionGetStatusFeature(projectPath, missionId),
       missionLayer1GetFeature(projectPath, missionId),
       missionContextpackGetLatestFeature(projectPath, missionId),
+      missionReviewGetLatestFeature(projectPath, missionId),
+      missionReviewListFeature(projectPath, missionId),
+      missionReviewGetPendingDecisionFeature(projectPath, missionId),
     ])
 
     if (statusRes.status === 'fulfilled') {
@@ -203,6 +230,35 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       setContextPackError(String(packRes.reason))
     }
 
+    if (reviewRes.status === 'fulfilled') {
+      setReviewReport(reviewRes.value)
+      setReviewError(null)
+    } else {
+      console.warn('[MissionPanel] review latest fetch failed:', reviewRes.reason)
+      setReviewReport(null)
+      setReviewError(String(reviewRes.reason))
+    }
+
+    if (reviewListRes.status === 'fulfilled') {
+      const list = Array.isArray(reviewListRes.value) ? reviewListRes.value : []
+      const sorted = [...list].sort((a, b) => {
+        const left = typeof a?.generated_at === 'number' ? a.generated_at : 0
+        const right = typeof b?.generated_at === 'number' ? b.generated_at : 0
+        return right - left
+      })
+      setReviewHistory(sorted)
+    } else {
+      console.warn('[MissionPanel] review list fetch failed:', reviewListRes.reason)
+      setReviewHistory(null)
+    }
+
+    if (decisionRes.status === 'fulfilled') {
+      setReviewDecision(decisionRes.value)
+    } else {
+      console.warn('[MissionPanel] review decision fetch failed:', decisionRes.reason)
+      setReviewDecision(null)
+    }
+
     setInitialLoading(false)
   }, [projectPath, missionId])
 
@@ -214,11 +270,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   useEffect(() => {
     const layer1Ts = missionUi?.layer1UpdatedAt ?? 0
     const packTs = missionUi?.contextPackBuiltAt ?? 0
+    const reviewTs = missionUi?.reviewUpdatedAt ?? 0
 
     const layer1Changed = layer1Ts > 0 && layer1Ts !== lastLayer1UpdatedAtRef.current
     const packChanged = packTs > 0 && packTs !== lastContextPackBuiltAtRef.current
+    const reviewChanged = reviewTs > 0 && reviewTs !== lastReviewUpdatedAtRef.current
 
-    if (!layer1Changed && !packChanged) {
+    if (!layer1Changed && !packChanged && !reviewChanged) {
       return
     }
 
@@ -227,6 +285,9 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     }
     if (packChanged) {
       lastContextPackBuiltAtRef.current = packTs
+    }
+    if (reviewChanged) {
+      lastReviewUpdatedAtRef.current = reviewTs
     }
 
     if (pendingAutoRefreshRef.current) {
@@ -237,7 +298,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       pendingAutoRefreshRef.current = null
       void refreshStatus()
     }, 120)
-  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, refreshStatus])
+  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, refreshStatus])
 
   useEffect(() => {
     return () => {
@@ -335,6 +396,34 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     }
   }, [projectPath, missionId])
 
+  const handleReviewAnswerOption = useCallback(async (selectedOption: string) => {
+    const reviewId = reviewDecision?.review_id || reviewReport?.review_id
+    if (!reviewId) {
+      setReviewActionError('Missing review_id for decision answer')
+      return
+    }
+
+    setReviewActionError(null)
+    setReviewActionLoading(true)
+    try {
+      await missionReviewAnswerFeature({
+        project_path: projectPath,
+        mission_id: missionId,
+        answer: {
+          schema_version: 1,
+          review_id: reviewId,
+          selected_option: selectedOption,
+          answered_at: Date.now(),
+        },
+      })
+      await refreshStatus()
+    } catch (e) {
+      setReviewActionError(String(e))
+    } finally {
+      setReviewActionLoading(false)
+    }
+  }, [projectPath, missionId, refreshStatus, reviewDecision?.review_id, reviewReport?.review_id])
+
   // ── Derived state ────────────────────────────────────────────
 
   const liveState = statusDetail?.state.state ?? missionUi?.state ?? 'awaiting_input'
@@ -374,6 +463,17 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const layer1LastUpdatedAt = maxUpdatedAt(layer1)
   const contextPackGeneratedAt = contextPack?.generated_at ?? 0
   const contextPackStale = contextPack != null && layer1LastUpdatedAt > contextPackGeneratedAt
+
+  const reviewReportLike = reviewReport as unknown as ReviewReportLike | null
+  const reviewHistoryLike = reviewHistory as unknown as ReviewReportLike[] | null
+  const waitingDecision = Boolean(reviewDecision) || Boolean(missionUi?.reviewDecisionRequired)
+  const decisionReason = reviewDecision?.question
+  const decisionUpdatedAt = reviewDecision?.created_at
+
+  const fixInProgress = Boolean(missionUi?.fixupInProgress)
+  const fixAttempt = missionUi?.fixupAttempt
+  const fixMessage = missionUi?.fixupMessage
+  const fixUpdatedAt = missionUi?.fixupUpdatedAt
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -554,6 +654,85 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
           contextpack={contextPack}
           stale={contextPackStale}
         />
+      </div>
+
+      <div className="space-y-2">
+        {reviewError ? (
+          <p className="text-xs text-muted-foreground">Review unavailable: {reviewError}</p>
+        ) : null}
+
+        <MissionReviewSection
+          report={reviewReportLike}
+          history={reviewHistoryLike}
+          historyMaxItems={5}
+          showWhenEmpty
+          fixInProgress={fixInProgress}
+          fixAttempt={fixAttempt}
+          fixMaxAttempts={2}
+          fixUpdatedAt={fixUpdatedAt}
+          fixMessage={fixMessage}
+          waitingDecision={waitingDecision}
+          decisionReason={decisionReason}
+          decisionUpdatedAt={decisionUpdatedAt}
+          onFix={reviewDecision?.options?.includes('auto_fix')
+            ? () => handleReviewAnswerOption('auto_fix')
+            : undefined}
+          onDecide={waitingDecision
+            ? () => {
+              reviewDecisionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+            }
+            : undefined}
+        />
+
+        {reviewActionError ? (
+          <p className="text-xs text-muted-foreground">Review action failed: {reviewActionError}</p>
+        ) : null}
+
+        {reviewDecision ? (
+          <div
+            ref={reviewDecisionRef}
+            className="rounded-md border border-border/60 bg-warning/5 px-2.5 py-2 text-xs"
+          >
+            <div className="font-medium text-secondary-foreground">Decision required</div>
+            <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{reviewDecision.question}</div>
+
+            {reviewDecision.context_summary?.length ? (
+              <div className="mt-2 whitespace-pre-wrap text-muted-foreground">
+                {reviewDecision.context_summary.join('\n')}
+              </div>
+            ) : null}
+
+            {reviewDecision.options?.length ? (
+              <div className="mt-2 space-y-2">
+                {reviewDecision.options.map((option) => (
+                  <Button
+                    key={option}
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="w-full justify-start text-xs font-medium disabled:opacity-50"
+                    onClick={() => handleReviewAnswerOption(option)}
+                    disabled={reviewActionLoading}
+                  >
+                    {option.replace(/_/g, ' ')}
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <div className="mt-2 text-muted-foreground">No options provided.</div>
+            )}
+          </div>
+        ) : waitingDecision && missionUi?.reviewDecision ? (
+          <div
+            ref={reviewDecisionRef}
+            className="rounded-md border border-border/60 bg-warning/5 px-2.5 py-2 text-xs"
+          >
+            <div className="font-medium text-secondary-foreground">Decision required</div>
+            <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2 text-[11px] text-muted-foreground">
+              {JSON.stringify(missionUi.reviewDecision, null, 2)}
+            </pre>
+          </div>
+        ) : null}
       </div>
 
       {/* Features list */}

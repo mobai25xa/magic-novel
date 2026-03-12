@@ -305,18 +305,19 @@ async fn execute_feature(
         worker_id
     };
 
-    let mut worker_profile: WorkerProfile = payload
-        .worker_profile
-        .clone()
-        .unwrap_or_else(|| {
-            if payload.feature.id == INTEGRATOR_FEATURE_ID
-                || payload.feature.skill.trim().eq_ignore_ascii_case("integrator")
-            {
-                builtin_integrator_worker_profile()
-            } else {
-                builtin_general_worker_profile()
-            }
-        });
+    let mut worker_profile: WorkerProfile = payload.worker_profile.clone().unwrap_or_else(|| {
+        if payload.feature.id == INTEGRATOR_FEATURE_ID
+            || payload
+                .feature
+                .skill
+                .trim()
+                .eq_ignore_ascii_case("integrator")
+        {
+            builtin_integrator_worker_profile()
+        } else {
+            builtin_general_worker_profile()
+        }
+    });
     if worker_profile.tool_whitelist.is_empty() {
         worker_profile.tool_whitelist = builtin_general_worker_profile().tool_whitelist;
     }
@@ -392,7 +393,8 @@ async fn execute_feature(
     .ok();
 
     // Build loop config (auto approval + headless clarification for worker execution)
-    let loop_config = LoopConfig::headless_worker(worker_profile.max_rounds, worker_profile.max_tool_calls);
+    let loop_config =
+        LoopConfig::headless_worker(worker_profile.max_rounds, worker_profile.max_tool_calls);
 
     // Build and run AgentLoop
     let agent_loop = AgentLoop::new(
@@ -417,13 +419,9 @@ async fn execute_feature(
     );
 
     let router = build_router(&payload.provider, base_url, api_key, RetryConfig::worker());
-    let streaming_engine = StreamingTurnEngine::new(
-        router,
-        sink,
-        payload.provider.clone(),
-        effective_model,
-    )
-    .with_cancel_token(cancel_token);
+    let streaming_engine =
+        StreamingTurnEngine::new(router, sink, payload.provider.clone(), effective_model)
+            .with_cancel_token(cancel_token);
 
     let loop_result = agent_loop.run(&mut conv, &streaming_engine).await?;
 

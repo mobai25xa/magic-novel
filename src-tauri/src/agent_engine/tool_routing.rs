@@ -106,6 +106,7 @@ const WRITING_TOOLS: &[&str] = &[
     "read",
     "edit",
     "grep",
+    "review_check",
     "outline",
     "character_sheet",
     "search_knowledge",
@@ -125,6 +126,7 @@ const RESEARCH_TOOLS: &[&str] = &[
     "read",
     "grep",
     "ls",
+    "review_check",
     "outline",
     "character_sheet",
     "search_knowledge",
@@ -138,6 +140,7 @@ const LEGACY_FULL_TOOLS: &[&str] = &[
     "move",
     "ls",
     "grep",
+    "review_check",
     "outline",
     "character_sheet",
     "search_knowledge",
@@ -666,8 +669,11 @@ mod tests {
 
         assert_eq!(light, vec!["read", "grep", "askuser"]);
         assert!(writing.contains(&"edit".to_string()));
+        assert!(writing.contains(&"review_check".to_string()));
         assert!(structure.contains(&"move".to_string()));
+        assert!(!structure.contains(&"review_check".to_string()));
         assert!(research.contains(&"search_knowledge".to_string()));
+        assert!(research.contains(&"review_check".to_string()));
         assert!(
             light.len() < 13 && writing.len() < 13 && structure.len() < 13 && research.len() < 13
         );

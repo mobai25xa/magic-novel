@@ -267,8 +267,11 @@ impl<S: EventSink> AgentLoop<S> {
             // Check cancellation before each round
             if self.cancel_token.is_cancelled() {
                 let latency_ms = loop_start.elapsed().as_millis() as u64;
-                let mut payload =
-                    with_turn_outcome_meta(&tool_exposure_payload, total_tool_calls, rounds_executed);
+                let mut payload = with_turn_outcome_meta(
+                    &tool_exposure_payload,
+                    total_tool_calls,
+                    rounds_executed,
+                );
                 if let Some(map) = payload.as_object_mut() {
                     map.insert("stop_reason".to_string(), json!(StopReason::Cancel));
                     map.insert("latency_ms".to_string(), json!(latency_ms));

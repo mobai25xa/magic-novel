@@ -37,15 +37,14 @@ pub fn build_contextpack(
 ) -> Result<ContextPack, AppError> {
     let now = chrono::Utc::now().timestamp_millis();
 
-    let chapter_card = artifacts::read_layer1_chapter_card(project_path, mission_id)?.ok_or_else(
-        || AppError {
+    let chapter_card =
+        artifacts::read_layer1_chapter_card(project_path, mission_id)?.ok_or_else(|| AppError {
             code: crate::models::ErrorCode::InvalidArgument,
             message: "Layer1 chapter_card is missing (mission requires chapter_card.json)"
                 .to_string(),
             details: Some(serde_json::json!({ "code": "E_LAYER1_CHAPTER_CARD_MISSING" })),
             recoverable: Some(true),
-        },
-    )?;
+        })?;
 
     let scope_ref = input
         .scope_ref
@@ -60,13 +59,15 @@ pub fn build_contextpack(
         ));
     }
 
-    let effective_budget = input.token_budget.clone().unwrap_or_else(|| {
-        match chapter_card.workflow_kind {
-            ChapterWorkflowKind::Micro => TokenBudget::Small,
-            ChapterWorkflowKind::Chapter => TokenBudget::Medium,
-            ChapterWorkflowKind::Arc | ChapterWorkflowKind::Book => TokenBudget::Large,
-        }
-    });
+    let effective_budget =
+        input
+            .token_budget
+            .clone()
+            .unwrap_or_else(|| match chapter_card.workflow_kind {
+                ChapterWorkflowKind::Micro => TokenBudget::Small,
+                ChapterWorkflowKind::Chapter => TokenBudget::Medium,
+                ChapterWorkflowKind::Arc | ChapterWorkflowKind::Book => TokenBudget::Large,
+            });
 
     let recent_facts = artifacts::read_layer1_recent_facts(project_path, mission_id)?;
     let active_cast = artifacts::read_layer1_active_cast(project_path, mission_id)?;
@@ -89,15 +90,19 @@ pub fn build_contextpack(
         .map(|ac| {
             ac.cast
                 .iter()
-                .filter(|c| !c.character_ref.trim().is_empty() || !c.current_state_summary.trim().is_empty())
+                .filter(|c| {
+                    !c.character_ref.trim().is_empty() || !c.current_state_summary.trim().is_empty()
+                })
                 .take(20)
                 .map(|c| ContextPackCastNote {
                     character_ref: c.character_ref.trim().to_string(),
                     summary: c.current_state_summary.trim().to_string(),
-                    voice_signals: c
-                        .must_keep_voice_signals
-                        .as_ref()
-                        .map(|v| v.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()),
+                    voice_signals: c.must_keep_voice_signals.as_ref().map(|v| {
+                        v.iter()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect()
+                    }),
                 })
                 .collect::<Vec<_>>()
         })
@@ -132,7 +137,12 @@ pub fn build_contextpack(
         .collect::<Vec<_>>();
 
     let mut evidence_snippets = Vec::new();
-    if let Some(sel) = input.selected_text.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(sel) = input
+        .selected_text
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         evidence_snippets.push(EvidenceSnippet {
             source_ref: "editor:selection".to_string(),
             snippet: truncate_chars(sel, 900),
@@ -233,9 +243,7 @@ fn manuscripts_root(project_path: &Path) -> PathBuf {
 }
 
 fn read_project_guidelines_rules(project_path: &Path, max_lines: usize) -> Vec<String> {
-    let path = project_path
-        .join(".magic_novel")
-        .join("guidelines.md");
+    let path = project_path.join(".magic_novel").join("guidelines.md");
     let Ok(content) = std::fs::read_to_string(&path) else {
         return Vec::new();
     };

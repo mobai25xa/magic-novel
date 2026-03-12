@@ -547,7 +547,13 @@ mod tests {
             .and_then(|v| v.as_object())
             .expect("source must be object");
         assert_eq!(source.get("kind").and_then(|v| v.as_str()), Some("worker"));
-        assert_eq!(source.get("worker_id").and_then(|v| v.as_str()), Some("wk_test"));
-        assert_eq!(source.get("mission_id").and_then(|v| v.as_str()), Some("mis_test"));
+        assert_eq!(
+            source.get("worker_id").and_then(|v| v.as_str()),
+            Some("wk_test")
+        );
+        assert_eq!(
+            source.get("mission_id").and_then(|v| v.as_str()),
+            Some("mis_test")
+        );
     }
 }
