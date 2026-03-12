@@ -71,8 +71,10 @@ fn ls_root(project_path: &str) -> Result<serde_json::Value, AppError> {
         }
     }
 
-    let magic_root = PathBuf::from(project_path).join("magic_assets");
-    if magic_root.exists() {
+    if crate::services::knowledge_paths::knowledge_root_exists(std::path::Path::new(project_path)) {
+        let magic_root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(
+            std::path::Path::new(project_path),
+        );
         items.push(json!({
             "kind": "folder",
             "name": ".magic_novel",
@@ -136,7 +138,9 @@ fn ls_volume(project_path: &str, volume_path: &str) -> Result<serde_json::Value,
 }
 
 fn ls_magic_root(project_path: &str) -> Result<serde_json::Value, AppError> {
-    let magic_root = PathBuf::from(project_path).join("magic_assets");
+    let magic_root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(
+        std::path::Path::new(project_path),
+    );
     if !magic_root.exists() {
         return Ok(json!({"cwd": ".magic_novel", "items": []}));
     }
@@ -166,7 +170,10 @@ fn ls_magic_root(project_path: &str) -> Result<serde_json::Value, AppError> {
 }
 
 fn ls_magic_subdir(project_path: &str, rel: &str) -> Result<serde_json::Value, AppError> {
-    let full = PathBuf::from(project_path).join("magic_assets").join(rel);
+    let full = crate::services::knowledge_paths::resolve_knowledge_root_for_read(
+        std::path::Path::new(project_path),
+    )
+    .join(rel);
 
     if !full.exists() || !full.is_dir() {
         return Ok(json!({

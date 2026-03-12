@@ -4,6 +4,7 @@ pub mod context_retrieval;
 pub mod file_system;
 pub mod global_config;
 pub mod jvm;
+pub mod knowledge_paths;
 pub mod migrations;
 pub mod tool_audit;
 pub mod versioning;

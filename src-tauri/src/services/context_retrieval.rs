@@ -4,7 +4,6 @@ use crate::models::{Chapter, VolumeMetadata};
 use crate::services::{list_dirs, list_files, read_json};
 
 const MANUSCRIPTS_DIR: &str = "manuscripts";
-const KNOWLEDGE_DIR: &str = ".magic_novel";
 const CHARACTER_DIR: &str = "characters";
 const CHARACTER_EXTENSIONS: &[&str] = &["md", "json", "txt"];
 const KNOWLEDGE_EXTENSIONS: &[&str] = &["md", "json", "txt", "yaml", "yml"];
@@ -134,9 +133,8 @@ pub fn load_outline_dataset(
 }
 
 pub fn lookup_character_sheet(project_path: &str, name: Option<&str>) -> CharacterSheetLookup {
-    let chars_dir = PathBuf::from(project_path)
-        .join(KNOWLEDGE_DIR)
-        .join(CHARACTER_DIR);
+    let root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(Path::new(project_path));
+    let chars_dir = root.join(CHARACTER_DIR);
 
     if !chars_dir.exists() {
         return CharacterSheetLookup::MissingDirectory;
@@ -169,7 +167,7 @@ pub fn search_knowledge_files(
     query: &str,
     top_k: usize,
 ) -> KnowledgeSearchLookup {
-    let root = PathBuf::from(project_path).join(KNOWLEDGE_DIR);
+    let root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(Path::new(project_path));
     if !root.exists() {
         return KnowledgeSearchLookup::MissingDirectory;
     }

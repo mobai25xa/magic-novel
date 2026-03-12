@@ -34,6 +34,8 @@ use crate::services::global_config;
 
 use crate::review::{engine as review_engine, types as review_types};
 
+use crate::knowledge::{types as knowledge_types, writeback as knowledge_writeback};
+
 use crate::agent_engine::types::{DEFAULT_MODEL, DEFAULT_PROVIDER};
 
 const HEARTBEAT_INTERVAL_SECS: u64 = 5;
@@ -754,6 +756,81 @@ fn persist_review_report(
 ) -> Result<(), AppError> {
     artifacts::write_review_latest(project_path, mission_id, report)?;
     let _ = artifacts::append_review_report(project_path, mission_id, report);
+    Ok(())
+}
+
+// ── M4: Knowledge writeback helpers ───────────────────────────
+
+fn run_knowledge_writeback_after_review(
+    emitter: &MissionEventEmitter,
+    project_path: &std::path::Path,
+    mission_id: &str,
+    worker_id: &str,
+    feature: &Feature,
+    report: &review_types::ReviewReport,
+) -> Result<(), AppError> {
+    if feature.write_paths.is_empty() {
+        return Ok(());
+    }
+
+    let bundle = knowledge_writeback::generate_proposal_bundle_after_closeout(
+        project_path,
+        mission_id,
+        report.scope_ref.clone(),
+        feature.write_paths.clone(),
+        worker_id.to_string(),
+        Some(report.review_id.clone()),
+    )?;
+
+    artifacts::write_knowledge_bundle_latest(project_path, mission_id, &bundle)?;
+    let _ = artifacts::append_knowledge_bundle(project_path, mission_id, &bundle);
+    let _ = emitter.knowledge_proposed(&bundle);
+
+    let mut delta = knowledge_writeback::gate_bundle(project_path, &bundle, Some(report))?;
+    artifacts::write_knowledge_delta_latest(project_path, mission_id, &delta)?;
+    let _ = artifacts::append_knowledge_delta(project_path, mission_id, &delta);
+
+    if !delta.conflicts.is_empty() {
+        let pending = knowledge_writeback::build_pending_decision(&bundle, &delta);
+        let _ = artifacts::write_pending_knowledge_decision(project_path, mission_id, &pending);
+        let _ = emitter.knowledge_decision_required(&delta);
+        return Ok(());
+    }
+
+    if delta.status == knowledge_types::KnowledgeDeltaStatus::Proposed {
+        // Manual/orchestrator decision required (e.g. review=warn, or non-auto policies).
+        let pending = knowledge_writeback::build_pending_decision(&bundle, &delta);
+        let _ = artifacts::write_pending_knowledge_decision(project_path, mission_id, &pending);
+        let _ = emitter.knowledge_decision_required(&delta);
+        return Ok(());
+    }
+
+    if delta.status == knowledge_types::KnowledgeDeltaStatus::Accepted {
+        match knowledge_writeback::apply_accepted(project_path, mission_id, &bundle, &delta) {
+            Ok(applied) => {
+                delta = applied;
+                artifacts::write_knowledge_delta_latest(project_path, mission_id, &delta)?;
+                let _ = artifacts::append_knowledge_delta(project_path, mission_id, &delta);
+                let _ = artifacts::clear_pending_knowledge_decision(project_path, mission_id);
+                let _ = emitter.knowledge_applied(&delta);
+            }
+            Err(e) => {
+                delta.conflicts.push(knowledge_types::KnowledgeConflict {
+                    conflict_type: knowledge_types::KNOWLEDGE_CANON_CONFLICT.to_string(),
+                    message: format!("apply failed: {e}"),
+                    item_id: None,
+                    target_ref: None,
+                });
+                artifacts::write_knowledge_delta_latest(project_path, mission_id, &delta)?;
+                let _ = artifacts::append_knowledge_delta(project_path, mission_id, &delta);
+                let pending = knowledge_writeback::build_pending_decision(&bundle, &delta);
+                let _ = artifacts::write_pending_knowledge_decision(project_path, mission_id, &pending);
+                let _ = emitter.knowledge_decision_required(&delta);
+                return Err(e);
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1673,6 +1750,26 @@ fn spawn_worker_supervision_tasks(
                                                                                 std::path::Path::new(&project_path_bg),
                                                                                 &mission_id,
                                                                             );
+
+                                                                            if let Err(e) = run_knowledge_writeback_after_review(
+                                                                                &emitter_bg,
+                                                                                std::path::Path::new(&project_path_bg),
+                                                                                &mission_id,
+                                                                                &worker_id,
+                                                                                &feature,
+                                                                                &report,
+                                                                            ) {
+                                                                                tracing::warn!(
+                                                                                    target: "mission",
+                                                                                    mission_id = %mission_id,
+                                                                                    feature_id = %feature.id,
+                                                                                    error = %e,
+                                                                                    "KnowledgeWriteback failed"
+                                                                                );
+                                                                                let _ = emitter_bg.progress_entry(&format!(
+                                                                                    "KnowledgeWriteback failed: {e}"
+                                                                                ));
+                                                                            }
                                                                         }
                                                                         review_types::ReviewOverallStatus::Block => {
                                                                             gate_blocked = true;
@@ -2575,6 +2672,131 @@ pub async fn mission_review_answer(
 
     // Clear pending decision after processing.
     artifacts::clear_pending_review_decision(project_path, &input.mission_id)?;
+
+    Ok(())
+}
+
+// ── M4: Knowledge Writeback commands ──────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeGetLatestInput {
+    pub project_path: String,
+    pub mission_id: String,
+}
+
+#[command]
+pub async fn mission_knowledge_get_latest(
+    input: MissionKnowledgeGetLatestInput,
+) -> Result<knowledge_types::MissionKnowledgeLatest, AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let bundle = artifacts::read_knowledge_bundle_latest(project_path, &input.mission_id)?;
+    let delta = artifacts::read_knowledge_delta_latest(project_path, &input.mission_id)?;
+    Ok(knowledge_types::MissionKnowledgeLatest { bundle, delta })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeDecideInput {
+    pub project_path: String,
+    pub mission_id: String,
+    pub decision: knowledge_types::KnowledgeDecisionInput,
+}
+
+#[command]
+pub async fn mission_knowledge_decide(
+    app_handle: tauri::AppHandle,
+    input: MissionKnowledgeDecideInput,
+) -> Result<(), AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let _mission_lock = acquire_mission_runtime_lock(&input.mission_id).await;
+
+    let bundle = artifacts::read_knowledge_bundle_latest(project_path, &input.mission_id)?
+        .ok_or_else(|| AppError::not_found("no knowledge proposal bundle found"))?;
+    let delta = artifacts::read_knowledge_delta_latest(project_path, &input.mission_id)?
+        .ok_or_else(|| AppError::not_found("no knowledge delta found"))?;
+
+    let updated = knowledge_writeback::apply_decision_to_delta(&bundle, delta, &input.decision)?;
+
+    artifacts::write_knowledge_delta_latest(project_path, &input.mission_id, &updated)?;
+    let _ = artifacts::append_knowledge_delta(project_path, &input.mission_id, &updated);
+    if updated.conflicts.is_empty() {
+        let _ = artifacts::clear_pending_knowledge_decision(project_path, &input.mission_id);
+    }
+
+    // Best-effort event emission.
+    let emitter = MissionEventEmitter::new(app_handle, input.mission_id);
+    if !updated.conflicts.is_empty() {
+        let _ = emitter.knowledge_decision_required(&updated);
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeApplyInput {
+    pub project_path: String,
+    pub mission_id: String,
+}
+
+#[command]
+pub async fn mission_knowledge_apply(
+    app_handle: tauri::AppHandle,
+    input: MissionKnowledgeApplyInput,
+) -> Result<(), AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let _mission_lock = acquire_mission_runtime_lock(&input.mission_id).await;
+
+    let bundle = artifacts::read_knowledge_bundle_latest(project_path, &input.mission_id)?
+        .ok_or_else(|| AppError::not_found("no knowledge proposal bundle found"))?;
+    let delta = artifacts::read_knowledge_delta_latest(project_path, &input.mission_id)?
+        .ok_or_else(|| AppError::not_found("no knowledge delta found"))?;
+
+    let applied = knowledge_writeback::apply_accepted(project_path, &input.mission_id, &bundle, &delta)?;
+
+    artifacts::write_knowledge_delta_latest(project_path, &input.mission_id, &applied)?;
+    let _ = artifacts::append_knowledge_delta(project_path, &input.mission_id, &applied);
+    let _ = artifacts::clear_pending_knowledge_decision(project_path, &input.mission_id);
+
+    let emitter = MissionEventEmitter::new(app_handle, input.mission_id);
+    let _ = emitter.knowledge_applied(&applied);
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeRollbackInput {
+    pub project_path: String,
+    pub mission_id: String,
+    #[serde(default)]
+    pub token: Option<String>,
+}
+
+#[command]
+pub async fn mission_knowledge_rollback(
+    app_handle: tauri::AppHandle,
+    input: MissionKnowledgeRollbackInput,
+) -> Result<(), AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let _mission_lock = acquire_mission_runtime_lock(&input.mission_id).await;
+
+    let token = input
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            artifacts::read_knowledge_delta_latest(project_path, &input.mission_id)
+                .ok()
+                .flatten()
+                .and_then(|d| d.rollback)
+                .and_then(|rb| rb.token)
+        })
+        .ok_or_else(|| AppError::invalid_argument("rollback token is required"))?;
+
+    let (restored, deleted) = knowledge_writeback::rollback(project_path, &input.mission_id, &token)?;
+
+    let emitter = MissionEventEmitter::new(app_handle, input.mission_id);
+    let _ = emitter.knowledge_rolled_back(&token, restored, deleted);
 
     Ok(())
 }

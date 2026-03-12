@@ -8,6 +8,9 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::models::AppError;
+use crate::knowledge::types::{
+    KnowledgeAcceptPolicy, KnowledgeDelta, KnowledgeProposalBundle,
+};
 use crate::review::types::{ReviewDecisionRequest, ReviewReport};
 
 pub const MISSION_EVENT_CHANNEL: &str = "magic:mission_event";
@@ -26,6 +29,12 @@ pub mod mission_event_types {
     pub const MISSION_REVIEW_RECORDED: &str = "MISSION_REVIEW_RECORDED";
     pub const MISSION_REVIEW_DECISION_REQUIRED: &str = "MISSION_REVIEW_DECISION_REQUIRED";
     pub const MISSION_FIXUP_PROGRESS: &str = "MISSION_FIXUP_PROGRESS";
+
+    // M4: Knowledge Writeback
+    pub const MISSION_KNOWLEDGE_PROPOSED: &str = "MISSION_KNOWLEDGE_PROPOSED";
+    pub const MISSION_KNOWLEDGE_DECISION_REQUIRED: &str = "MISSION_KNOWLEDGE_DECISION_REQUIRED";
+    pub const MISSION_KNOWLEDGE_APPLIED: &str = "MISSION_KNOWLEDGE_APPLIED";
+    pub const MISSION_KNOWLEDGE_ROLLED_BACK: &str = "MISSION_KNOWLEDGE_ROLLED_BACK";
 }
 
 /// Envelope wrapping every mission event sent to the UI.
@@ -258,6 +267,101 @@ impl MissionEventEmitter {
             json!({
                 "attempt": attempt,
                 "message": message,
+            }),
+        )
+    }
+
+    // ── M4: Knowledge Writeback ───────────────────────────────
+
+    pub fn knowledge_proposed(&self, bundle: &KnowledgeProposalBundle) -> Result<(), AppError> {
+        use mission_event_types::MISSION_KNOWLEDGE_PROPOSED;
+
+        let mut auto_if_pass = 0_i32;
+        let mut manual = 0_i32;
+        let mut orchestrator_only = 0_i32;
+        for it in &bundle.proposal_items {
+            match it.accept_policy {
+                KnowledgeAcceptPolicy::AutoIfPass => auto_if_pass += 1,
+                KnowledgeAcceptPolicy::Manual => manual += 1,
+                KnowledgeAcceptPolicy::OrchestratorOnly => orchestrator_only += 1,
+            }
+        }
+        let total = bundle.proposal_items.len() as i32;
+
+        self.emit(
+            MISSION_KNOWLEDGE_PROPOSED,
+            json!({
+                "bundle_id": bundle.bundle_id,
+                "scope_ref": bundle.scope_ref,
+                "generated_at": bundle.generated_at,
+                "counts": {
+                    "total": total,
+                    "auto_if_pass": auto_if_pass,
+                    "manual": manual,
+                    "orchestrator_only": orchestrator_only,
+                }
+            }),
+        )
+    }
+
+    pub fn knowledge_decision_required(&self, delta: &KnowledgeDelta) -> Result<(), AppError> {
+        use mission_event_types::MISSION_KNOWLEDGE_DECISION_REQUIRED;
+
+        let status_str = serde_json::to_string(&delta.status)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string();
+
+        let conflicts = delta
+            .conflicts
+            .iter()
+            .map(|c| json!({"type": c.conflict_type, "message": c.message, "item_id": c.item_id, "target_ref": c.target_ref}))
+            .collect::<Vec<_>>();
+
+        self.emit(
+            MISSION_KNOWLEDGE_DECISION_REQUIRED,
+            json!({
+                "delta_id": delta.knowledge_delta_id,
+                "scope_ref": delta.scope_ref,
+                "status": status_str,
+                "generated_at": delta.generated_at,
+                "conflict_count": delta.conflicts.len(),
+                "conflicts": conflicts,
+            }),
+        )
+    }
+
+    pub fn knowledge_applied(&self, delta: &KnowledgeDelta) -> Result<(), AppError> {
+        use mission_event_types::MISSION_KNOWLEDGE_APPLIED;
+        let token = delta
+            .rollback
+            .as_ref()
+            .and_then(|rb| rb.token.clone());
+
+        self.emit(
+            MISSION_KNOWLEDGE_APPLIED,
+            json!({
+                "delta_id": delta.knowledge_delta_id,
+                "scope_ref": delta.scope_ref,
+                "applied_at": delta.applied_at,
+                "rollback_token": token,
+            }),
+        )
+    }
+
+    pub fn knowledge_rolled_back(
+        &self,
+        token: &str,
+        restored: usize,
+        deleted: usize,
+    ) -> Result<(), AppError> {
+        use mission_event_types::MISSION_KNOWLEDGE_ROLLED_BACK;
+        self.emit(
+            MISSION_KNOWLEDGE_ROLLED_BACK,
+            json!({
+                "rollback_token": token,
+                "restored": restored,
+                "deleted": deleted,
             }),
         )
     }
