@@ -17,6 +17,7 @@ export const AVAILABLE_WORKER_TOOLS = [
   'create',
   'ls',
   'grep',
+  'review_check',
   'outline',
   'character_sheet',
   'search_knowledge',

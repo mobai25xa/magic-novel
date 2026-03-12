@@ -325,11 +325,11 @@ async fn test_cancellation_stops_loop() {
     let result = agent_loop.run(&mut conv, &mock).await.unwrap();
 
     assert_eq!(result.stop_reason, StopReason::Cancel);
-    // Loop should have emitted a TURN_COMPLETED with stop_reason=cancel
+    // Loop should have emitted TURN_CANCELLED
     let types = sink.event_types();
     assert!(
-        types.contains(&"TURN_COMPLETED".to_string()),
-        "expected TURN_COMPLETED with cancel, got {types:?}"
+        types.contains(&"TURN_CANCELLED".to_string()),
+        "expected TURN_CANCELLED, got {types:?}"
     );
 }
 

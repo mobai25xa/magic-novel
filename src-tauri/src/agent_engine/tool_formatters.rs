@@ -129,6 +129,9 @@ fn format_error_content(_tc: &ToolCallInfo, result: &ToolResult<serde_json::Valu
         "E_TOOL_SCHEMA_INVALID" => {
             " Recovery: Check the parameter types and required fields in the tool schema."
         }
+        "E_TOOL_NOT_ALLOWED" => {
+            " Recovery: Use only the tools exposed for this turn (see allowed_tools in error details)."
+        }
         "E_TOOL_TIMEOUT" => {
             " Recovery: The tool call took too long. Retry with a simpler query or smaller scope."
         }

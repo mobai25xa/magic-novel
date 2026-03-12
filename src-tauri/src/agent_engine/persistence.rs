@@ -251,6 +251,23 @@ fn map_event(
             Some((session_event_types::TOOL_RESULT, envelope.payload.clone()))
         }
 
+        // ── Review (P1) ───────────────────────────────────────
+        event_types::REVIEW_RECORDED => Some((
+            session_event_types::TIMELINE_EVENT,
+            json!({
+                "timeline_type": event_types::REVIEW_RECORDED,
+                // Keep call_id at the top-level so runtime dedupe_key includes it.
+                // This prevents multiple reviews within the same turn from being deduped.
+                "call_id": envelope.payload.get("call_id"),
+                "llm_call_id": envelope.payload.get("llm_call_id"),
+                "tool_name": envelope.payload.get("tool_name"),
+                "target_ref": envelope.payload.get("target_ref"),
+                "overall_status": envelope.payload.get("overall_status"),
+                "issue_counts": envelope.payload.get("issue_counts"),
+                "review": envelope.payload.clone(),
+            }),
+        )),
+
         // ── Confirmation / AskUser → turn_state ────────────────
         event_types::WAITING_FOR_CONFIRMATION => Some((
             session_event_types::TURN_STATE,

@@ -10,13 +10,19 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
+
+use tokio_util::sync::CancellationToken;
 
 use crate::agent_tools::contracts::ConfirmationPolicy;
 use crate::agent_tools::registry::get_manifest;
 use crate::models::{AppError, ErrorCode};
+use crate::review::{engine as review_engine, types as review_types};
 
 use super::emitter::EventSink;
+use super::events::event_types;
 use super::messages::AgentMessage;
 use super::tool_dispatch::execute_tool_call;
 use super::tool_errors::{
@@ -115,6 +121,8 @@ pub struct ToolScheduler<S: EventSink> {
     clarification_mode: ClarificationMode,
     active_chapter_path: Option<String>,
     active_skill: Option<String>,
+    allowed_tools: Option<Arc<HashSet<String>>>,
+    cancel_token: CancellationToken,
     lock_manager: ResourceLockManager,
 }
 
@@ -124,6 +132,7 @@ impl<S: EventSink> ToolScheduler<S> {
         project_path: String,
         approval_mode: ApprovalMode,
         clarification_mode: ClarificationMode,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             emitter,
@@ -132,6 +141,8 @@ impl<S: EventSink> ToolScheduler<S> {
             clarification_mode,
             active_chapter_path: None,
             active_skill: None,
+            allowed_tools: None,
+            cancel_token,
             lock_manager: ResourceLockManager::new(),
         }
     }
@@ -150,17 +161,38 @@ impl<S: EventSink> ToolScheduler<S> {
         self
     }
 
+    pub fn with_allowed_tools(mut self, allowed_tools: Option<Vec<String>>) -> Self {
+        self.allowed_tools = allowed_tools
+            .map(|tools| {
+                tools
+                    .into_iter()
+                    .map(|t| t.trim().to_ascii_lowercase())
+                    .filter(|t| !t.is_empty())
+                    .collect::<HashSet<_>>()
+            })
+            .filter(|set| !set.is_empty())
+            .map(Arc::new);
+        self
+    }
+
     /// Execute a batch of tool calls with parallel grouping and confirmation checks.
     pub async fn execute_batch(
         &self,
         tool_calls: Vec<ToolCallInfo>,
     ) -> Result<BatchResult, AppError> {
+        if self.cancel_token.is_cancelled() {
+            return Err(cancelled_error(None));
+        }
+
         let groups = group_calls(&tool_calls);
         let mut tool_messages = Vec::new();
         let mut executed_count = 0_u32;
         let mut consumed_calls = 0_usize;
 
         for group in groups {
+            if self.cancel_token.is_cancelled() {
+                return Err(cancelled_error(None));
+            }
             match group {
                 ExecGroup::Parallel(calls) => {
                     let call_count = calls.len();
@@ -170,6 +202,18 @@ impl<S: EventSink> ToolScheduler<S> {
                     tool_messages.extend(results);
                 }
                 ExecGroup::Sequential(tc) => {
+                    if !self.is_tool_allowed(&tc.tool_name) {
+                        let msg = self.execute_disallowed(&tc).await?;
+                        consumed_calls += 1;
+                        executed_count += 1;
+                        tool_messages.push(msg);
+                        continue;
+                    }
+
+                    if self.cancel_token.is_cancelled() {
+                        return Err(cancelled_error(None));
+                    }
+
                     if let Some(mut suspend) =
                         self.build_askuser_suspend(&tc, &tool_calls, consumed_calls)?
                     {
@@ -226,6 +270,12 @@ impl<S: EventSink> ToolScheduler<S> {
         &self,
         calls: Vec<ToolCallInfo>,
     ) -> Result<Vec<AgentMessage>, AppError> {
+        if self.cancel_token.is_cancelled() {
+            return Err(cancelled_error(None));
+        }
+
+        let allowed_tools = self.allowed_tools.clone();
+        let cancel_token = self.cancel_token.clone();
         let futs: Vec<_> = calls
             .iter()
             .map(|tc| {
@@ -235,14 +285,48 @@ impl<S: EventSink> ToolScheduler<S> {
                 let lock_manager = self.lock_manager.clone();
                 let active_chapter_path = self.active_chapter_path.clone();
                 let active_skill = self.active_skill.clone();
+                let allowed_tools = allowed_tools.clone();
+                let cancel_token = cancel_token.clone();
                 async move {
                     let call_id = format!("tool_{}", uuid::Uuid::new_v4());
                     emitter.tool_call_started(&tc, &call_id).ok();
 
+                    if cancel_token.is_cancelled() {
+                        let result = tool_cancelled_result(&tc.tool_name, &call_id);
+                        emitter.tool_call_progress(&tc, &call_id, "error").ok();
+                        let trace = Some(build_tool_trace(&tc.tool_name, &result));
+                        emitter
+                            .tool_call_finished(&tc, &call_id, "error", trace)
+                            .ok();
+                        return build_tool_message(&tc, &result);
+                    }
+
+                    if !tool_is_allowed(allowed_tools.as_deref(), &tc.tool_name) {
+                        let result = tool_not_allowed_result(
+                            &tc.tool_name,
+                            &call_id,
+                            allowed_tools.as_deref(),
+                        );
+                        emitter.tool_call_progress(&tc, &call_id, "error").ok();
+                        let trace = Some(build_tool_trace(&tc.tool_name, &result));
+                        emitter
+                            .tool_call_finished(&tc, &call_id, "error", trace)
+                            .ok();
+                        return build_tool_message(&tc, &result);
+                    }
+
                     let timeout_dur = get_tool_timeout(&tc.tool_name);
                     let resource_key = write_resource_key(&tc, &project_path);
-                    let result = lock_manager
-                        .with_write_lock(resource_key, Some(call_id.clone()), || async {
+
+                    let result = tokio::select! {
+                        _ = cancel_token.cancelled() => {
+                            tool_cancelled_result(&tc.tool_name, &call_id)
+                        }
+                        guarded = lock_manager.with_write_lock(resource_key, Some(call_id.clone()), || async {
+                            if cancel_token.is_cancelled() {
+                                return Ok(tool_cancelled_result(&tc.tool_name, &call_id));
+                            }
+
                             let blocking_fut = tokio::task::spawn_blocking({
                                 let tc = tc.clone();
                                 let call_id = call_id.clone();
@@ -259,19 +343,24 @@ impl<S: EventSink> ToolScheduler<S> {
                                     )
                                 }
                             });
-                            let outcome =
-                                match tokio::time::timeout(timeout_dur, blocking_fut).await {
-                                    Ok(join_result) => join_result.unwrap_or_else(|e| {
-                                        tool_join_error(&tc.tool_name, &call_id, &e.to_string())
-                                    }),
-                                    Err(_elapsed) => {
-                                        tool_timeout_error(&tc.tool_name, &call_id, timeout_dur)
+                            let outcome = tokio::select! {
+                                _ = cancel_token.cancelled() => {
+                                    tool_cancelled_result(&tc.tool_name, &call_id)
+                                }
+                                timed = tokio::time::timeout(timeout_dur, blocking_fut) => {
+                                    match timed {
+                                        Ok(join_result) => join_result.unwrap_or_else(|e| {
+                                            tool_join_error(&tc.tool_name, &call_id, &e.to_string())
+                                        }),
+                                        Err(_elapsed) => tool_timeout_error(&tc.tool_name, &call_id, timeout_dur),
                                     }
-                                };
+                                }
+                            };
                             Ok(outcome)
-                        })
-                        .await
-                        .unwrap_or_else(|e| tool_lock_error(&tc.tool_name, &call_id, &e));
+                        }) => {
+                            guarded.unwrap_or_else(|e| tool_lock_error(&tc.tool_name, &call_id, &e))
+                        }
+                    };
 
                     let status = if result.ok { "ok" } else { "error" };
                     let progress = if result.ok { "done" } else { "error" };
@@ -281,19 +370,50 @@ impl<S: EventSink> ToolScheduler<S> {
                         .tool_call_finished(&tc, &call_id, status, trace)
                         .ok();
 
+                    maybe_emit_post_write_review(
+                        &emitter,
+                        &cancel_token,
+                        &project_path,
+                        &tc,
+                        &call_id,
+                        &result,
+                    )
+                    .await;
+
                     build_tool_message(&tc, &result)
                 }
             })
             .collect();
 
-        let results = futures::future::join_all(futs).await;
+        let joined = futures::future::join_all(futs);
+        let results = tokio::select! {
+            _ = self.cancel_token.cancelled() => {
+                return Err(cancelled_error(None));
+            }
+            results = joined => results,
+        };
+
         Ok(results)
     }
 
     /// Execute a single tool call.
     async fn execute_single(&self, tc: &ToolCallInfo) -> Result<AgentMessage, AppError> {
+        if self.cancel_token.is_cancelled() {
+            return Err(cancelled_error(None));
+        }
+
         let call_id = format!("tool_{}", uuid::Uuid::new_v4());
         self.emitter.tool_call_started(tc, &call_id)?;
+
+        if !self.is_tool_allowed(&tc.tool_name) {
+            let result =
+                tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
+            self.emitter.tool_call_progress(tc, &call_id, "error")?;
+            let trace = Some(build_tool_trace(&tc.tool_name, &result));
+            self.emitter
+                .tool_call_finished(tc, &call_id, "error", trace)?;
+            return Ok(build_tool_message(tc, &result));
+        }
 
         let tc_clone = tc.clone();
         let call_id_clone = call_id.clone();
@@ -305,9 +425,16 @@ impl<S: EventSink> ToolScheduler<S> {
 
         let timeout_dur = get_tool_timeout(&tc.tool_name);
         let resource_key = write_resource_key(tc, &self.project_path);
-        let result = self
-            .lock_manager
-            .with_write_lock(resource_key, Some(call_id.clone()), || async {
+
+        let result = tokio::select! {
+            _ = self.cancel_token.cancelled() => {
+                tool_cancelled_result(&tc.tool_name, &call_id)
+            }
+            guarded = self.lock_manager.with_write_lock(resource_key, Some(call_id.clone()), || async {
+                if self.cancel_token.is_cancelled() {
+                    return Ok(tool_cancelled_result(&tc_clone.tool_name, &call_id_clone));
+                }
+
                 let blocking_fut = tokio::task::spawn_blocking(move || {
                     execute_tool_call(
                         &tc_clone,
@@ -317,18 +444,21 @@ impl<S: EventSink> ToolScheduler<S> {
                         active_skill.as_deref(),
                     )
                 });
-                let outcome = match tokio::time::timeout(timeout_dur, blocking_fut).await {
-                    Ok(join_result) => join_result.unwrap_or_else(|e| {
-                        tool_join_error(&tool_name_for_err, &call_id_for_err, &e.to_string())
-                    }),
-                    Err(_elapsed) => {
-                        tool_timeout_error(&tool_name_for_err, &call_id_for_err, timeout_dur)
+
+                let outcome = tokio::select! {
+                    _ = self.cancel_token.cancelled() => tool_cancelled_result(&tool_name_for_err, &call_id_for_err),
+                    timed = tokio::time::timeout(timeout_dur, blocking_fut) => {
+                        match timed {
+                            Ok(join_result) => join_result.unwrap_or_else(|e| {
+                                tool_join_error(&tool_name_for_err, &call_id_for_err, &e.to_string())
+                            }),
+                            Err(_elapsed) => tool_timeout_error(&tool_name_for_err, &call_id_for_err, timeout_dur),
+                        }
                     }
                 };
                 Ok(outcome)
-            })
-            .await
-            .unwrap_or_else(|e| tool_lock_error(&tc.tool_name, &call_id, &e));
+            }) => guarded.unwrap_or_else(|e| tool_lock_error(&tc.tool_name, &call_id, &e)),
+        };
 
         let status = if result.ok { "ok" } else { "error" };
         let progress = if result.ok { "done" } else { "error" };
@@ -337,7 +467,33 @@ impl<S: EventSink> ToolScheduler<S> {
         self.emitter
             .tool_call_finished(tc, &call_id, status, trace)?;
 
+        maybe_emit_post_write_review(
+            &self.emitter,
+            &self.cancel_token,
+            &self.project_path,
+            tc,
+            &call_id,
+            &result,
+        )
+        .await;
+
         Ok(build_tool_message(tc, &result))
+    }
+
+    async fn execute_disallowed(&self, tc: &ToolCallInfo) -> Result<AgentMessage, AppError> {
+        let call_id = format!("tool_{}", uuid::Uuid::new_v4());
+        self.emitter.tool_call_started(tc, &call_id)?;
+        let result =
+            tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
+        self.emitter.tool_call_progress(tc, &call_id, "error")?;
+        let trace = Some(build_tool_trace(&tc.tool_name, &result));
+        self.emitter
+            .tool_call_finished(tc, &call_id, "error", trace)?;
+        Ok(build_tool_message(tc, &result))
+    }
+
+    fn is_tool_allowed(&self, tool_name: &str) -> bool {
+        tool_is_allowed(self.allowed_tools.as_deref(), tool_name)
     }
 
     fn build_askuser_suspend(
@@ -419,6 +575,221 @@ impl<S: EventSink> ToolScheduler<S> {
     }
 }
 
+fn extract_post_write_review_target_ref(
+    tc: &ToolCallInfo,
+    result: &crate::agent_tools::contracts::ToolResult<serde_json::Value>,
+) -> Option<String> {
+    if tc.tool_name != "edit" {
+        return None;
+    }
+    if !result.ok {
+        return None;
+    }
+    let data = result.data.as_ref()?;
+
+    let mode = data.get("mode").and_then(|v| v.as_str()).unwrap_or("");
+    if mode != "commit" {
+        return None;
+    }
+    let target = data.get("target").and_then(|v| v.as_str()).unwrap_or("");
+    if target != "chapter_content" {
+        return None;
+    }
+    let accepted = data
+        .get("accepted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if !accepted {
+        return None;
+    }
+
+    let path = data.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let path = path.trim();
+    if path.is_empty() || !path.ends_with(".json") {
+        return None;
+    }
+
+    Some(path.to_string())
+}
+
+async fn maybe_emit_post_write_review<S: EventSink>(
+    emitter: &S,
+    cancel_token: &CancellationToken,
+    project_path: &str,
+    tc: &ToolCallInfo,
+    call_id: &str,
+    result: &crate::agent_tools::contracts::ToolResult<serde_json::Value>,
+) {
+    if cancel_token.is_cancelled() {
+        return;
+    }
+    if emitter.source_kind() != "agent" {
+        return;
+    }
+
+    let Some(target_ref) = extract_post_write_review_target_ref(tc, result) else {
+        return;
+    };
+
+    let project_path = project_path.to_string();
+    let target_ref_for_run = target_ref.clone();
+
+    let report = match tokio::task::spawn_blocking(move || {
+        let input = review_types::ReviewRunInput {
+            scope_ref: format!("chapter:{target_ref_for_run}"),
+            target_refs: vec![target_ref_for_run],
+            branch_id: None,
+            review_types: vec![review_types::ReviewType::WordCount],
+            task_card_ref: None,
+            context_pack_ref: None,
+            effective_rules_fingerprint: None,
+            severity_threshold: None,
+        };
+        review_engine::run_review(Path::new(&project_path), input)
+    })
+    .await
+    {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                target: "review",
+                error = %e,
+                target_ref = %target_ref,
+                "post-write review failed"
+            );
+            return;
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "review",
+                error = %e,
+                target_ref = %target_ref,
+                "post-write review join error"
+            );
+            return;
+        }
+    };
+
+    let mut warn = 0_i32;
+    let mut block = 0_i32;
+    for i in &report.issues {
+        match i.severity {
+            review_types::ReviewSeverity::Warn => warn += 1,
+            review_types::ReviewSeverity::Block => block += 1,
+            _ => {}
+        }
+    }
+
+    let payload = json!({
+        "hook": "post_write",
+        "call_id": call_id,
+        "llm_call_id": tc.llm_call_id.as_str(),
+        "tool_name": tc.tool_name.as_str(),
+        "target_ref": target_ref,
+        "revision_after": result.meta.revision_after,
+        "issue_counts": {
+            "total": report.issues.len() as i32,
+            "warn": warn,
+            "block": block,
+        },
+        "overall_status": report.overall_status,
+        "recommended_action": report.recommended_action,
+        "generated_at": report.generated_at,
+        "report": report,
+    });
+
+    let _ = emitter.emit_raw(event_types::REVIEW_RECORDED, payload);
+}
+
+fn tool_is_allowed(allowed_tools: Option<&HashSet<String>>, tool_name: &str) -> bool {
+    let Some(allowed) = allowed_tools else {
+        return true;
+    };
+    allowed.contains(&tool_name.trim().to_ascii_lowercase())
+}
+
+fn tool_not_allowed_result(
+    tool_name: &str,
+    call_id: &str,
+    allowed_tools: Option<&HashSet<String>>,
+) -> crate::agent_tools::contracts::ToolResult<serde_json::Value> {
+    use crate::agent_tools::contracts::{FaultDomain, ToolError, ToolMeta, ToolResult};
+
+    let allowed = allowed_tools
+        .map(|set| {
+            let mut tools = set.iter().cloned().collect::<Vec<_>>();
+            tools.sort();
+            tools
+        })
+        .unwrap_or_default();
+
+    ToolResult {
+        ok: false,
+        data: None,
+        error: Some(ToolError {
+            code: "E_TOOL_NOT_ALLOWED".to_string(),
+            message: format!("tool '{}' is not allowed in this turn", tool_name),
+            retryable: false,
+            fault_domain: FaultDomain::Policy,
+            details: Some(json!({
+                "tool": tool_name,
+                "allowed_tools": allowed,
+            })),
+        }),
+        meta: ToolMeta {
+            tool: tool_name.to_string(),
+            call_id: call_id.to_string(),
+            duration_ms: 0,
+            revision_before: None,
+            revision_after: None,
+            tx_id: None,
+            read_set: None,
+            write_set: None,
+        },
+    }
+}
+
+fn tool_cancelled_result(
+    tool_name: &str,
+    call_id: &str,
+) -> crate::agent_tools::contracts::ToolResult<serde_json::Value> {
+    use crate::agent_tools::contracts::{FaultDomain, ToolError, ToolMeta, ToolResult};
+
+    ToolResult {
+        ok: false,
+        data: None,
+        error: Some(ToolError {
+            code: "E_CANCELLED".to_string(),
+            message: "cancelled".to_string(),
+            retryable: false,
+            fault_domain: FaultDomain::Policy,
+            details: Some(json!({ "tool": tool_name })),
+        }),
+        meta: ToolMeta {
+            tool: tool_name.to_string(),
+            call_id: call_id.to_string(),
+            duration_ms: 0,
+            revision_before: None,
+            revision_after: None,
+            tx_id: None,
+            read_set: None,
+            write_set: None,
+        },
+    }
+}
+
+fn cancelled_error(call_id: Option<&str>) -> AppError {
+    AppError {
+        code: ErrorCode::Internal,
+        message: "cancelled".to_string(),
+        details: Some(json!({
+            "code": "E_CANCELLED",
+            "call_id": call_id,
+        })),
+        recoverable: Some(true),
+    }
+}
+
 fn requires_confirmation(policy: ConfirmationPolicy, approval_mode: ApprovalMode) -> bool {
     match (policy, approval_mode) {
         (ConfirmationPolicy::Never, _) => false,
@@ -463,6 +834,7 @@ fn group_calls(calls: &[ToolCallInfo]) -> Vec<ExecGroup> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use tokio_util::sync::CancellationToken;
 
     #[derive(Clone)]
     struct TestSink;
@@ -667,12 +1039,14 @@ mod tests {
             "D:/p".to_string(),
             ApprovalMode::ConfirmWrites,
             ClarificationMode::Interactive,
+            CancellationToken::new(),
         );
         let auto_scheduler = ToolScheduler::new(
             TestSink,
             "D:/p".to_string(),
             ApprovalMode::Auto,
             ClarificationMode::Interactive,
+            CancellationToken::new(),
         );
 
         let read_call = ToolCallInfo {
@@ -706,6 +1080,7 @@ mod tests {
             "D:/p".to_string(),
             ApprovalMode::Auto,
             ClarificationMode::HeadlessDefer,
+            CancellationToken::new(),
         );
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
@@ -732,6 +1107,7 @@ mod tests {
             "D:/p".to_string(),
             ApprovalMode::ConfirmWrites,
             ClarificationMode::Interactive,
+            CancellationToken::new(),
         )
         .with_active_chapter_path(Some("vol_1/ch_1.json".to_string()));
 

@@ -5,6 +5,10 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
 use crate::commands::agent_engine::AgentEditorState;
+use crate::mission::artifacts as mission_artifacts;
+use crate::mission::contextpack_staleness::check_contextpack_staleness;
+use crate::mission::contextpack_types::ContextPack;
+use crate::mission::layer1_types::Layer1Snapshot;
 use crate::models::{Chapter, VolumeMetadata};
 use crate::services::{list_dirs, list_files, read_json};
 
@@ -42,6 +46,9 @@ pub(crate) struct ContextFingerprint {
     editor_state_hash: u64,
     active_skill: Option<String>,
     active_chapter: Option<String>,
+    mission_id: Option<String>,
+    layer1_hash: u64,
+    contextpack_hash: u64,
 }
 
 /// Cached context content to avoid recomputing unchanged sections.
@@ -84,6 +91,7 @@ fn hash_str(s: &str) -> u64 {
 pub(crate) fn inject_unified_context(
     state: &mut ConversationState,
     project_path: &str,
+    mission_id: &Option<String>,
     active_chapter_path: &Option<String>,
     active_skill: &Option<String>,
     editor_state: &Option<AgentEditorState>,
@@ -127,6 +135,16 @@ pub(crate) fn inject_unified_context(
     let editor_text = build_editor_state_text(editor_state);
     let editor_hash = editor_text.as_deref().map(hash_str).unwrap_or(0);
 
+    let is_micro = editor_state
+        .as_ref()
+        .and_then(|es| es.selected_text.as_ref())
+        .map(|t| !t.trim().is_empty())
+        .unwrap_or(false);
+
+    let (layer1_section, layer1_hash) = build_layer1_section(project_path, mission_id);
+    let (contextpack_section, contextpack_hash) =
+        build_contextpack_section(project_path, mission_id);
+
     let new_fp = ContextFingerprint {
         project_structure_hash: project_hash,
         writing_rules_hash: rules_hash,
@@ -134,6 +152,9 @@ pub(crate) fn inject_unified_context(
         editor_state_hash: editor_hash,
         active_skill: active_skill.clone(),
         active_chapter: active_chapter_path.clone(),
+        mission_id: mission_id.clone(),
+        layer1_hash,
+        contextpack_hash,
     };
 
     // Check if anything changed
@@ -144,6 +165,9 @@ pub(crate) fn inject_unified_context(
         || cache.fingerprint.editor_state_hash != new_fp.editor_state_hash
         || cache.fingerprint.active_skill != new_fp.active_skill
         || cache.fingerprint.active_chapter != new_fp.active_chapter
+        || cache.fingerprint.mission_id != new_fp.mission_id
+        || cache.fingerprint.layer1_hash != new_fp.layer1_hash
+        || cache.fingerprint.contextpack_hash != new_fp.contextpack_hash
         || cache.project_invalidated
         || cache.rules_invalidated;
 
@@ -174,18 +198,28 @@ pub(crate) fn inject_unified_context(
         }
     }
 
-    // 3. Project structure
-    let project_section =
-        project_text.or_else(|| build_project_context_text(project_path, active_chapter_path));
-    if let Some(text) = project_section {
-        // Strip the old [Project Context] tag if present
-        let clean = text
-            .trim_start_matches("[Project Context]\n")
-            .trim_start_matches("[Project Context]");
-        sections.push(format!(
-            "Project:\n{}",
-            truncate_section(clean, budget.project_context_chars)
-        ));
+    // 2.5 Mission task-state context (Layer1 + ContextPack)
+    if let Some(text) = layer1_section {
+        sections.push(text);
+    }
+    if let Some(text) = contextpack_section {
+        sections.push(text);
+    }
+
+    // 3. Project structure (skip for micro workflow to avoid directory noise)
+    if !is_micro {
+        let project_section =
+            project_text.or_else(|| build_project_context_text(project_path, active_chapter_path));
+        if let Some(text) = project_section {
+            // Strip the old [Project Context] tag if present
+            let clean = text
+                .trim_start_matches("[Project Context]\n")
+                .trim_start_matches("[Project Context]");
+            sections.push(format!(
+                "Project:\n{}",
+                truncate_section(clean, budget.project_context_chars)
+            ));
+        }
     }
 
     // 4. Editor state
@@ -343,6 +377,206 @@ fn replace_context_message(state: &mut ConversationState, text: &str) {
     state
         .messages
         .insert(insert_pos, AgentMessage::system(text.to_string()));
+}
+
+fn build_layer1_section(project_path: &str, mission_id: &Option<String>) -> (Option<String>, u64) {
+    let Some(mission_id) = mission_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return (None, 0);
+    };
+
+    let project_path = std::path::Path::new(project_path);
+    let section = match mission_artifacts::read_layer1_snapshot(project_path, &mission_id) {
+        Ok(snapshot) => Some(summarize_layer1(&snapshot)),
+        Err(e) => Some(format!("Layer1:\n(unavailable: {} )", e.message)),
+    };
+    let hash = section.as_deref().map(hash_str).unwrap_or(0);
+    (section, hash)
+}
+
+fn summarize_layer1(snapshot: &Layer1Snapshot) -> String {
+    fn enum_to_str<T: serde::Serialize>(value: &T) -> String {
+        serde_json::to_string(value)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string()
+    }
+
+    let mut lines = Vec::new();
+    lines.push("Layer1:".to_string());
+
+    match snapshot.chapter_card.as_ref() {
+        Some(cc) => {
+            let objective = truncate_inline(&cc.objective, 220);
+            let wf = enum_to_str(&cc.workflow_kind);
+            let status = enum_to_str(&cc.status);
+            lines.push(format!(
+                "- chapter_card: objective=\"{}\" workflow={} status={} constraints={} success={} updated_at={}",
+                objective,
+                wf,
+                status,
+                cc.hard_constraints.len(),
+                cc.success_criteria.len(),
+                cc.updated_at
+            ));
+        }
+        None => lines.push("- chapter_card: (missing)".to_string()),
+    }
+
+    match snapshot.recent_facts.as_ref() {
+        Some(rf) => lines.push(format!(
+            "- recent_facts: {} items updated_at={}",
+            rf.facts.len(),
+            rf.updated_at
+        )),
+        None => lines.push("- recent_facts: (missing)".to_string()),
+    }
+
+    match snapshot.active_cast.as_ref() {
+        Some(ac) => lines.push(format!(
+            "- active_cast: {} entries updated_at={}",
+            ac.cast.len(),
+            ac.updated_at
+        )),
+        None => lines.push("- active_cast: (missing)".to_string()),
+    }
+
+    if snapshot.active_foreshadowing.is_some() {
+        lines.push("- active_foreshadowing: present".to_string());
+    }
+    if snapshot.previous_summary.is_some() {
+        lines.push("- previous_summary: present".to_string());
+    }
+    if snapshot.risk_ledger.is_some() {
+        lines.push("- risk_ledger: present".to_string());
+    }
+
+    lines.join("\n")
+}
+
+fn build_contextpack_section(
+    project_path: &str,
+    mission_id: &Option<String>,
+) -> (Option<String>, u64) {
+    let Some(mission_id) = mission_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return (None, 0);
+    };
+
+    let project_path = std::path::Path::new(project_path);
+    let section = match mission_artifacts::read_latest_contextpack(project_path, &mission_id) {
+        Ok(cp) => {
+            let staleness =
+                check_contextpack_staleness(project_path, &mission_id, cp.as_ref()).ok();
+            Some(summarize_contextpack(cp.as_ref(), staleness.as_ref()))
+        }
+        Err(e) => Some(format!("ContextPack:\n(unavailable: {} )", e.message)),
+    };
+    let hash = section.as_deref().map(hash_str).unwrap_or(0);
+    (section, hash)
+}
+
+fn summarize_contextpack(
+    cp: Option<&ContextPack>,
+    staleness: Option<&crate::mission::contextpack_staleness::ContextPackStalenessStatus>,
+) -> String {
+    fn enum_to_str<T: serde::Serialize>(value: &T) -> String {
+        serde_json::to_string(value)
+            .unwrap_or_default()
+            .trim_matches('"')
+            .to_string()
+    }
+
+    let Some(cp) = cp else {
+        let mut lines = vec!["ContextPack:".to_string(), "- (none)".to_string()];
+        if let Some(st) = staleness {
+            if st.stale && !st.reasons.is_empty() {
+                lines.push(format!(
+                    "- stale: true ({})",
+                    truncate_inline(&st.reasons.join(", "), 260)
+                ));
+            }
+        }
+        return lines.join("\n");
+    };
+
+    let mut lines = Vec::new();
+    lines.push("ContextPack:".to_string());
+    lines.push(format!(
+        "- budget={} generated_at={}",
+        enum_to_str(&cp.token_budget),
+        cp.generated_at
+    ));
+
+    if !cp.objective_summary.trim().is_empty() {
+        lines.push(format!(
+            "- objective: \"{}\"",
+            truncate_inline(&cp.objective_summary, 240)
+        ));
+    }
+
+    if !cp.key_facts.is_empty() {
+        let facts = cp
+            .key_facts
+            .iter()
+            .map(|s| truncate_inline(s, 160))
+            .take(6)
+            .collect::<Vec<_>>();
+        lines.push(format!("- key_facts: {}", facts.join(" | ")));
+    }
+
+    if !cp.active_constraints.is_empty() {
+        let cons = cp
+            .active_constraints
+            .iter()
+            .map(|s| truncate_inline(s, 120))
+            .take(6)
+            .collect::<Vec<_>>();
+        lines.push(format!("- constraints: {}", cons.join(" | ")));
+    }
+
+    if !cp.evidence_snippets.is_empty() {
+        let mut ev_lines = Vec::new();
+        for ev in cp.evidence_snippets.iter().take(3) {
+            let src = ev.source_ref.trim();
+            let reason = truncate_inline(&ev.reason, 60);
+            let snippet_1 = ev.snippet.lines().next().unwrap_or("").trim();
+            ev_lines.push(format!(
+                "  - [{}] {}: {}",
+                src,
+                reason,
+                truncate_inline(snippet_1, 140)
+            ));
+        }
+        lines.push(format!("- evidence_top3:\n{}", ev_lines.join("\n")));
+    }
+
+    if let Some(st) = staleness {
+        if st.stale {
+            let reason = if st.reasons.is_empty() {
+                "(unknown)".to_string()
+            } else {
+                truncate_inline(&st.reasons.join(", "), 260)
+            };
+            lines.push(format!("- stale: true ({reason})"));
+        }
+    }
+
+    lines.join("\n")
+}
+
+fn truncate_inline(text: &str, max_chars: usize) -> String {
+    let t = text.trim();
+    if t.chars().count() <= max_chars {
+        return t.to_string();
+    }
+    super::text_utils::truncate_chars(t, max_chars.saturating_sub(15)) + "[...truncated]"
 }
 
 pub(crate) fn build_project_context_text(

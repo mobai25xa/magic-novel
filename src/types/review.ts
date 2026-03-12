@@ -29,7 +29,7 @@ export type ReviewIssue = {
 } & Record<string, unknown>
 
 export type ReviewReport = {
-  schema_version?: number
+  schema_version: number
   review_id: string
   scope_ref: string
   target_refs: string[]
@@ -41,19 +41,22 @@ export type ReviewReport = {
   generated_at: number
 } & Record<string, unknown>
 
-export type ReviewDecisionOption = {
-  option_id: string
-  label: string
-  description?: string
-} & Record<string, unknown>
-
 export type ReviewDecisionRequest = {
-  schema_version?: number
-  review_id?: string
+  schema_version: number
+  review_id: string
+  feature_id?: string | null
+  scope_ref: string
+  target_refs?: string[] | null
   question: string
-  options: ReviewDecisionOption[]
-  context_summary?: string
-  created_at?: number
+  options: string[]
+  context_summary: string[]
+  created_at: number
 } & Record<string, unknown>
 
-export type ReviewDecisionAnswer = Record<string, unknown>
+export type ReviewDecisionAnswer = {
+  schema_version: number
+  review_id: string
+  selected_option: string
+  note?: string | null
+  answered_at: number
+} & Record<string, unknown>

@@ -161,7 +161,8 @@ function toToolStep(trace: ChatToolTrace, index: number): AgentUiToolStep {
   const startedAt = Date.now() + index
 
   if (trace.tool_name === 'review_check') {
-    const preview = buildReviewCheckPreview(trace.preview) || (trace.preview ? (redactValue(trace.preview) as Record<string, unknown>) : null)
+    const preview = buildReviewCheckPreview(trace.preview)
+      || (trace.preview ? (redactValue(trace.preview) as Record<string, unknown>) : null)
     const previewRecord = preview && typeof preview === 'object' && !Array.isArray(preview)
       ? (preview as Record<string, unknown>)
       : null

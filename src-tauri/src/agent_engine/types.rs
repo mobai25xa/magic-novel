@@ -179,7 +179,7 @@ impl Default for LoopConfig {
             max_rounds: 25,
             max_tool_calls: 100,
             autonomy_level: AutonomyLevel::default(),
-            worker_dispatch_enabled: true,
+            worker_dispatch_enabled: false,
             capability_mode: AgentMode::Writing,
             approval_mode: ApprovalMode::ConfirmWrites,
             clarification_mode: ClarificationMode::Interactive,

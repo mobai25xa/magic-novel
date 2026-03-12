@@ -8,6 +8,7 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
 use crate::models::AppError;
+use crate::review::types::{ReviewDecisionRequest, ReviewReport};
 
 pub const MISSION_EVENT_CHANNEL: &str = "magic:mission_event";
 
@@ -15,9 +16,16 @@ pub mod mission_event_types {
     pub const MISSION_STATE_CHANGED: &str = "MISSION_STATE_CHANGED";
     pub const MISSION_FEATURES_CHANGED: &str = "MISSION_FEATURES_CHANGED";
     pub const MISSION_PROGRESS_ENTRY: &str = "MISSION_PROGRESS_ENTRY";
+    pub const MISSION_LAYER1_UPDATED: &str = "MISSION_LAYER1_UPDATED";
+    pub const MISSION_CONTEXTPACK_BUILT: &str = "MISSION_CONTEXTPACK_BUILT";
     pub const WORKER_STARTED: &str = "WORKER_STARTED";
     pub const WORKER_COMPLETED: &str = "WORKER_COMPLETED";
     pub const MISSION_HEARTBEAT: &str = "MISSION_HEARTBEAT";
+
+    // M3: Review Gate
+    pub const MISSION_REVIEW_RECORDED: &str = "MISSION_REVIEW_RECORDED";
+    pub const MISSION_REVIEW_DECISION_REQUIRED: &str = "MISSION_REVIEW_DECISION_REQUIRED";
+    pub const MISSION_FIXUP_PROGRESS: &str = "MISSION_FIXUP_PROGRESS";
 }
 
 /// Envelope wrapping every mission event sent to the UI.
@@ -115,6 +123,35 @@ impl MissionEventEmitter {
         )
     }
 
+    // ── Layer1 / ContextPack (M2+) ─────────────────────────────
+
+    pub fn layer1_updated(&self, kind: &str) -> Result<(), AppError> {
+        use mission_event_types::MISSION_LAYER1_UPDATED;
+        self.emit(
+            MISSION_LAYER1_UPDATED,
+            json!({
+                "kind": kind,
+            }),
+        )
+    }
+
+    pub fn contextpack_built(
+        &self,
+        scope_ref: &str,
+        token_budget: &str,
+        generated_at: i64,
+    ) -> Result<(), AppError> {
+        use mission_event_types::MISSION_CONTEXTPACK_BUILT;
+        self.emit(
+            MISSION_CONTEXTPACK_BUILT,
+            json!({
+                "scope_ref": scope_ref,
+                "token_budget": token_budget,
+                "generated_at": generated_at,
+            }),
+        )
+    }
+
     // ── Worker ──────────────────────────────────────────────────
 
     pub fn worker_started(&self, worker_id: &str, feature_id: &str) -> Result<(), AppError> {
@@ -155,6 +192,72 @@ impl MissionEventEmitter {
             MISSION_HEARTBEAT,
             json!({
                 "worker_id": worker_id,
+            }),
+        )
+    }
+
+    // ── M3: Review Gate ────────────────────────────────────────
+
+    pub fn review_recorded(&self, report: &ReviewReport) -> Result<(), AppError> {
+        use mission_event_types::MISSION_REVIEW_RECORDED;
+
+        let mut warn = 0_i32;
+        let mut block = 0_i32;
+        for i in &report.issues {
+            match i.severity {
+                crate::review::types::ReviewSeverity::Warn => warn += 1,
+                crate::review::types::ReviewSeverity::Block => block += 1,
+                _ => {}
+            }
+        }
+        let total = report.issues.len() as i32;
+
+        fn enum_str<T: serde::Serialize>(v: &T) -> String {
+            serde_json::to_string(v)
+                .unwrap_or_default()
+                .trim_matches('"')
+                .to_string()
+        }
+
+        self.emit(
+            MISSION_REVIEW_RECORDED,
+            json!({
+                "review_id": report.review_id,
+                "overall_status": enum_str(&report.overall_status),
+                "recommended_action": enum_str(&report.recommended_action),
+                "issue_counts": {
+                    "total": total,
+                    "warn": warn,
+                    "block": block,
+                },
+                "generated_at": report.generated_at,
+            }),
+        )
+    }
+
+    pub fn review_decision_required(&self, req: &ReviewDecisionRequest) -> Result<(), AppError> {
+        use mission_event_types::MISSION_REVIEW_DECISION_REQUIRED;
+        self.emit(
+            MISSION_REVIEW_DECISION_REQUIRED,
+            json!({
+                "review_id": req.review_id,
+                "feature_id": req.feature_id,
+                "scope_ref": req.scope_ref,
+                "target_refs": req.target_refs,
+                "question": req.question,
+                "options": req.options,
+                "created_at": req.created_at,
+            }),
+        )
+    }
+
+    pub fn fixup_progress(&self, attempt: i32, message: &str) -> Result<(), AppError> {
+        use mission_event_types::MISSION_FIXUP_PROGRESS;
+        self.emit(
+            MISSION_FIXUP_PROGRESS,
+            json!({
+                "attempt": attempt,
+                "message": message,
             }),
         )
     }
