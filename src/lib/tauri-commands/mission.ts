@@ -8,6 +8,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { z } from 'zod'
 
 import type {
+  KnowledgeDecisionInput,
+  KnowledgeDelta,
+  KnowledgeLatest,
+  KnowledgeProposalBundle,
+} from '@/types/knowledge'
+import type {
   ReviewDecisionAnswer,
   ReviewDecisionRequest,
   ReviewReport,
@@ -309,6 +315,162 @@ export interface MissionReviewAnswerInput {
 
 export async function missionReviewAnswer(input: MissionReviewAnswerInput): Promise<void> {
   await invoke<void>('mission_review_answer', { input })
+}
+
+// ── M4 Knowledge Writeback / Canon Gate ─────────────────────
+
+const KnowledgeConflictSchema = z
+  .object({
+    type: z.string(),
+    message: z.string(),
+    item_id: z.string().optional(),
+    target_ref: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeProposalItemSchema = z
+  .object({
+    item_id: z.string(),
+    kind: z.string(),
+    op: z.string(),
+    target_ref: z.string().optional(),
+    target_revision: z.number().optional(),
+    fields: z.record(z.string(), z.unknown()).default({}),
+    evidence_refs: z.array(z.string()).default([]),
+    source_refs: z.array(z.string()).default([]),
+    change_reason: z.string().default(''),
+    accept_policy: z.string(),
+  })
+  .passthrough()
+
+const KnowledgeProposalBundleSchema = z
+  .object({
+    schema_version: z.number(),
+    bundle_id: z.string(),
+    scope_ref: z.string(),
+    branch_id: z.string().optional(),
+    source_session_id: z.string(),
+    source_review_id: z.string().optional(),
+    generated_at: z.number(),
+    proposal_items: z.array(KnowledgeProposalItemSchema).default([]),
+  })
+  .passthrough()
+
+const KnowledgeDeltaTargetSchema = z
+  .object({
+    ref: z.string(),
+    kind: z.string(),
+    path: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeDeltaChangeSchema = z
+  .object({
+    item_id: z.string(),
+    op: z.string(),
+    kind: z.string(),
+    target_ref: z.string().optional(),
+    summary: z.string(),
+  })
+  .passthrough()
+
+const KnowledgeRollbackInfoSchema = z
+  .object({
+    kind: z.string(),
+    token: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeDeltaSchema = z
+  .object({
+    schema_version: z.number(),
+    knowledge_delta_id: z.string(),
+    status: z.string(),
+    scope_ref: z.string(),
+    branch_id: z.string().optional(),
+    source_session_id: z.string(),
+    source_review_id: z.string().optional(),
+    generated_at: z.number(),
+    targets: z.array(KnowledgeDeltaTargetSchema).default([]),
+    changes: z.array(KnowledgeDeltaChangeSchema).default([]),
+    evidence_refs: z.array(z.string()).default([]),
+    conflicts: z.array(KnowledgeConflictSchema).default([]),
+    accepted_item_ids: z.array(z.string()).optional(),
+    rejected_item_ids: z.array(z.string()).optional(),
+    applied_at: z.number().optional(),
+    rollback: KnowledgeRollbackInfoSchema.optional(),
+  })
+  .passthrough()
+
+function parseKnowledgeProposalBundle(value: unknown): KnowledgeProposalBundle | null {
+  if (value == null) return null
+  const parsed = KnowledgeProposalBundleSchema.safeParse(value)
+  if (parsed.success) return parsed.data as KnowledgeProposalBundle
+  console.warn(`[mission] knowledge bundle schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function parseKnowledgeDelta(value: unknown): KnowledgeDelta | null {
+  if (value == null) return null
+  const parsed = KnowledgeDeltaSchema.safeParse(value)
+  if (parsed.success) return parsed.data as KnowledgeDelta
+  console.warn(`[mission] knowledge delta schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function unwrapKnowledgeLatestPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'knowledge')
+  value = unwrapMaybeWrapped(value, 'latest')
+  return value
+}
+
+export async function missionKnowledgeGetLatest(
+  projectPath: string,
+  missionId: string,
+): Promise<KnowledgeLatest> {
+  const raw = await invoke<unknown>('mission_knowledge_get_latest', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapKnowledgeLatestPayload(raw)
+  if (!isRecord(resolved)) {
+    return { bundle: null, delta: null }
+  }
+
+  return {
+    bundle: parseKnowledgeProposalBundle(resolved.bundle),
+    delta: parseKnowledgeDelta(resolved.delta),
+  }
+}
+
+export interface MissionKnowledgeDecideInput {
+  project_path: string
+  mission_id: string
+  decision: KnowledgeDecisionInput
+}
+
+export async function missionKnowledgeDecide(input: MissionKnowledgeDecideInput): Promise<void> {
+  await invoke<void>('mission_knowledge_decide', { input })
+}
+
+export async function missionKnowledgeApply(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await invoke<void>('mission_knowledge_apply', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+}
+
+export async function missionKnowledgeRollback(
+  projectPath: string,
+  missionId: string,
+  token?: string,
+): Promise<void> {
+  await invoke<void>('mission_knowledge_rollback', {
+    input: { project_path: projectPath, mission_id: missionId, token },
+  })
 }
 
 // ── M2 Layer1 / ContextPack ────────────────────────────────────

@@ -11,6 +11,8 @@
 
 import { useEffect, useState, useCallback, useRef } from 'react'
 
+import { readTextFile } from '@tauri-apps/plugin-fs'
+
 import {
   AiPanelCardShell,
   AiPanelIconButton,
@@ -35,6 +37,10 @@ import {
   missionReviewListFeature,
   missionReviewGetPendingDecisionFeature,
   missionReviewAnswerFeature,
+  missionKnowledgeGetLatestFeature,
+  missionKnowledgeDecideFeature,
+  missionKnowledgeApplyFeature,
+  missionKnowledgeRollbackFeature,
 } from '@/features/agent-chat'
 
 import { AiStatusBadge } from './status-badge'
@@ -62,6 +68,216 @@ function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string
   )
 }
 
+type KnowledgeTimelineEntry = {
+  key: string
+  ts: number
+  label: string
+  detail?: string
+}
+
+function normalizeFsPath(path: string) {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+function isMissingFileError(error: unknown) {
+  const text = String((error as { message?: unknown } | null)?.message ?? error ?? '')
+  const lower = text.toLowerCase()
+  return lower.includes('not found')
+    || lower.includes('no such file')
+    || lower.includes('os error 2')
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+
+  return value as Record<string, unknown>
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined
+  }
+
+  const trimmed = value.trim()
+  return trimmed || undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value
+  }
+
+  return undefined
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function unwrapMaybeWrapped(value: unknown, key: string): unknown {
+  const record = asRecord(value)
+  if (!record) {
+    return value
+  }
+
+  const wrapped = record[key]
+  return wrapped === undefined ? value : wrapped
+}
+
+function parseJsonl(content: string, maxLines = 400): unknown[] {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-maxLines)
+
+  const parsed: unknown[] = []
+  for (const line of lines) {
+    try {
+      parsed.push(JSON.parse(line))
+    } catch {
+      // ignore malformed JSONL rows
+    }
+  }
+
+  return parsed
+}
+
+function normalizeKnowledgeBundleCandidate(raw: unknown) {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'bundle')
+  value = unwrapMaybeWrapped(value, 'proposal_bundle')
+  value = unwrapMaybeWrapped(value, 'knowledge_bundle')
+  value = unwrapMaybeWrapped(value, 'latest')
+  return asRecord(value)
+}
+
+function normalizeKnowledgeDeltaCandidate(raw: unknown) {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'delta')
+  value = unwrapMaybeWrapped(value, 'knowledge_delta')
+  value = unwrapMaybeWrapped(value, 'latest')
+  return asRecord(value)
+}
+
+function toKnowledgeTimelineEntryFromBundle(raw: unknown): KnowledgeTimelineEntry | null {
+  const record = normalizeKnowledgeBundleCandidate(raw)
+  if (!record) {
+    return null
+  }
+
+  const bundleId = asString(record.bundle_id)
+  const generatedAt = asNumber(record.generated_at)
+
+  if (!bundleId || generatedAt === undefined) {
+    return null
+  }
+
+  const scopeRef = asString(record.scope_ref)
+  const proposals = Array.isArray(record.proposal_items) ? record.proposal_items.length : 0
+
+  return {
+    key: `bundle:${bundleId}:${generatedAt}`,
+    ts: generatedAt,
+    label: 'proposed',
+    detail: `${proposals} items${scopeRef ? ` · ${scopeRef}` : ''}`,
+  }
+}
+
+function toKnowledgeTimelineEntryFromDelta(raw: unknown): KnowledgeTimelineEntry | null {
+  const record = normalizeKnowledgeDeltaCandidate(raw)
+  if (!record) {
+    return null
+  }
+
+  const deltaId = asString(record.knowledge_delta_id)
+  const generatedAt = asNumber(record.generated_at)
+  const appliedAt = asNumber(record.applied_at)
+
+  const ts = appliedAt ?? generatedAt
+  if (!deltaId || ts === undefined) {
+    return null
+  }
+
+  const status = asString(record.status) ?? 'proposed'
+  const conflicts = Array.isArray(record.conflicts) ? record.conflicts.length : 0
+  const accepted = asStringArray(record.accepted_item_ids).length
+  const rejected = asStringArray(record.rejected_item_ids).length
+  const scopeRef = asString(record.scope_ref)
+
+  const label = conflicts > 0
+    ? 'blocked'
+    : status === 'applied' || appliedAt !== undefined
+      ? 'applied'
+      : status === 'accepted'
+        ? 'accepted'
+        : status === 'rejected'
+          ? 'rejected'
+          : status
+
+  const parts = [
+    scopeRef,
+    accepted > 0 ? `accepted ${accepted}` : null,
+    rejected > 0 ? `rejected ${rejected}` : null,
+    conflicts > 0 ? `conflicts ${conflicts}` : null,
+  ].filter((item): item is string => Boolean(item))
+
+  return {
+    key: `delta:${deltaId}:${ts}`,
+    ts,
+    label,
+    detail: parts.join(' · ') || undefined,
+  }
+}
+
+async function loadKnowledgeTimelineFromArtifacts(input: {
+  projectPath: string
+  missionId: string
+}): Promise<KnowledgeTimelineEntry[]> {
+  const projectPath = normalizeFsPath(input.projectPath)
+  const base = `${projectPath}/magic_novel/missions/${input.missionId}/knowledge`
+  const bundlePath = `${base}/bundles/bundles.jsonl`
+  const deltaPath = `${base}/deltas/deltas.jsonl`
+
+  const readOrEmpty = async (path: string) => {
+    try {
+      return await readTextFile(path)
+    } catch (error) {
+      if (isMissingFileError(error)) {
+        return ''
+      }
+      throw error
+    }
+  }
+
+  const [bundlesText, deltasText] = await Promise.all([
+    readOrEmpty(bundlePath),
+    readOrEmpty(deltaPath),
+  ])
+
+  const bundleRows = bundlesText ? parseJsonl(bundlesText) : []
+  const deltaRows = deltasText ? parseJsonl(deltasText) : []
+
+  const entries = [
+    ...bundleRows
+      .map((row) => toKnowledgeTimelineEntryFromBundle(row))
+      .filter((item): item is KnowledgeTimelineEntry => Boolean(item)),
+    ...deltaRows
+      .map((row) => toKnowledgeTimelineEntryFromDelta(row))
+      .filter((item): item is KnowledgeTimelineEntry => Boolean(item)),
+  ]
+
+  return entries
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 60)
+}
+
 // ── Main component ───────────────────────────────────────────────
 
 interface MissionPanelProps {
@@ -77,6 +293,7 @@ type ContextPackPayload = Awaited<ReturnType<typeof missionContextpackGetLatestF
 type ReviewReportPayload = Awaited<ReturnType<typeof missionReviewGetLatestFeature>>
 type ReviewHistoryPayload = Awaited<ReturnType<typeof missionReviewListFeature>>
 type ReviewDecisionPayload = Awaited<ReturnType<typeof missionReviewGetPendingDecisionFeature>>
+type KnowledgeLatestPayload = Awaited<ReturnType<typeof missionKnowledgeGetLatestFeature>>
 
 function maxUpdatedAt(layer1: Layer1SnapshotPayload | null): number {
   if (!layer1) return 0
@@ -126,8 +343,10 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const lastLayer1UpdatedAtRef = useRef<number>(0)
   const lastContextPackBuiltAtRef = useRef<number>(0)
   const lastReviewUpdatedAtRef = useRef<number>(0)
+  const lastKnowledgeUpdatedAtRef = useRef<number>(0)
   const pendingAutoRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reviewDecisionRef = useRef<HTMLDivElement | null>(null)
+  const lastKnowledgeBundleIdRef = useRef<string | null>(null)
 
   const [missionUi, setMissionUi] = useState<MissionUiState | null>(
     getMissionUiState,
@@ -138,6 +357,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [reviewReport, setReviewReport] = useState<ReviewReportPayload>(null)
   const [reviewHistory, setReviewHistory] = useState<ReviewHistoryPayload>(null)
   const [reviewDecision, setReviewDecision] = useState<ReviewDecisionPayload>(null)
+  const [knowledgeLatest, setKnowledgeLatest] = useState<KnowledgeLatestPayload | null>(null)
+  const [knowledgeError, setKnowledgeError] = useState<string | null>(null)
+  const [knowledgeTimeline, setKnowledgeTimeline] = useState<KnowledgeTimelineEntry[] | null>(null)
+  const [knowledgeTimelineError, setKnowledgeTimelineError] = useState<string | null>(null)
+  const [knowledgeActionLoading, setKnowledgeActionLoading] = useState(false)
+  const [knowledgeActionError, setKnowledgeActionError] = useState<string | null>(null)
+  const [knowledgeAcceptedByItemId, setKnowledgeAcceptedByItemId] = useState<Record<string, boolean>>({})
   const [layer1Error, setLayer1Error] = useState<string | null>(null)
   const [contextPackError, setContextPackError] = useState<string | null>(null)
   const [reviewError, setReviewError] = useState<string | null>(null)
@@ -153,6 +379,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [handoffsOpenOverride, setHandoffsOpenOverride] = useState<boolean | null>(null)
   const [progressOpen, setProgressOpen] = useState(false)
   const [handoffOpenByKey, setHandoffOpenByKey] = useState<Record<string, boolean>>({})
+  const [knowledgeOpenOverride, setKnowledgeOpenOverride] = useState<boolean | null>(null)
 
   useEffect(() => {
     setInitialLoading(true)
@@ -162,6 +389,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setReviewReport(null)
     setReviewHistory(null)
     setReviewDecision(null)
+    setKnowledgeLatest(null)
+    setKnowledgeError(null)
+    setKnowledgeTimeline(null)
+    setKnowledgeTimelineError(null)
+    setKnowledgeActionLoading(false)
+    setKnowledgeActionError(null)
+    setKnowledgeAcceptedByItemId({})
     setLayer1Error(null)
     setContextPackError(null)
     setReviewError(null)
@@ -174,10 +408,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setHandoffsOpenOverride(null)
     setProgressOpen(false)
     setHandoffOpenByKey({})
+    setKnowledgeOpenOverride(null)
 
     lastLayer1UpdatedAtRef.current = 0
     lastContextPackBuiltAtRef.current = 0
     lastReviewUpdatedAtRef.current = 0
+    lastKnowledgeUpdatedAtRef.current = 0
+    lastKnowledgeBundleIdRef.current = null
     if (pendingAutoRefreshRef.current) {
       clearTimeout(pendingAutoRefreshRef.current)
       pendingAutoRefreshRef.current = null
@@ -196,13 +433,15 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
   // Load initial status from backend
   const refreshStatus = useCallback(async () => {
-    const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes] = await Promise.allSettled([
+    const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes, knowledgeRes, knowledgeTimelineRes] = await Promise.allSettled([
       missionGetStatusFeature(projectPath, missionId),
       missionLayer1GetFeature(projectPath, missionId),
       missionContextpackGetLatestFeature(projectPath, missionId),
       missionReviewGetLatestFeature(projectPath, missionId),
       missionReviewListFeature(projectPath, missionId),
       missionReviewGetPendingDecisionFeature(projectPath, missionId),
+      missionKnowledgeGetLatestFeature(projectPath, missionId),
+      loadKnowledgeTimelineFromArtifacts({ projectPath, missionId }),
     ])
 
     if (statusRes.status === 'fulfilled') {
@@ -259,6 +498,24 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       setReviewDecision(null)
     }
 
+    if (knowledgeRes.status === 'fulfilled') {
+      setKnowledgeLatest(knowledgeRes.value)
+      setKnowledgeError(null)
+    } else {
+      console.warn('[MissionPanel] knowledge fetch failed:', knowledgeRes.reason)
+      setKnowledgeLatest(null)
+      setKnowledgeError(String(knowledgeRes.reason))
+    }
+
+    if (knowledgeTimelineRes.status === 'fulfilled') {
+      setKnowledgeTimeline(knowledgeTimelineRes.value)
+      setKnowledgeTimelineError(null)
+    } else {
+      console.warn('[MissionPanel] knowledge timeline fetch failed:', knowledgeTimelineRes.reason)
+      setKnowledgeTimeline(null)
+      setKnowledgeTimelineError(String(knowledgeTimelineRes.reason))
+    }
+
     setInitialLoading(false)
   }, [projectPath, missionId])
 
@@ -266,17 +523,41 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     refreshStatus()
   }, [refreshStatus])
 
+  useEffect(() => {
+    const bundle = knowledgeLatest?.bundle ?? null
+    const bundleId = bundle?.bundle_id ?? null
+    if (bundleId === lastKnowledgeBundleIdRef.current) {
+      return
+    }
+
+    lastKnowledgeBundleIdRef.current = bundleId
+    if (!bundle || !bundleId) {
+      setKnowledgeAcceptedByItemId({})
+      return
+    }
+
+    const next: Record<string, boolean> = {}
+    const items = Array.isArray(bundle.proposal_items) ? bundle.proposal_items : []
+    for (const item of items) {
+      const policy = String(item.accept_policy ?? '').trim()
+      next[item.item_id] = policy === 'auto_if_pass'
+    }
+    setKnowledgeAcceptedByItemId(next)
+  }, [knowledgeLatest?.bundle])
+
   // Optional P1: auto-refresh when backend emits Layer1/ContextPack events.
   useEffect(() => {
     const layer1Ts = missionUi?.layer1UpdatedAt ?? 0
     const packTs = missionUi?.contextPackBuiltAt ?? 0
     const reviewTs = missionUi?.reviewUpdatedAt ?? 0
+    const knowledgeTs = missionUi?.knowledgeUpdatedAt ?? 0
 
     const layer1Changed = layer1Ts > 0 && layer1Ts !== lastLayer1UpdatedAtRef.current
     const packChanged = packTs > 0 && packTs !== lastContextPackBuiltAtRef.current
     const reviewChanged = reviewTs > 0 && reviewTs !== lastReviewUpdatedAtRef.current
+    const knowledgeChanged = knowledgeTs > 0 && knowledgeTs !== lastKnowledgeUpdatedAtRef.current
 
-    if (!layer1Changed && !packChanged && !reviewChanged) {
+    if (!layer1Changed && !packChanged && !reviewChanged && !knowledgeChanged) {
       return
     }
 
@@ -289,6 +570,9 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     if (reviewChanged) {
       lastReviewUpdatedAtRef.current = reviewTs
     }
+    if (knowledgeChanged) {
+      lastKnowledgeUpdatedAtRef.current = knowledgeTs
+    }
 
     if (pendingAutoRefreshRef.current) {
       return
@@ -298,7 +582,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       pendingAutoRefreshRef.current = null
       void refreshStatus()
     }, 120)
-  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, refreshStatus])
+  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, missionUi?.knowledgeUpdatedAt, refreshStatus])
 
   useEffect(() => {
     return () => {
@@ -424,6 +708,70 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     }
   }, [projectPath, missionId, refreshStatus, reviewDecision?.review_id, reviewReport?.review_id])
 
+  const handleKnowledgeDecide = useCallback(async () => {
+    const bundle = knowledgeLatest?.bundle ?? null
+    if (!bundle || !Array.isArray(bundle.proposal_items) || bundle.proposal_items.length === 0) {
+      setKnowledgeActionError('No knowledge proposals available to decide')
+      return
+    }
+
+    const accepted_item_ids = bundle.proposal_items
+      .filter((item) => Boolean(knowledgeAcceptedByItemId[item.item_id]))
+      .map((item) => item.item_id)
+    const rejected_item_ids = bundle.proposal_items
+      .filter((item) => !knowledgeAcceptedByItemId[item.item_id])
+      .map((item) => item.item_id)
+
+    setKnowledgeActionError(null)
+    setKnowledgeActionLoading(true)
+    try {
+      await missionKnowledgeDecideFeature({
+        project_path: projectPath,
+        mission_id: missionId,
+        decision: {
+          bundle_id: bundle.bundle_id,
+          delta_id: knowledgeLatest?.delta?.knowledge_delta_id,
+          accepted_item_ids,
+          rejected_item_ids,
+        },
+      })
+      await refreshStatus()
+    } catch (e) {
+      setKnowledgeActionError(String(e))
+    } finally {
+      setKnowledgeActionLoading(false)
+    }
+  }, [knowledgeLatest, knowledgeAcceptedByItemId, projectPath, missionId, refreshStatus])
+
+  const handleKnowledgeApply = useCallback(async () => {
+    setKnowledgeActionError(null)
+    setKnowledgeActionLoading(true)
+    try {
+      await missionKnowledgeApplyFeature(projectPath, missionId)
+      await refreshStatus()
+    } catch (e) {
+      setKnowledgeActionError(String(e))
+    } finally {
+      setKnowledgeActionLoading(false)
+    }
+  }, [projectPath, missionId, refreshStatus])
+
+  const handleKnowledgeRollback = useCallback(async () => {
+    if (!window.confirm('Rollback the latest knowledge apply?')) return
+
+    setKnowledgeActionError(null)
+    setKnowledgeActionLoading(true)
+    try {
+      const token = knowledgeLatest?.delta?.rollback?.token
+      await missionKnowledgeRollbackFeature(projectPath, missionId, token)
+      await refreshStatus()
+    } catch (e) {
+      setKnowledgeActionError(String(e))
+    } finally {
+      setKnowledgeActionLoading(false)
+    }
+  }, [knowledgeLatest?.delta?.rollback?.token, projectPath, missionId, refreshStatus])
+
   // ── Derived state ────────────────────────────────────────────
 
   const liveState = statusDetail?.state.state ?? missionUi?.state ?? 'awaiting_input'
@@ -469,6 +817,19 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const waitingDecision = Boolean(reviewDecision) || Boolean(missionUi?.reviewDecisionRequired)
   const decisionReason = reviewDecision?.question
   const decisionUpdatedAt = reviewDecision?.created_at
+
+  const knowledgeBundle = knowledgeLatest?.bundle ?? null
+  const knowledgeDelta = knowledgeLatest?.delta ?? null
+  const knowledgeProposalCount = knowledgeBundle?.proposal_items?.length ?? 0
+  const knowledgeConflictCount = knowledgeDelta?.conflicts?.length ?? 0
+  const knowledgeAcceptedCount = knowledgeDelta?.accepted_item_ids?.length ?? 0
+  const knowledgeRejectedCount = knowledgeDelta?.rejected_item_ids?.length ?? 0
+  const knowledgeStatusLabel = knowledgeDelta?.status ?? (knowledgeBundle ? 'proposed' : 'empty')
+  const knowledgeDefaultOpen = knowledgeConflictCount > 0 || Boolean(missionUi?.knowledgeDecisionRequired)
+  const knowledgeOpen = knowledgeOpenOverride ?? knowledgeDefaultOpen
+  const canKnowledgeDecide = Boolean(knowledgeBundle && knowledgeProposalCount > 0)
+  const canKnowledgeApply = knowledgeDelta?.status === 'accepted'
+  const canKnowledgeRollback = knowledgeDelta?.status === 'applied'
 
   const fixInProgress = Boolean(missionUi?.fixupInProgress)
   const fixAttempt = missionUi?.fixupAttempt
@@ -733,6 +1094,305 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
             </pre>
           </div>
         ) : null}
+      </div>
+
+      {/* M4: Knowledge Writeback / Canon Gate */}
+      <div className="space-y-2">
+        {knowledgeError ? (
+          <p className="text-xs text-muted-foreground">Knowledge unavailable: {knowledgeError}</p>
+        ) : null}
+
+        <details
+          className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+          open={knowledgeOpen}
+          onToggle={(event) => setKnowledgeOpenOverride(event.currentTarget.open)}
+        >
+          <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+            {`Knowledge (${knowledgeStatusLabel})`}
+            {knowledgeProposalCount > 0 ? ` · proposals ${knowledgeProposalCount}` : ''}
+            {knowledgeConflictCount > 0 ? ` · conflicts ${knowledgeConflictCount}` : ''}
+          </summary>
+
+          <div className="mt-2 space-y-2 text-xs">
+            {knowledgeBundle?.bundle_id ? (
+              <div className="font-mono text-[11px] text-muted-foreground break-all">
+                {`bundle: ${knowledgeBundle.bundle_id} · scope: ${knowledgeBundle.scope_ref}`}
+              </div>
+            ) : null}
+
+            {knowledgeDelta?.knowledge_delta_id ? (
+              <div className="font-mono text-[11px] text-muted-foreground break-all">
+                {`delta: ${knowledgeDelta.knowledge_delta_id}`}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span className="text-muted-foreground">Accepted</span>
+              <span className="font-medium text-foreground">{knowledgeAcceptedCount}</span>
+              <span className="text-muted-foreground">Rejected</span>
+              <span className="font-medium text-foreground">{knowledgeRejectedCount}</span>
+              {knowledgeDelta?.applied_at ? (
+                <>
+                  <span className="text-muted-foreground">Applied</span>
+                  <span className="font-medium text-foreground">
+                    {new Date(knowledgeDelta.applied_at).toLocaleTimeString()}
+                  </span>
+                </>
+              ) : knowledgeBundle?.generated_at ? (
+                <>
+                  <span className="text-muted-foreground">Generated</span>
+                  <span className="font-medium text-foreground">
+                    {new Date(knowledgeBundle.generated_at).toLocaleTimeString()}
+                  </span>
+                </>
+              ) : null}
+              {knowledgeDelta?.rollback?.token ? (
+                <>
+                  <span className="text-muted-foreground">Rollback</span>
+                  <span className="font-mono text-[11px] text-muted-foreground">token</span>
+                </>
+              ) : null}
+            </div>
+
+            <details className="rounded-md border border-border/60 bg-background px-2.5 py-2">
+              <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+                {`Timeline (${knowledgeTimeline?.length ?? 0})`}
+              </summary>
+
+              {knowledgeTimelineError ? (
+                <p className="mt-2 text-xs text-muted-foreground">Timeline unavailable: {knowledgeTimelineError}</p>
+              ) : knowledgeTimeline && knowledgeTimeline.length > 0 ? (
+                <div className="mt-2 max-h-48 overflow-auto space-y-1 font-mono text-[11px] text-muted-foreground">
+                  {knowledgeTimeline.map((entry) => (
+                    <div key={entry.key} className="break-words">
+                      <span className="opacity-50">{new Date(entry.ts).toLocaleTimeString()} </span>
+                      <span className="text-foreground">{entry.label}</span>
+                      {entry.detail ? <span className="opacity-70">{` · ${entry.detail}`}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-muted-foreground">No knowledge history recorded yet.</p>
+              )}
+            </details>
+
+            {knowledgeConflictCount > 0 && knowledgeDelta?.conflicts?.length ? (
+              <div className="rounded-md border border-border/60 bg-warning/5 px-2.5 py-2 text-xs">
+                <div className="font-medium text-secondary-foreground">
+                  {`Blocked by conflicts (${knowledgeConflictCount})`}
+                </div>
+                <ul className="mt-1 space-y-1 text-muted-foreground">
+                  {knowledgeDelta.conflicts.map((conflict, idx) => (
+                    <li key={idx} className="break-words">
+                      <span className="font-mono">{conflict.type}</span>
+                      {': '}
+                      {conflict.message}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              {canKnowledgeDecide ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={handleKnowledgeDecide}
+                  disabled={knowledgeActionLoading}
+                >
+                  {knowledgeActionLoading ? 'Deciding…' : 'Decide'}
+                </Button>
+              ) : null}
+
+              {canKnowledgeApply ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={handleKnowledgeApply}
+                  disabled={knowledgeActionLoading}
+                >
+                  {knowledgeActionLoading ? 'Applying…' : 'Apply'}
+                </Button>
+              ) : null}
+
+              {canKnowledgeRollback ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  className="text-xs"
+                  onClick={handleKnowledgeRollback}
+                  disabled={knowledgeActionLoading}
+                >
+                  {knowledgeActionLoading ? 'Rolling back…' : 'Rollback'}
+                </Button>
+              ) : null}
+
+              {knowledgeBundle?.proposal_items?.length ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => {
+                      const items = knowledgeBundle.proposal_items
+                      const next: Record<string, boolean> = {}
+                      for (const item of items) {
+                        next[item.item_id] = String(item.accept_policy ?? '').trim() === 'auto_if_pass'
+                      }
+                      setKnowledgeAcceptedByItemId(next)
+                    }}
+                    disabled={knowledgeActionLoading}
+                  >
+                    Accept safe
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => {
+                      const items = knowledgeBundle.proposal_items
+                      const next: Record<string, boolean> = {}
+                      for (const item of items) {
+                        next[item.item_id] = true
+                      }
+                      setKnowledgeAcceptedByItemId(next)
+                    }}
+                    disabled={knowledgeActionLoading}
+                  >
+                    Accept all
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => {
+                      const items = knowledgeBundle.proposal_items
+                      const next: Record<string, boolean> = {}
+                      for (const item of items) {
+                        next[item.item_id] = false
+                      }
+                      setKnowledgeAcceptedByItemId(next)
+                    }}
+                    disabled={knowledgeActionLoading}
+                  >
+                    Reject all
+                  </Button>
+                </>
+              ) : null}
+            </div>
+
+            {knowledgeActionError ? (
+              <p className="text-xs text-muted-foreground">Knowledge action failed: {knowledgeActionError}</p>
+            ) : null}
+
+            {knowledgeBundle?.proposal_items?.length ? (
+              <div className="space-y-2">
+                {knowledgeBundle.proposal_items.map((item) => (
+                  <div
+                    key={item.item_id}
+                    className="rounded-md border border-border/60 bg-background px-2.5 py-2 text-xs"
+                  >
+                    <div className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={Boolean(knowledgeAcceptedByItemId[item.item_id])}
+                        onChange={() => {
+                          setKnowledgeAcceptedByItemId((prev) => ({
+                            ...prev,
+                            [item.item_id]: !prev[item.item_id],
+                          }))
+                        }}
+                        disabled={knowledgeActionLoading}
+                      />
+
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span className="font-mono text-[11px] text-muted-foreground">{item.kind}</span>
+                          <span className="opacity-80">{item.op}</span>
+                          {item.target_ref ? (
+                            <span
+                              className="font-mono text-[11px] text-muted-foreground truncate"
+                              title={item.target_ref}
+                            >
+                              {item.target_ref}
+                            </span>
+                          ) : null}
+                          <span className="ml-auto font-mono text-[11px] text-muted-foreground">
+                            {item.accept_policy}
+                          </span>
+                        </div>
+
+                        {item.change_reason ? (
+                          <div className="mt-1 text-muted-foreground break-words">{item.change_reason}</div>
+                        ) : null}
+
+                        {item.evidence_refs?.length ? (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer select-none text-[11px] text-muted-foreground">
+                              Evidence
+                            </summary>
+                            <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded border border-border p-2 text-[11px] text-muted-foreground">
+                              {item.evidence_refs.join('\n')}
+                            </pre>
+                          </details>
+                        ) : null}
+
+                        {item.source_refs?.length ? (
+                          <details className="mt-1">
+                            <summary className="cursor-pointer select-none text-[11px] text-muted-foreground">
+                              Sources
+                            </summary>
+                            <pre className="mt-1 max-h-28 overflow-auto whitespace-pre-wrap rounded border border-border p-2 text-[11px] text-muted-foreground">
+                              {item.source_refs.join('\n')}
+                            </pre>
+                          </details>
+                        ) : null}
+
+                        <details className="mt-1">
+                          <summary className="cursor-pointer select-none text-[11px] text-muted-foreground">
+                            Fields
+                          </summary>
+                          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border p-2 text-[11px] text-muted-foreground">
+                            {JSON.stringify(item.fields ?? {}, null, 2)}
+                          </pre>
+                        </details>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-muted-foreground">No proposals recorded yet.</div>
+            )}
+
+            {knowledgeDelta?.changes?.length ? (
+              <details className="rounded-md border border-border/60 bg-background px-2.5 py-2">
+                <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+                  {`Delta changes (${knowledgeDelta.changes.length})`}
+                </summary>
+                <ul className="mt-2 space-y-1 text-muted-foreground">
+                  {knowledgeDelta.changes.slice(0, 12).map((change, idx) => (
+                    <li key={idx} className="break-words">
+                      <span className="font-mono">{change.kind}</span>
+                      {': '}
+                      {change.summary}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+        </details>
       </div>
 
       {/* Features list */}

@@ -838,6 +838,13 @@ export interface MissionUiState {
   fixupMessage?: string
   fixupUpdatedAt?: number
   fixupInProgress?: boolean
+
+  /** Optional M4: used to trigger UI refresh when Knowledge Writeback changes. */
+  knowledgeUpdatedAt?: number
+  /** Optional M4: backend indicates a decision is required to proceed. */
+  knowledgeDecisionRequired?: boolean
+  /** Optional M4: last decision payload (when emitted). */
+  knowledgeDecision?: Record<string, unknown> | null
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -865,6 +872,9 @@ function createMissionUiState(missionId: string): MissionUiState {
     fixupMessage: undefined,
     fixupUpdatedAt: undefined,
     fixupInProgress: undefined,
+    knowledgeUpdatedAt: undefined,
+    knowledgeDecisionRequired: undefined,
+    knowledgeDecision: null,
   }
 }
 
@@ -883,6 +893,9 @@ function resetMissionTransientState(state: MissionUiState): MissionUiState {
     fixupMessage: undefined,
     fixupUpdatedAt: undefined,
     fixupInProgress: undefined,
+    knowledgeUpdatedAt: undefined,
+    knowledgeDecisionRequired: undefined,
+    knowledgeDecision: null,
   }
 }
 
@@ -1224,6 +1237,44 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
         fixupMessage: typeof payload.message === 'string' ? payload.message : base.fixupMessage,
         fixupUpdatedAt: envelope.ts,
         fixupInProgress: true,
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_PROPOSED': {
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: false,
+        knowledgeDecision: null,
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_DECISION_REQUIRED': {
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: true,
+        knowledgeDecision: payload,
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_APPLIED': {
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: false,
+        knowledgeDecision: null,
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_ROLLED_BACK': {
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
       }
       break
     }
