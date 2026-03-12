@@ -15,6 +15,7 @@ mod infrastructure;
 mod interfaces;
 mod kernel;
 pub mod llm;
+pub mod knowledge;
 pub mod mission;
 pub mod review;
 pub use services::{load_openai_search_settings, OpenAiSearchSettings};
