@@ -200,6 +200,15 @@ pub async fn mission_pause(
 
     orch.transition(MissionState::Paused)?;
     emitter.state_changed(&old_state_str, "paused")?;
+
+    // M5: update macro state on pause
+    super::macro_commands::update_macro_stage_on_lifecycle(
+        project_path,
+        &input.mission_id,
+        crate::mission::macro_types::MacroStage::Blocked,
+        Some(&emitter),
+    );
+
     append_mission_recovery_log(project_path, &input.mission_id, "mission paused by user");
 
     tracing::info!(
@@ -362,6 +371,13 @@ pub async fn mission_resume(
     orch.transition(MissionState::Running)?;
     emitter.state_changed(&old_state_str, "running")?;
 
+    // M5/C6: recover macro state on resume (rebuild from features if stale/missing)
+    super::macro_commands::try_recover_macro_state_on_resume(
+        project_path,
+        &input.mission_id,
+        Some(&emitter),
+    );
+
     match scheduler::schedule_ready_features(
         &orch,
         &emitter,
@@ -460,6 +476,15 @@ pub async fn mission_cancel(
 
     orch.transition(MissionState::Completed)?;
     emitter.state_changed(&old_state_str, "completed")?;
+
+    // M5: update macro state on cancel
+    super::macro_commands::update_macro_stage_on_lifecycle(
+        project_path,
+        &input.mission_id,
+        crate::mission::macro_types::MacroStage::Cancelled,
+        Some(&emitter),
+    );
+
     append_mission_recovery_log(
         project_path,
         &input.mission_id,

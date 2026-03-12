@@ -35,6 +35,9 @@ pub mod mission_event_types {
     pub const MISSION_KNOWLEDGE_DECISION_REQUIRED: &str = "MISSION_KNOWLEDGE_DECISION_REQUIRED";
     pub const MISSION_KNOWLEDGE_APPLIED: &str = "MISSION_KNOWLEDGE_APPLIED";
     pub const MISSION_KNOWLEDGE_ROLLED_BACK: &str = "MISSION_KNOWLEDGE_ROLLED_BACK";
+
+    // M5: Macro Workflow
+    pub const MISSION_MACRO_STATE_UPDATED: &str = "MISSION_MACRO_STATE_UPDATED";
 }
 
 /// Envelope wrapping every mission event sent to the UI.
@@ -362,6 +365,27 @@ impl MissionEventEmitter {
                 "rollback_token": token,
                 "restored": restored,
                 "deleted": deleted,
+            }),
+        )
+    }
+
+    pub fn macro_state_updated(
+        &self,
+        state: &crate::mission::macro_types::MacroWorkflowState,
+    ) -> Result<(), AppError> {
+        use mission_event_types::MISSION_MACRO_STATE_UPDATED;
+        self.emit(
+            MISSION_MACRO_STATE_UPDATED,
+            json!({
+                "macro_id": state.macro_id,
+                "current_index": state.current_index,
+                "current_stage": state.current_stage,
+                "chapter_count": state.chapters.len(),
+                "completed_count": state.chapters.iter()
+                    .filter(|c| c.status == crate::mission::macro_types::ChapterRunStatus::Completed)
+                    .count(),
+                "workflow_kind": state.workflow_kind,
+                "last_transition_at": state.last_transition_at,
             }),
         )
     }

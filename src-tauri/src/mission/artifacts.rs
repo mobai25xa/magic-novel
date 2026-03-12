@@ -703,6 +703,93 @@ pub fn list_missions(project_path: &Path) -> Result<Vec<String>, AppError> {
     Ok(ids)
 }
 
+// ── Macro workflow artifact I/O (M5) ────────────────────────────
+
+use super::macro_types::{MacroWorkflowConfig, MacroWorkflowState};
+
+pub const MACRO_DIR: &str = "macro";
+
+pub fn macro_dir(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join(MACRO_DIR)
+}
+
+pub fn macro_config_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    macro_dir(project_path, mission_id).join("config.json")
+}
+
+pub fn macro_state_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    macro_dir(project_path, mission_id).join("state.json")
+}
+
+pub fn macro_checkpoints_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    macro_dir(project_path, mission_id).join("checkpoints.jsonl")
+}
+
+pub fn read_macro_config(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<MacroWorkflowConfig>, AppError> {
+    let path = macro_config_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let cfg: MacroWorkflowConfig = serde_json::from_str(&content)?;
+    Ok(Some(cfg))
+}
+
+pub fn read_macro_state(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<MacroWorkflowState>, AppError> {
+    let path = macro_state_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let st: MacroWorkflowState = serde_json::from_str(&content)?;
+    Ok(Some(st))
+}
+
+pub fn write_macro_config(
+    project_path: &Path,
+    mission_id: &str,
+    config: &MacroWorkflowConfig,
+) -> Result<(), AppError> {
+    let dir = macro_dir(project_path, mission_id);
+    std::fs::create_dir_all(&dir)?;
+    atomic_write_json(&macro_config_path(project_path, mission_id), config)
+}
+
+pub fn write_macro_state(
+    project_path: &Path,
+    mission_id: &str,
+    state: &MacroWorkflowState,
+) -> Result<(), AppError> {
+    let dir = macro_dir(project_path, mission_id);
+    std::fs::create_dir_all(&dir)?;
+    atomic_write_json(&macro_state_path(project_path, mission_id), state)
+}
+
+pub fn append_macro_checkpoint(
+    project_path: &Path,
+    mission_id: &str,
+    entry: &serde_json::Value,
+) -> Result<(), AppError> {
+    let dir = macro_dir(project_path, mission_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = macro_checkpoints_path(project_path, mission_id);
+    let mut line = serde_json::to_string(entry)?;
+    line.push('\n');
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    file.write_all(line.as_bytes())?;
+    Ok(())
+}
+
 // ── Tests ───────────────────────────────────────────────────────
 
 #[cfg(test)]

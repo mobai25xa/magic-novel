@@ -6,6 +6,7 @@ mod dto;
 mod knowledge_commands;
 mod lifecycle_commands;
 mod m2_commands;
+pub mod macro_commands;
 mod review_commands;
 mod review_gate;
 mod runtime;
@@ -37,6 +38,8 @@ pub use knowledge_commands::{
     mission_knowledge_list,
     mission_knowledge_rollback,
 };
+
+pub use macro_commands::{mission_macro_create, mission_macro_get_state};
 
 use crate::mission::types::INTEGRATOR_FEATURE_ID;
 use crate::mission::types::*;

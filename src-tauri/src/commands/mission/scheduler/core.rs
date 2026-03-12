@@ -355,6 +355,16 @@ pub(super) async fn start_feature_on_worker(
 
     orch.start_feature(&feature.id, worker_id, attempt)?;
     emitter.worker_started(worker_id, &feature.id)?;
+
+    // M5: update macro state on feature start
+    let _ = super::super::macro_commands::update_macro_state_on_feature_event(
+        project_path,
+        mission_id,
+        &feature.id,
+        &FeatureStatus::InProgress,
+        Some(emitter),
+    );
+
     if emit_orchestrator_transition {
         emitter.state_changed("orchestrator_turn", "running")?;
     }

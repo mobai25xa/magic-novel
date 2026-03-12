@@ -62,6 +62,7 @@ use commands::mission::{
     mission_get_status, mission_layer1_get, mission_layer1_upsert, mission_list, mission_pause,
     mission_knowledge_apply, mission_knowledge_decide, mission_knowledge_get_latest,
     mission_knowledge_list, mission_knowledge_rollback,
+    mission_macro_create, mission_macro_get_state,
     mission_resume, mission_review_answer, mission_review_get_latest,
     mission_review_get_pending_decision, mission_review_list, mission_start,
 };
@@ -210,6 +211,8 @@ macro_rules! app_commands {
             mission_contextpack_build,
             mission_contextpack_status,
             mission_contextpack_rebuild_if_stale,
+            mission_macro_create,
+            mission_macro_get_state,
             list_skills,
             save_skill,
             delete_skill,

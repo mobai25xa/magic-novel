@@ -44,3 +44,6 @@ rand = "0.8"
 bytes = "1"
 dashmap = "5"
 tokio-util = "0.7"
+
+[dev-dependencies]
+tempfile = "3"
