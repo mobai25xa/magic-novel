@@ -41,6 +41,8 @@ import {
   missionKnowledgeDecideFeature,
   missionKnowledgeApplyFeature,
   missionKnowledgeRollbackFeature,
+  missionMacroCreateFeature,
+  missionMacroGetStateFeature,
 } from '@/features/agent-chat'
 
 import { AiStatusBadge } from './status-badge'
@@ -49,6 +51,7 @@ import { Layer1ArtifactsCard } from './layer1-artifacts-card'
 import { ContextPackCard } from './contextpack-card'
 import { MissionReviewSection } from './mission-review-section'
 import type { ReviewReportLike } from './review-report-card'
+import type { MacroGetStateOutput } from '@/types/macro-workflow'
 
 // ── Sub-components ───────────────────────────────────────────────
 function ProgressLog({ entries }: { entries: Array<{ ts: number; message: string }> }) {
@@ -344,6 +347,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const lastContextPackBuiltAtRef = useRef<number>(0)
   const lastReviewUpdatedAtRef = useRef<number>(0)
   const lastKnowledgeUpdatedAtRef = useRef<number>(0)
+  const lastMacroStateUpdatedAtRef = useRef<number>(0)
   const pendingAutoRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reviewDecisionRef = useRef<HTMLDivElement | null>(null)
   const lastKnowledgeBundleIdRef = useRef<string | null>(null)
@@ -381,6 +385,12 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const [handoffOpenByKey, setHandoffOpenByKey] = useState<Record<string, boolean>>({})
   const [knowledgeOpenOverride, setKnowledgeOpenOverride] = useState<boolean | null>(null)
 
+  // M5: Macro workflow state
+  const [macroState, setMacroState] = useState<MacroGetStateOutput | null>(null)
+  const [macroError, setMacroError] = useState<string | null>(null)
+  const [macroCreating, setMacroCreating] = useState(false)
+  const [macroDetailsOpen, setMacroDetailsOpen] = useState(false)
+
   useEffect(() => {
     setInitialLoading(true)
     setStatusDetail(null)
@@ -409,11 +419,16 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setProgressOpen(false)
     setHandoffOpenByKey({})
     setKnowledgeOpenOverride(null)
+    setMacroState(null)
+    setMacroError(null)
+    setMacroCreating(false)
+    setMacroDetailsOpen(false)
 
     lastLayer1UpdatedAtRef.current = 0
     lastContextPackBuiltAtRef.current = 0
     lastReviewUpdatedAtRef.current = 0
     lastKnowledgeUpdatedAtRef.current = 0
+    lastMacroStateUpdatedAtRef.current = 0
     lastKnowledgeBundleIdRef.current = null
     if (pendingAutoRefreshRef.current) {
       clearTimeout(pendingAutoRefreshRef.current)
@@ -434,6 +449,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   // Load initial status from backend
   const refreshStatus = useCallback(async () => {
     const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes, knowledgeRes, knowledgeTimelineRes] = await Promise.allSettled([
+    const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes, knowledgeRes, knowledgeTimelineRes, macroRes] = await Promise.allSettled([
       missionGetStatusFeature(projectPath, missionId),
       missionLayer1GetFeature(projectPath, missionId),
       missionContextpackGetLatestFeature(projectPath, missionId),
@@ -442,6 +458,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       missionReviewGetPendingDecisionFeature(projectPath, missionId),
       missionKnowledgeGetLatestFeature(projectPath, missionId),
       loadKnowledgeTimelineFromArtifacts({ projectPath, missionId }),
+      missionMacroGetStateFeature(projectPath, missionId),
     ])
 
     if (statusRes.status === 'fulfilled') {
@@ -516,6 +533,15 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       setKnowledgeTimelineError(String(knowledgeTimelineRes.reason))
     }
 
+    if (macroRes.status === 'fulfilled') {
+      setMacroState(macroRes.value)
+      setMacroError(null)
+    } else {
+      console.warn('[MissionPanel] macro state fetch failed:', macroRes.reason)
+      setMacroState(null)
+      setMacroError(String(macroRes.reason))
+    }
+
     setInitialLoading(false)
   }, [projectPath, missionId])
 
@@ -546,11 +572,13 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   }, [knowledgeLatest?.bundle])
 
   // Optional P1: auto-refresh when backend emits Layer1/ContextPack events.
+  // Optional P1: auto-refresh when backend emits Layer1/ContextPack/Macro events.
   useEffect(() => {
     const layer1Ts = missionUi?.layer1UpdatedAt ?? 0
     const packTs = missionUi?.contextPackBuiltAt ?? 0
     const reviewTs = missionUi?.reviewUpdatedAt ?? 0
     const knowledgeTs = missionUi?.knowledgeUpdatedAt ?? 0
+    const macroTs = missionUi?.macroStateUpdatedAt ?? 0
 
     const layer1Changed = layer1Ts > 0 && layer1Ts !== lastLayer1UpdatedAtRef.current
     const packChanged = packTs > 0 && packTs !== lastContextPackBuiltAtRef.current
@@ -558,6 +586,9 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     const knowledgeChanged = knowledgeTs > 0 && knowledgeTs !== lastKnowledgeUpdatedAtRef.current
 
     if (!layer1Changed && !packChanged && !reviewChanged && !knowledgeChanged) {
+    const macroChanged = macroTs > 0 && macroTs !== lastMacroStateUpdatedAtRef.current
+
+    if (!layer1Changed && !packChanged && !reviewChanged && !knowledgeChanged && !macroChanged) {
       return
     }
 
@@ -573,6 +604,9 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     if (knowledgeChanged) {
       lastKnowledgeUpdatedAtRef.current = knowledgeTs
     }
+    if (macroChanged) {
+      lastMacroStateUpdatedAtRef.current = macroTs
+    }
 
     if (pendingAutoRefreshRef.current) {
       return
@@ -583,6 +617,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       void refreshStatus()
     }, 120)
   }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, missionUi?.knowledgeUpdatedAt, refreshStatus])
+  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, missionUi?.knowledgeUpdatedAt, missionUi?.macroStateUpdatedAt, refreshStatus])
 
   useEffect(() => {
     return () => {
@@ -772,6 +807,28 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     }
   }, [knowledgeLatest?.delta?.rollback?.token, projectPath, missionId, refreshStatus])
 
+  // M5: Create macro workflow (minimal — dev-a will provide the full creation form)
+  const handleCreateMacro = useCallback(async () => {
+    setMacroError(null)
+    setMacroCreating(true)
+    try {
+      await missionMacroCreateFeature({
+        project_path: projectPath,
+        objective: statusDetail?.features?.title ?? '',
+        workflow_kind: 'book',
+        chapter_targets: [],
+        strict_review: false,
+        auto_fix_on_block: true,
+        token_budget: 'medium',
+      })
+      await refreshStatus()
+    } catch (e) {
+      setMacroError(String(e))
+    } finally {
+      setMacroCreating(false)
+    }
+  }, [projectPath, statusDetail?.features?.title, refreshStatus])
+
   // ── Derived state ────────────────────────────────────────────
 
   const liveState = statusDetail?.state.state ?? missionUi?.state ?? 'awaiting_input'
@@ -835,6 +892,21 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const fixAttempt = missionUi?.fixupAttempt
   const fixMessage = missionUi?.fixupMessage
   const fixUpdatedAt = missionUi?.fixupUpdatedAt
+
+  // M5: Macro workflow derived state
+  const macroConfig = macroState?.config ?? null
+  const macroProgress = macroState?.state ?? null
+  const hasMacro = macroConfig !== null || macroProgress !== null
+  const macroChapters = macroProgress?.chapters ?? []
+  const macroCurrentIndex = macroProgress?.current_index ?? -1
+  const macroCurrentStage = macroProgress?.current_stage ?? null
+  const macroCompletedCount = macroChapters.filter((c) => c.status === 'completed').length
+  const macroFailedCount = macroChapters.filter((c) => c.status === 'failed' || c.status === 'blocked').length
+  const macroIsBlocked = macroCurrentStage === 'blocked' || macroCurrentStage === 'failed'
+  const macroBlockReason = macroProgress?.last_error?.message ?? null
+  const macroCanAutoFix = macroIsBlocked && macroConfig?.auto_fix_on_block === true
+  const macroNeedsDecision = macroIsBlocked && Boolean(missionUi?.reviewDecisionRequired || missionUi?.knowledgeDecisionRequired)
+  const macroCanResume = macroIsBlocked
 
   // ── Render ───────────────────────────────────────────────────
 
@@ -1393,6 +1465,129 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
             ) : null}
           </div>
         </details>
+      </div>
+
+      {/* M5: Macro Workflow */}
+      <div className="space-y-2">
+        {macroError ? (
+          <p className="text-xs text-muted-foreground">Macro unavailable: {macroError}</p>
+        ) : null}
+
+        {hasMacro ? (
+          <details
+            className="rounded-md border border-border/60 bg-background-50 px-2.5 py-2"
+            open={macroDetailsOpen}
+            onToggle={(event) => setMacroDetailsOpen(event.currentTarget.open)}
+          >
+            <summary className="cursor-pointer select-none text-xs font-medium text-secondary-foreground">
+              {`Macro (${macroCurrentStage ?? 'idle'})`}
+              {macroChapters.length > 0 ? ` · ${macroCompletedCount}/${macroChapters.length}` : ''}
+              {macroFailedCount > 0 ? ` · failed ${macroFailedCount}` : ''}
+            </summary>
+
+            <div className="mt-2 space-y-2 text-xs">
+              {macroConfig ? (
+                <div className="font-mono text-[11px] text-muted-foreground break-all">
+                  {`macro: ${macroConfig.macro_id} · ${macroConfig.workflow_kind}`}
+                  {macroConfig.objective ? ` · ${macroConfig.objective}` : ''}
+                </div>
+              ) : null}
+
+              {macroProgress ? (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-muted-foreground">Index</span>
+                  <span className="font-medium text-foreground">{macroCurrentIndex}</span>
+                  <span className="text-muted-foreground">Stage</span>
+                  <span className="font-medium text-foreground">{macroCurrentStage}</span>
+                  {macroProgress.last_error ? (
+                    <>
+                      <span className="text-destructive">Error</span>
+                      <span className="text-destructive text-[11px]">{macroProgress.last_error.message}</span>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {macroChapters.length > 0 ? (
+                <div className="max-h-48 overflow-auto space-y-1 font-mono text-[11px] text-muted-foreground">
+                  {macroChapters.map((ch, idx) => (
+                    <div
+                      key={ch.chapter_ref}
+                      className={`break-words ${idx === macroCurrentIndex ? 'text-foreground font-medium' : ''}`}
+                    >
+                      <span className="opacity-50">{`[${idx}] `}</span>
+                      <span>{ch.display_title ?? ch.chapter_ref}</span>
+                      <span className="ml-1 opacity-70">{ch.status}</span>
+                      {ch.stage ? <span className="ml-1 opacity-50">{ch.stage}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Blocked state: reason + action buttons */}
+              {macroIsBlocked ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 px-2.5 py-2 space-y-2">
+                  <div className="text-xs font-medium text-destructive">
+                    {macroCurrentStage === 'failed' ? 'Macro failed' : 'Macro blocked'}
+                  </div>
+                  {macroBlockReason ? (
+                    <div className="text-xs text-muted-foreground break-words">{macroBlockReason}</div>
+                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    {macroCanAutoFix ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs"
+                        onClick={() => {
+                          if (reviewDecision?.options?.includes('auto_fix')) {
+                            void handleReviewAnswerOption('auto_fix')
+                          }
+                        }}
+                        disabled={loading || reviewActionLoading}
+                      >
+                        Fix
+                      </Button>
+                    ) : null}
+                    {macroNeedsDecision ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-xs"
+                        onClick={() => {
+                          reviewDecisionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+                        }}
+                        disabled={loading}
+                      >
+                        Decide
+                      </Button>
+                    ) : null}
+                    {macroCanResume ? (
+                      <Button
+                        size="sm"
+                        className="text-xs"
+                        onClick={handleResume}
+                        disabled={loading}
+                      >
+                        Resume
+                      </Button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </details>
+        ) : !macroError ? (
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-xs w-full"
+            onClick={handleCreateMacro}
+            disabled={macroCreating || loading}
+          >
+            {macroCreating ? 'Creating…' : 'Create Macro Workflow'}
+          </Button>
+        ) : null}
       </div>
 
       {/* Features list */}

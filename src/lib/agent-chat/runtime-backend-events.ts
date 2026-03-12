@@ -845,6 +845,13 @@ export interface MissionUiState {
   knowledgeDecisionRequired?: boolean
   /** Optional M4: last decision payload (when emitted). */
   knowledgeDecision?: Record<string, unknown> | null
+
+  /** Optional M5: used to trigger UI refresh when macro workflow state changes. */
+  macroStateUpdatedAt?: number
+  /** Optional M5: last completed chapter ref + summary. */
+  macroChapterCompletedRef?: string
+  macroChapterCompletedSummary?: string
+  macroChapterCompletedAt?: number
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -875,6 +882,10 @@ function createMissionUiState(missionId: string): MissionUiState {
     knowledgeUpdatedAt: undefined,
     knowledgeDecisionRequired: undefined,
     knowledgeDecision: null,
+    macroStateUpdatedAt: undefined,
+    macroChapterCompletedRef: undefined,
+    macroChapterCompletedSummary: undefined,
+    macroChapterCompletedAt: undefined,
   }
 }
 
@@ -896,6 +907,10 @@ function resetMissionTransientState(state: MissionUiState): MissionUiState {
     knowledgeUpdatedAt: undefined,
     knowledgeDecisionRequired: undefined,
     knowledgeDecision: null,
+    macroStateUpdatedAt: undefined,
+    macroChapterCompletedRef: undefined,
+    macroChapterCompletedSummary: undefined,
+    macroChapterCompletedAt: undefined,
   }
 }
 
@@ -1275,6 +1290,25 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
       nextState = {
         ...base,
         knowledgeUpdatedAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_MACRO_STATE_UPDATED': {
+      nextState = {
+        ...base,
+        macroStateUpdatedAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_MACRO_CHAPTER_COMPLETED': {
+      nextState = {
+        ...base,
+        macroStateUpdatedAt: envelope.ts,
+        macroChapterCompletedRef: typeof payload.chapter_ref === 'string' ? payload.chapter_ref : undefined,
+        macroChapterCompletedSummary: typeof payload.summary === 'string' ? payload.summary : undefined,
+        macroChapterCompletedAt: envelope.ts,
       }
       break
     }

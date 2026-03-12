@@ -28,6 +28,8 @@ import {
   missionKnowledgeDecide as missionKnowledgeDecideCommand,
   missionKnowledgeApply as missionKnowledgeApplyCommand,
   missionKnowledgeRollback as missionKnowledgeRollbackCommand,
+  missionMacroCreate as missionMacroCreateCommand,
+  missionMacroGetState as missionMacroGetStateCommand,
   type MissionCreateInput,
   type MissionCreateOutput,
   type MissionLayer1Snapshot,
@@ -42,6 +44,11 @@ import type {
   MissionReviewAnswerInput,
   MissionKnowledgeDecideInput,
 } from '@/lib/tauri-commands/mission'
+import type {
+  MacroCreateInput,
+  MacroCreateOutput,
+  MacroGetStateOutput,
+} from '@/types/macro-workflow'
 
 type ErrorRecord = Record<string, unknown>
 
@@ -291,4 +298,19 @@ export async function missionKnowledgeRollbackFeature(
   token?: string,
 ): Promise<void> {
   await missionKnowledgeRollbackCommand(projectPath, missionId, token)
+}
+
+// ── M5: Macro Workflow ──────────────────────────────────────────
+
+export async function missionMacroCreateFeature(
+  input: MacroCreateInput,
+): Promise<MacroCreateOutput> {
+  return missionMacroCreateCommand(input)
+}
+
+export async function missionMacroGetStateFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<MacroGetStateOutput> {
+  return missionMacroGetStateCommand(projectPath, missionId)
 }

@@ -14,6 +14,14 @@ import type {
   KnowledgeProposalBundle,
 } from '@/types/knowledge'
 import type {
+  MacroCreateInput,
+  MacroCreateOutput,
+  MacroGetStateOutput,
+  MacroWorkflowConfig,
+  MacroWorkflowState,
+  ChapterRunState,
+} from '@/types/macro-workflow'
+import type {
   ReviewDecisionAnswer,
   ReviewDecisionRequest,
   ReviewReport,
@@ -885,4 +893,102 @@ export async function missionContextpackBuild(
   const raw = await invoke<unknown>('mission_contextpack_build', { input })
   const resolved = unwrapMaybeWrapped(raw, 'contextpack')
   return parseContextPack(resolved)
+}
+
+// ── M5: Macro Workflow Commands ─────────────────────────────────
+
+function parseChapterRunState(raw: unknown): ChapterRunState | null {
+  if (!isRecord(raw)) return null
+  const r = raw as Record<string, unknown>
+  const chapterRef = typeof r.chapter_ref === 'string' ? r.chapter_ref : undefined
+  const writePath = typeof r.write_path === 'string' ? r.write_path : undefined
+  if (!chapterRef || !writePath) return null
+  return {
+    ...r,
+    chapter_ref: chapterRef,
+    write_path: writePath,
+    display_title: typeof r.display_title === 'string' ? r.display_title : undefined,
+    status: typeof r.status === 'string' ? r.status as ChapterRunState['status'] : 'pending',
+    stage: typeof r.stage === 'string' ? r.stage as ChapterRunState['stage'] : undefined,
+    latest_contextpack_ref: typeof r.latest_contextpack_ref === 'string' ? r.latest_contextpack_ref : undefined,
+    latest_review_id: typeof r.latest_review_id === 'string' ? r.latest_review_id : undefined,
+    latest_knowledge_delta_id: typeof r.latest_knowledge_delta_id === 'string' ? r.latest_knowledge_delta_id : undefined,
+    last_handoff_summary: typeof r.last_handoff_summary === 'string' ? r.last_handoff_summary : undefined,
+    updated_at: typeof r.updated_at === 'number' ? r.updated_at : 0,
+  }
+}
+
+function parseMacroWorkflowConfig(raw: unknown): MacroWorkflowConfig | null {
+  if (!isRecord(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.macro_id !== 'string' || typeof r.mission_id !== 'string') return null
+  return {
+    ...r,
+    schema_version: typeof r.schema_version === 'number' ? r.schema_version : 1,
+    macro_id: r.macro_id,
+    mission_id: r.mission_id,
+    workflow_kind: r.workflow_kind === 'volume' ? 'volume' : 'book',
+    objective: typeof r.objective === 'string' ? r.objective : '',
+    chapter_targets: Array.isArray(r.chapter_targets) ? r.chapter_targets : [],
+    strict_review: r.strict_review === true,
+    auto_fix_on_block: r.auto_fix_on_block === true,
+    token_budget: r.token_budget === 'small' ? 'small' : r.token_budget === 'large' ? 'large' : 'medium',
+    created_at: typeof r.created_at === 'number' ? r.created_at : 0,
+  } as MacroWorkflowConfig
+}
+
+function parseMacroWorkflowState(raw: unknown): MacroWorkflowState | null {
+  if (!isRecord(raw)) return null
+  const r = raw as Record<string, unknown>
+  if (typeof r.macro_id !== 'string' || typeof r.mission_id !== 'string') return null
+  const chapters = Array.isArray(r.chapters)
+    ? r.chapters.map(parseChapterRunState).filter((c): c is ChapterRunState => c !== null)
+    : []
+  return {
+    ...r,
+    schema_version: typeof r.schema_version === 'number' ? r.schema_version : 1,
+    macro_id: r.macro_id,
+    mission_id: r.mission_id,
+    objective: typeof r.objective === 'string' ? r.objective : '',
+    workflow_kind: r.workflow_kind === 'volume' ? 'volume' : 'book',
+    current_index: typeof r.current_index === 'number' ? r.current_index : -1,
+    current_stage: typeof r.current_stage === 'string' ? r.current_stage as MacroWorkflowState['current_stage'] : 'planning',
+    chapters,
+    last_transition_at: typeof r.last_transition_at === 'number' ? r.last_transition_at : 0,
+    last_error: isRecord(r.last_error) ? r.last_error as MacroWorkflowState['last_error'] : undefined,
+  } as MacroWorkflowState
+}
+
+export async function missionMacroCreate(
+  input: MacroCreateInput,
+): Promise<MacroCreateOutput> {
+  return invoke<MacroCreateOutput>('mission_macro_create', { input })
+}
+
+export async function missionMacroGetState(
+  projectPath: string,
+  missionId: string,
+): Promise<MacroGetStateOutput> {
+  try {
+    const raw = await invoke<unknown>('mission_macro_get_state', {
+      input: { project_path: projectPath, mission_id: missionId },
+    })
+
+    if (!isRecord(raw)) {
+      return { config: null, state: null }
+    }
+
+    const r = raw as Record<string, unknown>
+    return {
+      config: parseMacroWorkflowConfig(unwrapMaybeWrapped(r.config, 'config')),
+      state: parseMacroWorkflowState(unwrapMaybeWrapped(r.state, 'state')),
+    }
+  } catch (error) {
+    // Tolerate missing macro data — the mission may not have a macro workflow
+    const text = String((error as { message?: unknown } | null)?.message ?? error ?? '').toLowerCase()
+    if (text.includes('not found') || text.includes('no such file') || text.includes('os error 2')) {
+      return { config: null, state: null }
+    }
+    throw error
+  }
 }
