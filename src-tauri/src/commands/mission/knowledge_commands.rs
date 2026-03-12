@@ -27,6 +27,43 @@ pub async fn mission_knowledge_get_latest(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeListInput {
+    pub project_path: String,
+    pub mission_id: String,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MissionKnowledgeListOutput {
+    pub bundles: Vec<knowledge_types::KnowledgeProposalBundle>,
+    pub deltas: Vec<knowledge_types::KnowledgeDelta>,
+}
+
+#[command]
+pub async fn mission_knowledge_list(
+    input: MissionKnowledgeListInput,
+) -> Result<MissionKnowledgeListOutput, AppError> {
+    let project_path = std::path::Path::new(&input.project_path);
+    let mut bundles = artifacts::read_knowledge_bundles(project_path, &input.mission_id)?;
+    let mut deltas = artifacts::read_knowledge_deltas(project_path, &input.mission_id)?;
+
+    let limit = input.limit.unwrap_or(0);
+    if limit > 0 {
+        if bundles.len() > limit {
+            bundles = bundles.into_iter().rev().take(limit).collect::<Vec<_>>();
+            bundles.reverse();
+        }
+        if deltas.len() > limit {
+            deltas = deltas.into_iter().rev().take(limit).collect::<Vec<_>>();
+            deltas.reverse();
+        }
+    }
+
+    Ok(MissionKnowledgeListOutput { bundles, deltas })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MissionKnowledgeDecideInput {
     pub project_path: String,
     pub mission_id: String,

@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tokio::sync::Mutex as TokioMutex;
 
+use crate::knowledge::{types as knowledge_types, writeback as knowledge_writeback};
 use crate::mission::artifacts;
 use crate::mission::events::MissionEventEmitter;
 use crate::mission::orchestrator::Orchestrator;
@@ -610,6 +611,197 @@ pub(super) fn spawn_worker_supervision_tasks(
                                                                                     std::path::Path::new(&project_path_bg),
                                                                                     &mission_id,
                                                                                 );
+
+                                                                                // ── M4 Knowledge Writeback: propose → gate (safe auto-accept) ─
+                                                                                // Contract: must run after ReviewGate and must persist artifacts.
+                                                                                let project_path = std::path::Path::new(&project_path_bg);
+                                                                                let source_session_id = format!(
+                                                                                    "mission:{}/feature:{}/worker:{}",
+                                                                                    mission_id, completed.feature_id, worker_id
+                                                                                );
+
+                                                                                let bundle = match knowledge_writeback::generate_proposal_bundle_after_closeout(
+                                                                                    project_path,
+                                                                                    &mission_id,
+                                                                                    report.scope_ref.clone(),
+                                                                                    feature.write_paths.clone(),
+                                                                                    source_session_id,
+                                                                                    Some(report.review_id.clone()),
+                                                                                ) {
+                                                                                    Ok(b) => Some(b),
+                                                                                    Err(e) => {
+                                                                                        gate_blocked = true;
+                                                                                        pause_mission_with_log(
+                                                                                            &orch_bg,
+                                                                                            &emitter_bg,
+                                                                                            project_path,
+                                                                                            &mission_id,
+                                                                                            &start_cfg_bg,
+                                                                                            format!(
+                                                                                                "KnowledgeWriteback failed to generate proposals: {e}"
+                                                                                            ),
+                                                                                        );
+                                                                                        None
+                                                                                    }
+                                                                                };
+
+                                                                                if let Some(bundle) = bundle {
+                                                                                    let delta = match knowledge_writeback::gate_bundle(
+                                                                                        project_path,
+                                                                                        &bundle,
+                                                                                        Some(&report),
+                                                                                    ) {
+                                                                                        Ok(d) => Some(d),
+                                                                                        Err(e) => {
+                                                                                            gate_blocked = true;
+                                                                                            pause_mission_with_log(
+                                                                                                &orch_bg,
+                                                                                                &emitter_bg,
+                                                                                                project_path,
+                                                                                                &mission_id,
+                                                                                                &start_cfg_bg,
+                                                                                                format!(
+                                                                                                    "KnowledgeWriteback failed to gate proposals: {e}"
+                                                                                                ),
+                                                                                            );
+                                                                                            None
+                                                                                        }
+                                                                                    };
+
+                                                                                    if let Some(delta) = delta {
+                                                                                        if let Err(e) = artifacts::write_knowledge_bundle_latest(
+                                                                                            project_path,
+                                                                                            &mission_id,
+                                                                                            &bundle,
+                                                                                        ) {
+                                                                                            gate_blocked = true;
+                                                                                            pause_mission_with_log(
+                                                                                                &orch_bg,
+                                                                                                &emitter_bg,
+                                                                                                project_path,
+                                                                                                &mission_id,
+                                                                                                &start_cfg_bg,
+                                                                                                format!(
+                                                                                                    "KnowledgeWriteback failed to persist bundle: {e}"
+                                                                                                ),
+                                                                                            );
+                                                                                        } else {
+                                                                                            let _ = artifacts::append_knowledge_bundle(
+                                                                                                project_path,
+                                                                                                &mission_id,
+                                                                                                &bundle,
+                                                                                            );
+                                                                                        }
+
+                                                                                        if !gate_blocked {
+                                                                                            if let Err(e) = artifacts::write_knowledge_delta_latest(
+                                                                                                project_path,
+                                                                                                &mission_id,
+                                                                                                &delta,
+                                                                                            ) {
+                                                                                                gate_blocked = true;
+                                                                                                pause_mission_with_log(
+                                                                                                    &orch_bg,
+                                                                                                    &emitter_bg,
+                                                                                                    project_path,
+                                                                                                    &mission_id,
+                                                                                                    &start_cfg_bg,
+                                                                                                    format!(
+                                                                                                        "KnowledgeWriteback failed to persist delta: {e}"
+                                                                                                    ),
+                                                                                                );
+                                                                                            } else {
+                                                                                                let _ = artifacts::append_knowledge_delta(
+                                                                                                    project_path,
+                                                                                                    &mission_id,
+                                                                                                    &delta,
+                                                                                                );
+                                                                                            }
+                                                                                        }
+
+                                                                                        if !gate_blocked {
+                                                                                            // Best-effort: notify UI.
+                                                                                            let _ = emitter_bg.knowledge_proposed(&bundle);
+
+                                                                                            if !delta.conflicts.is_empty() {
+                                                                                                gate_blocked = true;
+
+                                                                                                let pending = knowledge_writeback::build_pending_decision(&bundle, &delta);
+                                                                                                let _ = artifacts::write_pending_knowledge_decision(
+                                                                                                    project_path,
+                                                                                                    &mission_id,
+                                                                                                    &pending,
+                                                                                                );
+                                                                                                let _ = emitter_bg.knowledge_decision_required(&delta);
+
+                                                                                                pause_mission_with_log(
+                                                                                                    &orch_bg,
+                                                                                                    &emitter_bg,
+                                                                                                    project_path,
+                                                                                                    &mission_id,
+                                                                                                    &start_cfg_bg,
+                                                                                                    "KnowledgeWriteback blocked: conflicts detected; user decision required",
+                                                                                                );
+                                                                                            } else {
+                                                                                                // No conflicts: clear any stale pending decision marker.
+                                                                                                let _ = artifacts::clear_pending_knowledge_decision(
+                                                                                                    project_path,
+                                                                                                    &mission_id,
+                                                                                                );
+
+                                                                                                // Default writeback: auto-apply when the gate fully accepted.
+                                                                                                if delta.status == knowledge_types::KnowledgeDeltaStatus::Accepted {
+                                                                                                    match knowledge_writeback::apply_accepted(
+                                                                                                        project_path,
+                                                                                                        &mission_id,
+                                                                                                        &bundle,
+                                                                                                        &delta,
+                                                                                                    ) {
+                                                                                                        Ok(applied) => {
+                                                                                                            if let Err(e) = artifacts::write_knowledge_delta_latest(
+                                                                                                                project_path,
+                                                                                                                &mission_id,
+                                                                                                                &applied,
+                                                                                                            ) {
+                                                                                                                gate_blocked = true;
+                                                                                                                pause_mission_with_log(
+                                                                                                                    &orch_bg,
+                                                                                                                    &emitter_bg,
+                                                                                                                    project_path,
+                                                                                                                    &mission_id,
+                                                                                                                    &start_cfg_bg,
+                                                                                                                    format!(
+                                                                                                                        "KnowledgeWriteback applied but failed to persist delta: {e}"
+                                                                                                                    ),
+                                                                                                                );
+                                                                                                            } else {
+                                                                                                                let _ = artifacts::append_knowledge_delta(
+                                                                                                                    project_path,
+                                                                                                                    &mission_id,
+                                                                                                                    &applied,
+                                                                                                                );
+                                                                                                                let _ = emitter_bg.knowledge_applied(&applied);
+                                                                                                            }
+                                                                                                        }
+                                                                                                        Err(e) => {
+                                                                                                            gate_blocked = true;
+                                                                                                            pause_mission_with_log(
+                                                                                                                &orch_bg,
+                                                                                                                &emitter_bg,
+                                                                                                                project_path,
+                                                                                                                &mission_id,
+                                                                                                                &start_cfg_bg,
+                                                                                                                format!(
+                                                                                                                    "KnowledgeWriteback failed to apply accepted delta: {e}"
+                                                                                                                ),
+                                                                                                            );
+                                                                                                        }
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                }
                                                                             }
                                                                             review_types::ReviewOverallStatus::Block => {
                                                                                 gate_blocked = true;

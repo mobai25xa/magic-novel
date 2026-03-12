@@ -314,6 +314,13 @@ pub fn read_layer1_active_cast(
     read_optional_json(&layer1_active_cast_path(project_path, mission_id))
 }
 
+pub fn read_layer1_active_foreshadowing(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<serde_json::Value>, AppError> {
+    read_optional_json(&layer1_active_foreshadowing_path(project_path, mission_id))
+}
+
 pub fn read_layer1_snapshot(
     project_path: &Path,
     mission_id: &str,
@@ -392,6 +399,52 @@ pub fn read_knowledge_delta_latest(
     mission_id: &str,
 ) -> Result<Option<KnowledgeDelta>, AppError> {
     read_optional_json(&knowledge_delta_latest_path(project_path, mission_id))
+}
+
+pub fn read_knowledge_bundles(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Vec<KnowledgeProposalBundle>, AppError> {
+    let path = knowledge_bundles_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let entries: Vec<KnowledgeProposalBundle> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            serde_json::from_str(l)
+                .map_err(|e| {
+                    tracing::warn!(target: "mission", line = %l, "knowledge bundle parse error: {e}")
+                })
+                .ok()
+        })
+        .collect();
+    Ok(entries)
+}
+
+pub fn read_knowledge_deltas(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Vec<KnowledgeDelta>, AppError> {
+    let path = knowledge_deltas_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let entries: Vec<KnowledgeDelta> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            serde_json::from_str(l)
+                .map_err(|e| {
+                    tracing::warn!(target: "mission", line = %l, "knowledge delta parse error: {e}")
+                })
+                .ok()
+        })
+        .collect();
+    Ok(entries)
 }
 
 pub fn read_pending_knowledge_decision(

@@ -250,6 +250,21 @@ pub async fn mission_resume(
         }
     }
 
+    // Gate (M4): if a pending knowledge decision exists, do not allow resume.
+    match artifacts::read_pending_knowledge_decision(project_path, &input.mission_id) {
+        Ok(Some(_req)) => {
+            paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+            return Err(AppError::invalid_argument(
+                "mission blocked: pending knowledge decision required",
+            ));
+        }
+        Ok(None) => {}
+        Err(e) => {
+            paused_config_registry().insert(input.mission_id.clone(), start_config.clone());
+            return Err(e);
+        }
+    }
+
     // Gate: if latest review is still blocking, re-run review before resuming scheduling.
     if let Ok(Some(latest)) = artifacts::read_review_latest(project_path, &input.mission_id) {
         if latest.overall_status == review_types::ReviewOverallStatus::Block {

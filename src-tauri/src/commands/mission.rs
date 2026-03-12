@@ -34,6 +34,7 @@ pub use m2_commands::{
 
 pub use knowledge_commands::{
     mission_knowledge_apply, mission_knowledge_decide, mission_knowledge_get_latest,
+    mission_knowledge_list,
     mission_knowledge_rollback,
 };
 
