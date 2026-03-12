@@ -20,6 +20,15 @@ import {
   missionLayer1Upsert as missionLayer1UpsertCommand,
   missionContextpackGetLatest as missionContextpackGetLatestCommand,
   missionContextpackBuild as missionContextpackBuildCommand,
+  missionReviewGetLatest as missionReviewGetLatestCommand,
+  missionReviewList as missionReviewListCommand,
+  missionReviewGetPendingDecision as missionReviewGetPendingDecisionCommand,
+  missionReviewAnswer as missionReviewAnswerCommand,
+  missionReviewFixupStart as missionReviewFixupStartCommand,
+  missionKnowledgeGetLatest as missionKnowledgeGetLatestCommand,
+  missionKnowledgeDecide as missionKnowledgeDecideCommand,
+  missionKnowledgeApply as missionKnowledgeApplyCommand,
+  missionKnowledgeRollback as missionKnowledgeRollbackCommand,
   type MissionCreateInput,
   type MissionCreateOutput,
   type MissionLayer1Snapshot,
@@ -29,7 +38,8 @@ import {
   type MissionContextpackBuildInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
-import type { MissionGetStatusOutput } from '@/lib/tauri-commands/mission'
+import type { MissionGetStatusOutput, MissionReviewAnswerInput } from '@/lib/tauri-commands/mission'
+import type { KnowledgeDecisionInput } from '@/types/knowledge'
 
 type ErrorRecord = Record<string, unknown>
 
@@ -228,4 +238,66 @@ export async function missionContextpackBuildFeature(
   input: MissionContextpackBuildInput,
 ): Promise<ContextPack> {
   return missionContextpackBuildCommand(input)
+}
+
+export async function missionReviewGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionReviewListFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewListCommand(projectPath, missionId)
+}
+
+export async function missionReviewGetPendingDecisionFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetPendingDecisionCommand(projectPath, missionId)
+}
+
+export async function missionReviewAnswerFeature(input: MissionReviewAnswerInput): Promise<void> {
+  await missionReviewAnswerCommand(input)
+}
+
+export async function missionReviewFixupStartFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await missionReviewFixupStartCommand(projectPath, missionId)
+}
+
+export async function missionKnowledgeGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionKnowledgeGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionKnowledgeDecideFeature(
+  projectPath: string,
+  missionId: string,
+  decision: KnowledgeDecisionInput,
+): Promise<void> {
+  await missionKnowledgeDecideCommand(projectPath, missionId, decision)
+}
+
+export async function missionKnowledgeApplyFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await missionKnowledgeApplyCommand(projectPath, missionId)
+}
+
+export async function missionKnowledgeRollbackFeature(
+  projectPath: string,
+  missionId: string,
+  token?: string,
+): Promise<void> {
+  await missionKnowledgeRollbackCommand(projectPath, missionId, token)
 }

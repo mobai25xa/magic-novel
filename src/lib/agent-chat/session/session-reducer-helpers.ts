@@ -10,6 +10,8 @@ import type {
   OpenAiMessage,
 } from '../types'
 
+import { buildReviewCheckPreview, redactValue, trimRawOutput } from '../tool-step-utils'
+
 function asTurnNumber(value: number | undefined) {
   return typeof value === 'number' && value > 0 ? value : undefined
 }
@@ -157,6 +159,51 @@ export function toOpenAiMessage(
 function toToolStep(trace: ChatToolTrace, index: number): AgentUiToolStep {
   const status = trace.status === 'ok' ? 'success' : 'error'
   const startedAt = Date.now() + index
+
+  if (trace.tool_name === 'review_check') {
+    const preview = buildReviewCheckPreview(trace.preview) || (trace.preview ? (redactValue(trace.preview) as Record<string, unknown>) : null)
+    const previewRecord = preview && typeof preview === 'object' && !Array.isArray(preview)
+      ? (preview as Record<string, unknown>)
+      : null
+
+    const overall = typeof previewRecord?.overall_status === 'string' ? previewRecord.overall_status : undefined
+    const counts = (previewRecord && typeof previewRecord.issue_counts === 'object' && previewRecord.issue_counts && !Array.isArray(previewRecord.issue_counts))
+      ? (previewRecord.issue_counts as Record<string, unknown>)
+      : null
+    const block = typeof counts?.block === 'number' ? counts.block : undefined
+    const warn = typeof counts?.warn === 'number' ? counts.warn : undefined
+    const action = typeof previewRecord?.recommended_action === 'string' ? previewRecord.recommended_action : undefined
+
+    const summaryParts = [
+      typeof block === 'number' ? `block=${block}` : null,
+      typeof warn === 'number' ? `warn=${warn}` : null,
+      action ? `action=${action}` : null,
+    ].filter(Boolean)
+    const resultSummary = summaryParts.length
+      ? `review ${overall || trace.status} · ${summaryParts.join(', ')}`
+      : `review ${overall || trace.status}`
+
+    return {
+      callId: trace.call_id,
+      toolName: trace.tool_name,
+      status,
+      startedAt,
+      finishedAt: startedAt + trace.duration_ms,
+      durationMs: trace.duration_ms,
+      resultSummary,
+      summary: trace.error_message || resultSummary,
+      errorMessage: trace.error_message,
+      errorCode: trace.error_code,
+      faultDomain: trace.fault_domain,
+      stage: trace.stage,
+      revisionBefore: trace.revision_before,
+      revisionAfter: trace.revision_after,
+      txId: trace.tx_id,
+      retryable: trace.status === 'error',
+      outputPreview: preview ?? undefined,
+      rawOutput: trace.preview ? trimRawOutput(JSON.stringify(trace.preview)) : undefined,
+    }
+  }
 
   return {
     callId: trace.call_id,

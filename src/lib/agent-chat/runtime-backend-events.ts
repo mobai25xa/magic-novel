@@ -825,6 +825,18 @@ export interface MissionUiState {
   layer1UpdatedAt?: number
   /** Optional P1: used to trigger UI refresh when ContextPack is rebuilt. */
   contextPackBuiltAt?: number
+  /** Optional M3: used to trigger UI refresh when ReviewReport is recorded. */
+  reviewUpdatedAt?: number
+  /** Optional M3: backend indicates a decision is required to proceed. */
+  reviewDecisionRequired?: boolean
+  /** Optional M3: raw decision payload for UI rendering. */
+  reviewDecision?: Record<string, unknown> | null
+  /** Optional M4: used to trigger UI refresh when Knowledge writeback changes. */
+  knowledgeUpdatedAt?: number
+  /** Optional M4: backend indicates a knowledge decision is required to proceed. */
+  knowledgeDecisionRequired?: boolean
+  /** Optional M4: raw decision payload for UI rendering. */
+  knowledgeDecision?: Record<string, unknown> | null
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -845,6 +857,12 @@ function createMissionUiState(missionId: string): MissionUiState {
     progressLog: [],
     layer1UpdatedAt: undefined,
     contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    knowledgeUpdatedAt: undefined,
+    knowledgeDecisionRequired: undefined,
+    knowledgeDecision: null,
   }
 }
 
@@ -856,6 +874,12 @@ function resetMissionTransientState(state: MissionUiState): MissionUiState {
     progressLog: [],
     layer1UpdatedAt: undefined,
     contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    knowledgeUpdatedAt: undefined,
+    knowledgeDecisionRequired: undefined,
+    knowledgeDecision: null,
   }
 }
 
@@ -1162,6 +1186,119 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
       nextState = {
         ...base,
         contextPackBuiltAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_RECORDED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: false,
+        reviewDecision: null,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_DECISION_REQUIRED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: true,
+        reviewDecision: payload,
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_PROPOSED': {
+      const bundleId = typeof payload.bundle_id === 'string'
+        ? payload.bundle_id.trim()
+        : typeof payload.bundleId === 'string'
+          ? payload.bundleId.trim()
+          : ''
+      const counts = asRecord(payload.counts)
+      const items = typeof counts?.items === 'number'
+        ? counts.items
+        : typeof payload.item_count === 'number'
+          ? payload.item_count
+          : undefined
+
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: false,
+        knowledgeDecision: null,
+        progressLog: trimMissionProgressLog([
+          ...base.progressLog,
+          {
+            ts: envelope.ts,
+            message: `Knowledge proposed${typeof items === 'number' ? ` · ${items} items` : ''}${bundleId ? ` · ${bundleId.slice(0, 10)}…` : ''}`,
+          },
+        ]),
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_DECISION_REQUIRED': {
+      const deltaId = typeof payload.delta_id === 'string'
+        ? payload.delta_id.trim()
+        : typeof payload.deltaId === 'string'
+          ? payload.deltaId.trim()
+          : ''
+      const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts.length : undefined
+
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: true,
+        knowledgeDecision: payload,
+        progressLog: trimMissionProgressLog([
+          ...base.progressLog,
+          {
+            ts: envelope.ts,
+            message: `Knowledge blocked · decision required${typeof conflicts === 'number' ? ` · ${conflicts} conflicts` : ''}${deltaId ? ` · ${deltaId.slice(0, 10)}…` : ''}`,
+          },
+        ]),
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_APPLIED': {
+      const deltaId = typeof payload.delta_id === 'string'
+        ? payload.delta_id.trim()
+        : typeof payload.deltaId === 'string'
+          ? payload.deltaId.trim()
+          : ''
+
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: false,
+        knowledgeDecision: null,
+        progressLog: trimMissionProgressLog([
+          ...base.progressLog,
+          {
+            ts: envelope.ts,
+            message: `Knowledge applied${deltaId ? ` · ${deltaId.slice(0, 10)}…` : ''}`,
+          },
+        ]),
+      }
+      break
+    }
+
+    case 'MISSION_KNOWLEDGE_ROLLED_BACK': {
+      nextState = {
+        ...base,
+        knowledgeUpdatedAt: envelope.ts,
+        knowledgeDecisionRequired: false,
+        knowledgeDecision: null,
+        progressLog: trimMissionProgressLog([
+          ...base.progressLog,
+          {
+            ts: envelope.ts,
+            message: 'Knowledge rolled back',
+          },
+        ]),
       }
       break
     }

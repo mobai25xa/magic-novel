@@ -7,6 +7,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { z } from 'zod'
 
+import type { ReviewDecisionRequest, ReviewReport } from '@/types/review'
+import type {
+  KnowledgeDecisionInput,
+  KnowledgeDelta,
+  KnowledgeLatest,
+  KnowledgeProposalBundle,
+} from '@/types/knowledge'
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value)
 }
@@ -162,6 +170,171 @@ export async function missionCancel(
   missionId: string,
 ): Promise<void> {
   return invoke<void>('mission_cancel', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+}
+
+// ── M3 Review Gate ─────────────────────────────────────────────
+
+const ReviewTypeSchema = z.enum([
+  'word_count',
+  'continuity',
+  'logic',
+  'character',
+  'style',
+  'terminology',
+  'foreshadow',
+  'objective_completion',
+])
+
+const ReviewIssueSchema = z
+  .object({
+    issue_id: z.string(),
+    review_type: ReviewTypeSchema,
+    severity: z.enum(['info', 'warn', 'block']),
+    summary: z.string(),
+    subject_refs: z.array(z.string()).default([]),
+    evidence_refs: z.array(z.string()).default([]),
+    confidence: z.enum(['low', 'medium', 'high']),
+    suggested_fix: z.string().optional(),
+    auto_fixable: z.boolean(),
+  })
+  .passthrough()
+
+const ReviewReportSchema = z
+  .object({
+    schema_version: z.number().optional(),
+    review_id: z.string(),
+    scope_ref: z.string(),
+    target_refs: z.array(z.string()).default([]),
+    review_types: z.array(ReviewTypeSchema).default([]),
+    overall_status: z.enum(['pass', 'warn', 'block']),
+    issues: z.array(ReviewIssueSchema).default([]),
+    evidence_summary: z.array(z.string()).default([]),
+    recommended_action: z.enum(['accept', 'revise', 'escalate']),
+    generated_at: z.number(),
+  })
+  .passthrough()
+
+const ReviewDecisionOptionSchema = z
+  .object({
+    option_id: z.string(),
+    label: z.string(),
+    description: z.string().optional(),
+  })
+  .passthrough()
+
+const ReviewDecisionRequestSchema = z
+  .object({
+    schema_version: z.number().optional(),
+    review_id: z.string().optional(),
+    question: z.string(),
+    options: z.array(ReviewDecisionOptionSchema).default([]),
+    context_summary: z.string().optional(),
+    created_at: z.number().optional(),
+  })
+  .passthrough()
+
+function parseReviewReport(value: unknown): ReviewReport | null {
+  if (value == null) return null
+  const parsed = ReviewReportSchema.safeParse(value)
+  if (parsed.success) return parsed.data as ReviewReport
+  console.warn(`[mission] review schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function parseReviewReports(value: unknown): ReviewReport[] {
+  if (value == null) return []
+  const parsed = z.array(ReviewReportSchema).safeParse(value)
+  if (parsed.success) return parsed.data as ReviewReport[]
+  console.warn(`[mission] review list schema mismatch:`, zodErrorSummary(parsed.error))
+  return []
+}
+
+function parseReviewDecisionRequest(value: unknown): ReviewDecisionRequest | null {
+  if (value == null) return null
+  const parsed = ReviewDecisionRequestSchema.safeParse(value)
+  if (parsed.success) return parsed.data as ReviewDecisionRequest
+  console.warn(`[mission] review decision schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function unwrapReviewReportPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'review')
+  value = unwrapMaybeWrapped(value, 'review_report')
+  value = unwrapMaybeWrapped(value, 'report')
+  value = unwrapMaybeWrapped(value, 'latest')
+  return value
+}
+
+function unwrapReviewReportsPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'reviews')
+  value = unwrapMaybeWrapped(value, 'reports')
+  value = unwrapMaybeWrapped(value, 'list')
+  return value
+}
+
+function unwrapReviewDecisionPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'pending_decision')
+  value = unwrapMaybeWrapped(value, 'decision')
+  return value
+}
+
+export async function missionReviewGetLatest(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewReport | null> {
+  const raw = await invoke<unknown>('mission_review_get_latest', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewReportPayload(raw)
+  return parseReviewReport(resolved)
+}
+
+export async function missionReviewList(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewReport[]> {
+  const raw = await invoke<unknown>('mission_review_list', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewReportsPayload(raw)
+  return parseReviewReports(resolved)
+}
+
+export async function missionReviewGetPendingDecision(
+  projectPath: string,
+  missionId: string,
+): Promise<ReviewDecisionRequest | null> {
+  const raw = await invoke<unknown>('mission_review_get_pending_decision', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapReviewDecisionPayload(raw)
+  return parseReviewDecisionRequest(resolved)
+}
+
+export interface MissionReviewAnswerInput {
+  project_path: string
+  mission_id: string
+  review_id?: string
+  answer: unknown
+}
+
+export async function missionReviewAnswer(input: MissionReviewAnswerInput): Promise<void> {
+  await invoke<void>('mission_review_answer', { input })
+}
+
+export async function missionReviewFixupStart(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await invoke<void>('mission_review_fixup_start', {
     input: { project_path: projectPath, mission_id: missionId },
   })
 }
@@ -578,4 +751,310 @@ export async function missionContextpackBuild(
   const raw = await invoke<unknown>('mission_contextpack_build', { input })
   const resolved = unwrapMaybeWrapped(raw, 'contextpack')
   return parseContextPack(resolved)
+}
+
+// ── M4 Knowledge Writeback ────────────────────────────────────
+
+const KnowledgeStringArraySchema = z.preprocess(
+  (value) => (Array.isArray(value) ? value.map((v) => String(v)) : []),
+  z.array(z.string()),
+)
+
+const KnowledgeRecordSchema = z.preprocess(
+  (value) => (isRecord(value) ? value : {}),
+  z.record(z.string(), z.unknown()),
+)
+
+const KnowledgeItemOpSchema = z.unknown().transform((value): 'create' | 'update' | 'archive' | 'restore' => {
+  switch (String(value ?? '').trim()) {
+    case 'create':
+      return 'create'
+    case 'archive':
+      return 'archive'
+    case 'restore':
+      return 'restore'
+    default:
+      return 'update'
+  }
+})
+
+const KnowledgeAcceptPolicySchema = z
+  .unknown()
+  .transform((value): 'auto_if_pass' | 'manual' | 'orchestrator_only' => {
+    switch (String(value ?? '').trim()) {
+      case 'auto_if_pass':
+        return 'auto_if_pass'
+      case 'orchestrator_only':
+        return 'orchestrator_only'
+      default:
+        return 'manual'
+    }
+  })
+
+const KnowledgeProposalItemSchema = z
+  .object({
+    item_id: z.string(),
+    kind: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() ? value : 'unknown'),
+      z.string(),
+    ),
+    op: KnowledgeItemOpSchema,
+    target_ref: z.string().optional(),
+    target_revision: z.preprocess(
+      (value) => {
+        if (typeof value === 'number' && Number.isFinite(value)) return value
+        if (typeof value === 'string') {
+          const parsed = Number(value)
+          return Number.isFinite(parsed) ? parsed : undefined
+        }
+        return undefined
+      },
+      z.number().optional(),
+    ),
+    fields: KnowledgeRecordSchema,
+    evidence_refs: KnowledgeStringArraySchema,
+    source_refs: KnowledgeStringArraySchema,
+    change_reason: z.preprocess(
+      (value) => (typeof value === 'string' ? value : value == null ? '' : String(value)),
+      z.string(),
+    ),
+    accept_policy: KnowledgeAcceptPolicySchema,
+  })
+  .passthrough()
+
+const KnowledgeProposalBundleSchema = z
+  .object({
+    schema_version: z.preprocess(
+      (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 1),
+      z.number(),
+    ),
+    bundle_id: z.string(),
+    scope_ref: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    branch_id: z.string().optional(),
+    source_session_id: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    source_review_id: z.string().optional(),
+    generated_at: z.preprocess(
+      (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0),
+      z.number(),
+    ),
+    proposal_items: z.preprocess(
+      (value) => (Array.isArray(value) ? value : []),
+      z.array(KnowledgeProposalItemSchema),
+    ),
+  })
+  .passthrough()
+
+const KnowledgeDeltaStatusSchema = z
+  .unknown()
+  .transform((value): 'proposed' | 'accepted' | 'applied' | 'rejected' => {
+    switch (String(value ?? '').trim()) {
+      case 'accepted':
+        return 'accepted'
+      case 'applied':
+        return 'applied'
+      case 'rejected':
+        return 'rejected'
+      default:
+        return 'proposed'
+    }
+  })
+
+const KnowledgeConflictSchema = z
+  .object({
+    type: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() ? value : 'unknown'),
+      z.string(),
+    ),
+    message: z.preprocess(
+      (value) => (typeof value === 'string' ? value : value == null ? '' : String(value)),
+      z.string(),
+    ),
+    item_id: z.string().optional(),
+    target_ref: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeDeltaTargetSchema = z
+  .object({
+    ref: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    kind: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() ? value : 'unknown'),
+      z.string(),
+    ),
+    path: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeDeltaChangeSchema = z
+  .object({
+    item_id: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    op: z.preprocess(
+      (value) => (typeof value === 'string' ? value : value == null ? '' : String(value)),
+      z.string(),
+    ),
+    kind: z.preprocess(
+      (value) => (typeof value === 'string' && value.trim() ? value : 'unknown'),
+      z.string(),
+    ),
+    target_ref: z.string().optional(),
+    summary: z.preprocess(
+      (value) => (typeof value === 'string' ? value : value == null ? '' : String(value)),
+      z.string(),
+    ),
+  })
+  .passthrough()
+
+const KnowledgeRollbackSchema = z
+  .object({
+    kind: z.preprocess(
+      (value) => (String(value ?? '').trim() === 'hard' ? 'hard' : 'soft'),
+      z.union([z.literal('soft'), z.literal('hard')]),
+    ),
+    token: z.string().optional(),
+  })
+  .passthrough()
+
+const KnowledgeDeltaSchema = z
+  .object({
+    schema_version: z.preprocess(
+      (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 1),
+      z.number(),
+    ),
+    knowledge_delta_id: z.string(),
+    status: KnowledgeDeltaStatusSchema,
+    scope_ref: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    branch_id: z.string().optional(),
+    source_session_id: z.preprocess(
+      (value) => (typeof value === 'string' ? value : ''),
+      z.string(),
+    ),
+    source_review_id: z.string().optional(),
+    generated_at: z.preprocess(
+      (value) => (typeof value === 'number' && Number.isFinite(value) ? value : 0),
+      z.number(),
+    ),
+    targets: z.preprocess(
+      (value) => (Array.isArray(value) ? value : []),
+      z.array(KnowledgeDeltaTargetSchema),
+    ),
+    changes: z.preprocess(
+      (value) => (Array.isArray(value) ? value : []),
+      z.array(KnowledgeDeltaChangeSchema),
+    ),
+    evidence_refs: KnowledgeStringArraySchema,
+    conflicts: z.preprocess(
+      (value) => (Array.isArray(value) ? value : []),
+      z.array(KnowledgeConflictSchema),
+    ),
+    accepted_item_ids: z.preprocess(
+      (value) => (value === undefined ? undefined : Array.isArray(value) ? value.map((v) => String(v)) : []),
+      z.array(z.string()).optional(),
+    ),
+    rejected_item_ids: z.preprocess(
+      (value) => (value === undefined ? undefined : Array.isArray(value) ? value.map((v) => String(v)) : []),
+      z.array(z.string()).optional(),
+    ),
+    applied_at: z.preprocess(
+      (value) => (typeof value === 'number' && Number.isFinite(value) ? value : undefined),
+      z.number().optional(),
+    ),
+    rollback: KnowledgeRollbackSchema.optional(),
+  })
+  .passthrough()
+
+function parseKnowledgeProposalBundle(value: unknown): KnowledgeProposalBundle | null {
+  if (value == null) return null
+  const parsed = KnowledgeProposalBundleSchema.safeParse(value)
+  if (parsed.success) return parsed.data as KnowledgeProposalBundle
+  console.warn(`[mission] knowledge bundle schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function parseKnowledgeDelta(value: unknown): KnowledgeDelta | null {
+  if (value == null) return null
+  const parsed = KnowledgeDeltaSchema.safeParse(value)
+  if (parsed.success) return parsed.data as KnowledgeDelta
+  console.warn(`[mission] knowledge delta schema mismatch:`, zodErrorSummary(parsed.error))
+  return null
+}
+
+function unwrapKnowledgeLatestPayload(raw: unknown): unknown {
+  let value = raw
+  value = unwrapMaybeWrapped(value, 'knowledge')
+  value = unwrapMaybeWrapped(value, 'latest')
+  value = unwrapMaybeWrapped(value, 'result')
+  return value
+}
+
+export async function missionKnowledgeGetLatest(
+  projectPath: string,
+  missionId: string,
+): Promise<KnowledgeLatest> {
+  const raw = await invoke<unknown>('mission_knowledge_get_latest', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+
+  const resolved = unwrapKnowledgeLatestPayload(raw)
+  const record = isRecord(resolved) ? resolved : isRecord(raw) ? raw : null
+  if (!record) {
+    return { bundle: null, delta: null }
+  }
+
+  const bundleCandidate = record.bundle
+    ?? record.proposal_bundle
+    ?? record.bundle_latest
+    ?? record.latest_bundle
+  const deltaCandidate = record.delta
+    ?? record.knowledge_delta
+    ?? record.delta_latest
+    ?? record.latest_delta
+
+  return {
+    bundle: parseKnowledgeProposalBundle(bundleCandidate ?? null),
+    delta: parseKnowledgeDelta(deltaCandidate ?? null),
+  }
+}
+
+export async function missionKnowledgeDecide(
+  projectPath: string,
+  missionId: string,
+  decision: KnowledgeDecisionInput,
+): Promise<void> {
+  await invoke<void>('mission_knowledge_decide', {
+    input: { project_path: projectPath, mission_id: missionId, decision },
+  })
+}
+
+export async function missionKnowledgeApply(
+  projectPath: string,
+  missionId: string,
+): Promise<void> {
+  await invoke<void>('mission_knowledge_apply', {
+    input: { project_path: projectPath, mission_id: missionId },
+  })
+}
+
+export async function missionKnowledgeRollback(
+  projectPath: string,
+  missionId: string,
+  token?: string,
+): Promise<void> {
+  await invoke<void>('mission_knowledge_rollback', {
+    input: { project_path: projectPath, mission_id: missionId, token },
+  })
 }
