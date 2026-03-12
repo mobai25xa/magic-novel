@@ -13,4 +13,5 @@ pub mod orchestrator;
 pub mod process_manager;
 pub mod types;
 pub mod worker_profile;
+pub mod macro_types;
 pub mod worker_protocol;

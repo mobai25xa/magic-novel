@@ -485,6 +485,20 @@ pub(super) fn spawn_worker_supervision_tasks(
 
                                     match orch_bg.complete_feature(&completed.handoff) {
                                         Ok(next_state) => {
+                                            // M5: update macro state on feature completion
+                                            let completion_status = if completed.ok {
+                                                FeatureStatus::Completed
+                                            } else {
+                                                FeatureStatus::Failed
+                                            };
+                                            let _ = super::super::macro_commands::update_macro_state_on_feature_event(
+                                                std::path::Path::new(&project_path_bg),
+                                                &mission_id,
+                                                &completed.feature_id,
+                                                &completion_status,
+                                                Some(&emitter_bg),
+                                            );
+
                                             let next_state_str = serde_json::to_string(&next_state)
                                                 .unwrap_or_default()
                                                 .trim_matches('"')
