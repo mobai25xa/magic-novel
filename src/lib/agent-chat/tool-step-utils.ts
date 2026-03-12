@@ -78,6 +78,116 @@ function joinSummary(prefix: string, parts: Array<string | null | undefined>) {
   return clean.length ? `${prefix} · ${clean.join(', ')}` : prefix
 }
 
+function normalizeIssueSeverity(value: unknown): 'info' | 'warn' | 'block' | null {
+  if (value === 'info' || value === 'warn' || value === 'block') {
+    return value
+  }
+  return null
+}
+
+function extractReviewReportLike(value: unknown): AnyRecord | null {
+  const root = asRecord(value)
+  if (!root) return null
+
+  const looksLikeReport = typeof root.overall_status === 'string' && Array.isArray(root.issues)
+  if (looksLikeReport) {
+    return root
+  }
+
+  const data = asRecord(root.data)
+  if (data) {
+    const fromData = extractReviewReportLike(data)
+    if (fromData) return fromData
+  }
+
+  for (const key of ['review_report', 'report', 'review', 'latest', 'reviewResult', 'review_result']) {
+    const nested = asRecord(root[key])
+    if (!nested) continue
+    const extracted = extractReviewReportLike(nested)
+    if (extracted) return extracted
+  }
+
+  const result = asRecord(root.result)
+  const preview = asRecord(result?.preview)
+  if (preview) {
+    const fromPreview = extractReviewReportLike(preview)
+    if (fromPreview) return fromPreview
+  }
+
+  return null
+}
+
+export function buildReviewCheckPreview(value: unknown): Record<string, unknown> | null {
+  const report = extractReviewReportLike(value)
+  if (!report) {
+    const direct = asRecord(value)
+    if (!direct || typeof direct.overall_status !== 'string') {
+      return null
+    }
+
+    const issueCounts = asRecord(direct.issue_counts)
+    const issuesTop = Array.isArray(direct.issues_top) ? direct.issues_top : undefined
+    const issues = Array.isArray(direct.issues) ? direct.issues : undefined
+
+    return {
+      review_id: typeof direct.review_id === 'string' ? direct.review_id : undefined,
+      overall_status: direct.overall_status,
+      recommended_action: typeof direct.recommended_action === 'string' ? direct.recommended_action : undefined,
+      generated_at: typeof direct.generated_at === 'number' ? direct.generated_at : undefined,
+      review_types: Array.isArray(direct.review_types)
+        ? direct.review_types.filter((v): v is string => typeof v === 'string').slice(0, 12)
+        : undefined,
+      issue_counts: issueCounts ? issueCounts : undefined,
+      issues_top: Array.isArray(issuesTop)
+        ? issuesTop
+        : Array.isArray(issues)
+          ? issues.slice(0, 12)
+          : undefined,
+    }
+  }
+
+  const issuesRaw = Array.isArray(report.issues) ? report.issues : []
+  const issues = issuesRaw
+    .map((issue) => asRecord(issue))
+    .filter((issue): issue is AnyRecord => Boolean(issue))
+
+  const counts = issues.reduce<{ info: number; warn: number; block: number; total: number }>(
+    (acc, issue) => {
+      const severity = normalizeIssueSeverity(issue.severity)
+      if (severity === 'block') acc.block += 1
+      else if (severity === 'warn') acc.warn += 1
+      else if (severity === 'info') acc.info += 1
+      acc.total += 1
+      return acc
+    },
+    { info: 0, warn: 0, block: 0, total: 0 },
+  )
+
+  const top = issues.slice(0, 12).map((issue) => ({
+    issue_id: typeof issue.issue_id === 'string' ? issue.issue_id : undefined,
+    review_type: typeof issue.review_type === 'string' ? issue.review_type : undefined,
+    severity: normalizeIssueSeverity(issue.severity) ?? undefined,
+    summary: typeof issue.summary === 'string' ? issue.summary : undefined,
+    auto_fixable: typeof issue.auto_fixable === 'boolean' ? issue.auto_fixable : undefined,
+    evidence_refs: Array.isArray(issue.evidence_refs)
+      ? issue.evidence_refs.filter((v): v is string => typeof v === 'string').slice(0, 3)
+      : undefined,
+    suggested_fix: typeof issue.suggested_fix === 'string' ? issue.suggested_fix : undefined,
+  }))
+
+  return {
+    review_id: typeof report.review_id === 'string' ? report.review_id : undefined,
+    overall_status: typeof report.overall_status === 'string' ? report.overall_status : undefined,
+    recommended_action: typeof report.recommended_action === 'string' ? report.recommended_action : undefined,
+    generated_at: typeof report.generated_at === 'number' ? report.generated_at : undefined,
+    review_types: Array.isArray(report.review_types)
+      ? report.review_types.filter((v): v is string => typeof v === 'string').slice(0, 12)
+      : undefined,
+    issue_counts: counts,
+    issues_top: top,
+  }
+}
+
 export function summarizeArgs(toolName: string, args: Record<string, unknown>) {
   const keysByTool: Record<string, string[]> = {
     read: ['kind', 'path', 'view'],
@@ -88,6 +198,7 @@ export function summarizeArgs(toolName: string, args: Record<string, unknown>) {
     ls: ['path', 'cwd', 'depth'],
     grep: ['query', 'mode', 'top_k'],
     todowrite: ['todos'],
+    review_check: ['scope_ref', 'target_refs', 'review_types', 'severity_threshold'],
   }
   const keys = keysByTool[toolName] || Object.keys(args)
 
@@ -131,6 +242,29 @@ export function extractRetryable(parsedOutput: unknown) {
 }
 
 export function summarizeResult(toolName: string, parsedOutput: unknown, trace: { status: 'ok' | 'error'; stage?: AgentToolTrace['stage']; error_code?: string; fault_domain?: AgentToolTrace['fault_domain'] }) {
+  if (toolName === 'review_check') {
+    if (trace.status !== 'ok') {
+      return joinSummary('review error', [trace.fault_domain, trace.error_code])
+    }
+
+    const preview = buildReviewCheckPreview(parsedOutput)
+    const status = typeof preview?.overall_status === 'string'
+      ? preview.overall_status
+      : (typeof (asRecord(parsedOutput)?.overall_status) === 'string'
+        ? String(asRecord(parsedOutput)?.overall_status)
+        : undefined)
+    const counts = asRecord(preview?.issue_counts)
+    const block = typeof counts?.block === 'number' ? counts.block : undefined
+    const warn = typeof counts?.warn === 'number' ? counts.warn : undefined
+    const action = typeof preview?.recommended_action === 'string' ? preview.recommended_action : undefined
+
+    return joinSummary(`review ${status || 'ok'}`, [
+      typeof block === 'number' ? `block=${block}` : null,
+      typeof warn === 'number' ? `warn=${warn}` : null,
+      action ? `action=${action}` : null,
+    ])
+  }
+
   const parsedRecord = asRecord(parsedOutput)
   const ok = parsedRecord?.ok === true
 
@@ -215,6 +349,18 @@ export function buildToolStepOutput(input: {
 }): ToolStepOutput {
   const parsedOutput = safeParseJson(input.output)
   const resultSummary = summarizeResult(input.toolName, parsedOutput, input.trace)
+
+  if (input.toolName === 'review_check') {
+    const preview = buildReviewCheckPreview(parsedOutput)
+    return {
+      parsedOutput,
+      outputPreview: preview ? redactValue(preview) : redactValue(parsedOutput),
+      rawOutput: trimRawOutput(input.output),
+      retryable: extractRetryable(parsedOutput),
+      errorMessage: extractErrorMessage(parsedOutput, input.trace),
+      resultSummary,
+    }
+  }
 
   return {
     parsedOutput,

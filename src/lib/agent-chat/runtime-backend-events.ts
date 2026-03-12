@@ -232,11 +232,13 @@ function extractClientRequestId(envelope: AgentEventEnvelope) {
 
 function getOldestPendingClientRequestId() {
   const pendingRequests = Object.values(useAgentChatStore.getState().pendingRequestsByClientRequestId)
-  if (pendingRequests.length !== 1) {
+  if (pendingRequests.length === 0) {
     return undefined
   }
 
-  return pendingRequests[0]?.clientRequestId
+  return [...pendingRequests]
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .at(0)?.clientRequestId
 }
 
 function bindPendingRequestFromEnvelope(envelope: AgentEventEnvelope) {
@@ -249,12 +251,18 @@ function bindPendingRequestFromEnvelope(envelope: AgentEventEnvelope) {
     return
   }
 
-  const result = store.bindPendingTurnRequest({
-    clientRequestId,
-    turn: envelope.turn_id,
-  })
+  let result: ReturnType<typeof store.bindPendingTurnRequest> | null = null
+  try {
+    result = store.bindPendingTurnRequest({
+      clientRequestId,
+      turn: envelope.turn_id,
+    })
+  } catch (error) {
+    console.warn('[agent-event] bind pending request failed:', error)
+    return
+  }
 
-  if (result.cancelRequested) {
+  if (result?.cancelRequested) {
     agentTurnCancelClient({
       session_id: envelope.session_id,
       turn_id: envelope.turn_id,
@@ -278,9 +286,24 @@ function shouldIgnoreAskUserRequest(input: {
   return currentStep?.progress === 'answered' || currentStep?.status === 'success'
 }
 
+function isWorkerAgentEnvelope(envelope: AgentEventEnvelope) {
+  if (envelope.source?.kind !== 'worker') {
+    return false
+  }
+
+  const workerId = typeof envelope.source.worker_id === 'string' ? envelope.source.worker_id.trim() : ''
+  const missionId = typeof envelope.source.mission_id === 'string' ? envelope.source.mission_id.trim() : ''
+  return Boolean(workerId && missionId)
+}
+
 // ── Agent event dispatcher ──────────────────────────────────────
 
 function dispatchAgentEvent(envelope: AgentEventEnvelope) {
+  if (isWorkerAgentEnvelope(envelope)) {
+    dispatchWorkerAgentEvent(envelope)
+    return
+  }
+
   const store = useAgentChatStore.getState()
   if (envelope.session_id !== store.session_id) {
     return
@@ -798,6 +821,23 @@ export interface MissionUiState {
   currentFeatureId?: string
   workerStatuses: Record<string, { featureId: string; status: string; summary?: string; updatedAt: number }>
   progressLog: Array<{ ts: number; message: string }>
+  /** Optional P1: used to trigger UI refresh when Layer1 artifacts change. */
+  layer1UpdatedAt?: number
+  /** Optional P1: used to trigger UI refresh when ContextPack is rebuilt. */
+  contextPackBuiltAt?: number
+
+  /** Optional M3: used to trigger UI refresh when ReviewReport is recorded. */
+  reviewUpdatedAt?: number
+  /** Optional M3: backend indicates a decision is required to proceed. */
+  reviewDecisionRequired?: boolean
+  /** Optional M3: last decision payload (when emitted). */
+  reviewDecision?: Record<string, unknown> | null
+
+  /** Optional M3: auto-fix loop progress. */
+  fixupAttempt?: number
+  fixupMessage?: string
+  fixupUpdatedAt?: number
+  fixupInProgress?: boolean
 }
 
 const MAX_MISSION_PROGRESS_ENTRIES = 40
@@ -816,13 +856,34 @@ function createMissionUiState(missionId: string): MissionUiState {
     state: 'unknown',
     workerStatuses: {},
     progressLog: [],
+    layer1UpdatedAt: undefined,
+    contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    fixupAttempt: undefined,
+    fixupMessage: undefined,
+    fixupUpdatedAt: undefined,
+    fixupInProgress: undefined,
   }
 }
 
-function resetMissionTransientState(state: MissionUiState) {
-  state.currentFeatureId = undefined
-  state.workerStatuses = {}
-  state.progressLog = []
+function resetMissionTransientState(state: MissionUiState): MissionUiState {
+  return {
+    ...state,
+    currentFeatureId: undefined,
+    workerStatuses: {},
+    progressLog: [],
+    layer1UpdatedAt: undefined,
+    contextPackBuiltAt: undefined,
+    reviewUpdatedAt: undefined,
+    reviewDecisionRequired: undefined,
+    reviewDecision: null,
+    fixupAttempt: undefined,
+    fixupMessage: undefined,
+    fixupUpdatedAt: undefined,
+    fixupInProgress: undefined,
+  }
 }
 
 function pruneMissionWorkerStatuses(
@@ -873,68 +934,241 @@ function notifyMissionListeners() {
   }
 }
 
+function extractWorkerFeatureIdFromPayload(payload: Record<string, unknown>) {
+  const featureId = payload.feature_id
+  if (typeof featureId === 'string' && featureId.trim()) {
+    return featureId.trim()
+  }
+  return undefined
+}
+
+function summarizeWorkerAgentEvent(envelope: AgentEventEnvelope): { status: string; summary?: string } | null {
+  const payload = envelope.payload
+  const turn = envelope.turn_id
+
+  switch (envelope.type) {
+    case 'TURN_STARTED': {
+      const provider = String(payload.model_provider ?? '')
+      const model = String(payload.model ?? '')
+      const modelHint = provider || model ? `${provider}/${model}`.replace(/^\//, '').replace(/\/$/, '') : ''
+      return {
+        status: 'running',
+        summary: modelHint ? `turn ${turn} · ${modelHint}` : `turn ${turn} · started`,
+      }
+    }
+
+    case 'TOOL_CALL_STARTED': {
+      const toolName = String(payload.tool_name ?? '').trim()
+      if (!toolName) return null
+      if (toolName.toLowerCase() === 'todowrite') return null
+      return {
+        status: 'running',
+        summary: `${toolName} · started`,
+      }
+    }
+
+    case 'TOOL_CALL_PROGRESS': {
+      const toolName = String(payload.tool_name ?? '').trim()
+      if (!toolName) return null
+      if (toolName.toLowerCase() === 'todowrite') return null
+      const progress = String(payload.progress ?? 'running')
+      return {
+        status: 'running',
+        summary: `${toolName} · ${progress}`,
+      }
+    }
+
+    case 'TOOL_CALL_FINISHED': {
+      const parsedTrace = parseToolTraceV2(payload.trace)
+      const toolName = String(parsedTrace?.meta.tool ?? payload.tool_name ?? '').trim()
+      if (!toolName) return null
+      if (toolName.toLowerCase() === 'todowrite') return null
+      const ok = parsedTrace ? parsedTrace.result.ok : String(payload.status ?? 'ok') === 'ok'
+      return {
+        status: 'running',
+        summary: `${toolName} · ${ok ? 'ok' : 'error'}`,
+      }
+    }
+
+    case 'WAITING_FOR_CONFIRMATION': {
+      const toolName = String(payload.tool_name ?? '').trim() || 'tool'
+      return {
+        status: 'running',
+        summary: `${toolName} · waiting confirmation`,
+      }
+    }
+
+    case 'ASKUSER_REQUESTED': {
+      return {
+        status: 'running',
+        summary: 'askuser · waiting user',
+      }
+    }
+
+    case 'TURN_COMPLETED': {
+      const rawStopReason = String(payload.stop_reason ?? 'success')
+      if (rawStopReason === 'cancel') {
+        return { status: 'cancelled', summary: `turn ${turn} · cancelled` }
+      }
+      if (rawStopReason === 'error') {
+        return { status: 'failed', summary: `turn ${turn} · error` }
+      }
+      if (rawStopReason === 'waiting_confirmation' || rawStopReason === 'waiting_askuser') {
+        return { status: 'running', summary: `turn ${turn} · ${rawStopReason}` }
+      }
+      return {
+        status: 'completed',
+        summary: `turn ${turn} · ${rawStopReason}`,
+      }
+    }
+
+    case 'TURN_FAILED': {
+      const errorCode = String(payload.error_code ?? '')
+      const errorMsg = String(payload.error_message ?? payload.error_code ?? 'unknown error')
+      if (errorCode === 'E_CANCELLED') {
+        return { status: 'cancelled', summary: `turn ${turn} · cancelled` }
+      }
+      return {
+        status: 'failed',
+        summary: `turn ${turn} · ${errorMsg}`,
+      }
+    }
+
+    case 'TURN_CANCELLED': {
+      return { status: 'cancelled', summary: `turn ${turn} · cancelled` }
+    }
+
+    default:
+      return null
+  }
+}
+
+function dispatchWorkerAgentEvent(envelope: AgentEventEnvelope) {
+  const workerId = String(envelope.source.worker_id ?? '').trim()
+  const missionId = String(envelope.source.mission_id ?? '').trim()
+  if (!workerId || !missionId) {
+    return
+  }
+
+  const update = summarizeWorkerAgentEvent(envelope)
+  if (!update) {
+    return
+  }
+
+  const base = (!currentMissionState || currentMissionState.missionId !== missionId)
+    ? createMissionUiState(missionId)
+    : currentMissionState
+
+  const previous = base.workerStatuses[workerId]
+  const featureId = extractWorkerFeatureIdFromPayload(envelope.payload)
+    ?? previous?.featureId
+    ?? ''
+
+  currentMissionState = {
+    ...base,
+    workerStatuses: upsertMissionWorkerStatus(
+      base.workerStatuses,
+      workerId,
+      {
+        featureId,
+        status: update.status,
+        summary: update.summary,
+        updatedAt: envelope.ts,
+      },
+    ),
+  }
+
+  notifyMissionListeners()
+}
+
 function dispatchMissionEvent(envelope: MissionEventEnvelope) {
   const payload = envelope.payload
 
-  // Lazy-initialize mission state
-  if (!currentMissionState || currentMissionState.missionId !== envelope.mission_id) {
-    currentMissionState = createMissionUiState(envelope.mission_id)
-  }
+  const base = (!currentMissionState || currentMissionState.missionId !== envelope.mission_id)
+    ? createMissionUiState(envelope.mission_id)
+    : currentMissionState
+
+  let nextState: MissionUiState = base
 
   switch (envelope.type) {
     case 'MISSION_STATE_CHANGED': {
-      const nextState = String(payload.new_state ?? 'unknown')
-      currentMissionState.state = nextState
-      if (isTerminalMissionState(nextState)) {
-        resetMissionTransientState(currentMissionState)
+      const newState = String(payload.new_state ?? 'unknown')
+      nextState = {
+        ...base,
+        state: newState,
+      }
+
+      if (isTerminalMissionState(newState)) {
+        nextState = resetMissionTransientState(nextState)
       }
       break
     }
 
     case 'MISSION_FEATURES_CHANGED': {
-      currentMissionState.currentFeatureId = String(payload.feature_id ?? '')
+      const featureId = String(payload.feature_id ?? '').trim()
+      nextState = {
+        ...base,
+        currentFeatureId: featureId || undefined,
+      }
       break
     }
 
     case 'MISSION_PROGRESS_ENTRY': {
-      currentMissionState.progressLog = trimMissionProgressLog([
-        ...currentMissionState.progressLog,
-        {
-          ts: envelope.ts,
-          message: String(payload.message ?? ''),
-        },
-      ])
+      nextState = {
+        ...base,
+        progressLog: trimMissionProgressLog([
+          ...base.progressLog,
+          {
+            ts: envelope.ts,
+            message: String(payload.message ?? ''),
+          },
+        ]),
+      }
       break
     }
 
     case 'WORKER_STARTED': {
       const workerId = String(payload.worker_id ?? '')
       const featureId = String(payload.feature_id ?? '')
-      currentMissionState.workerStatuses = upsertMissionWorkerStatus(
-        currentMissionState.workerStatuses,
-        workerId,
-        {
-          featureId,
-          status: 'running',
-          updatedAt: envelope.ts,
-        },
-      )
+      if (!workerId.trim()) {
+        break
+      }
+
+      nextState = {
+        ...base,
+        workerStatuses: upsertMissionWorkerStatus(
+          base.workerStatuses,
+          workerId,
+          {
+            featureId,
+            status: 'running',
+            updatedAt: envelope.ts,
+          },
+        ),
+      }
       break
     }
 
     case 'WORKER_COMPLETED': {
       const workerId = String(payload.worker_id ?? '')
       const featureId = String(payload.feature_id ?? '')
-      currentMissionState.workerStatuses = upsertMissionWorkerStatus(
-        currentMissionState.workerStatuses,
-        workerId,
-        {
-          featureId,
-          status: payload.ok ? 'completed' : 'failed',
-          summary: String(payload.summary ?? ''),
-          updatedAt: envelope.ts,
-        },
-      )
+      if (!workerId.trim()) {
+        break
+      }
+
+      nextState = {
+        ...base,
+        workerStatuses: upsertMissionWorkerStatus(
+          base.workerStatuses,
+          workerId,
+          {
+            featureId,
+            status: payload.ok ? 'completed' : 'failed',
+            summary: String(payload.summary ?? ''),
+            updatedAt: envelope.ts,
+          },
+        ),
+      }
       break
     }
 
@@ -943,11 +1177,63 @@ function dispatchMissionEvent(envelope: MissionEventEnvelope) {
       break
     }
 
+    case 'MISSION_LAYER1_UPDATED': {
+      nextState = {
+        ...base,
+        layer1UpdatedAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_CONTEXTPACK_BUILT': {
+      nextState = {
+        ...base,
+        contextPackBuiltAt: envelope.ts,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_RECORDED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: false,
+        reviewDecision: null,
+        fixupInProgress: false,
+      }
+      break
+    }
+
+    case 'MISSION_REVIEW_DECISION_REQUIRED': {
+      nextState = {
+        ...base,
+        reviewUpdatedAt: envelope.ts,
+        reviewDecisionRequired: true,
+        reviewDecision: payload,
+      }
+      break
+    }
+
+    case 'MISSION_FIXUP_PROGRESS': {
+      const attempt = typeof payload.attempt === 'number'
+        ? payload.attempt
+        : Number(String(payload.attempt ?? ''))
+      nextState = {
+        ...base,
+        fixupAttempt: Number.isFinite(attempt) ? attempt : base.fixupAttempt,
+        fixupMessage: typeof payload.message === 'string' ? payload.message : base.fixupMessage,
+        fixupUpdatedAt: envelope.ts,
+        fixupInProgress: true,
+      }
+      break
+    }
+
     default: {
       console.warn('[mission-event] unknown event type:', envelope.type, envelope)
     }
   }
 
+  currentMissionState = nextState
   notifyMissionListeners()
 }
 

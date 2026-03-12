@@ -8,8 +8,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::types::{Feature, HandoffEntry};
+use super::worker_profile::WorkerProfile;
 
-pub const PROTOCOL_SCHEMA_VERSION: i32 = 1;
+pub const PROTOCOL_SCHEMA_VERSION: i32 = 2;
 
 // ── Orchestrator → Worker (stdin instructions) ──────────────────
 
@@ -50,6 +51,18 @@ pub struct StartFeaturePayload {
     pub base_url: String,
     #[serde(default)]
     pub api_key: String,
+
+    // v2 additions (kept defaultable for forward/backward compatibility)
+    #[serde(default)]
+    pub mission_id: String,
+    #[serde(default)]
+    pub worker_id: String,
+    #[serde(default)]
+    pub worker_profile: Option<WorkerProfile>,
+    #[serde(default)]
+    pub parent_session_id: Option<String>,
+    #[serde(default)]
+    pub parent_turn_id: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -260,6 +273,19 @@ mod tests {
                 provider: "openai".to_string(),
                 base_url: "https://api.openai.com".to_string(),
                 api_key: "sk-test".to_string(),
+                mission_id: "mis_1".to_string(),
+                worker_id: "wk_1".to_string(),
+                worker_profile: Some(WorkerProfile {
+                    name: "general-worker".to_string(),
+                    display_name: "General Worker".to_string(),
+                    system_prompt: "sp".to_string(),
+                    tool_whitelist: vec!["read".to_string()],
+                    max_rounds: 5,
+                    max_tool_calls: 10,
+                    model: None,
+                }),
+                parent_session_id: None,
+                parent_turn_id: None,
             },
         );
 

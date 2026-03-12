@@ -159,11 +159,9 @@ impl AnthropicProvider {
 
                     for block in &msg.blocks {
                         match block {
-                            ContentBlock::Thinking { text } => {
-                                content.push(json!({
-                                    "type": "thinking",
-                                    "thinking": text,
-                                }));
+                            ContentBlock::Thinking { .. } => {
+                                // Do not send thinking blocks back to Anthropic.
+                                // Some Anthropic thinking formats require signatures and may be rejected on replay.
                             }
                             ContentBlock::Text { text } => {
                                 content.push(json!({

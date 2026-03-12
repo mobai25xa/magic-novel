@@ -10,10 +10,15 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use super::contextpack_types::ContextPack;
+use super::layer1_types::{ActiveCast, ChapterCard, Layer1Snapshot, RecentFacts};
+
 use crate::models::AppError;
+use crate::review::types::{ReviewDecisionRequest, ReviewReport};
 use crate::utils::atomic_write::atomic_write_json;
 
 use super::types::*;
+use super::worker_profile::WorkerRunEntry;
 
 // ── Path helpers ────────────────────────────────────────────────
 
@@ -44,6 +49,66 @@ pub fn handoffs_path(project_path: &Path, mission_id: &str) -> PathBuf {
     mission_dir(project_path, mission_id).join("handoffs.jsonl")
 }
 
+pub fn worker_runs_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join("worker_runs.jsonl")
+}
+
+pub const LAYER1_DIR: &str = "layer1";
+pub const CONTEXTPACKS_DIR: &str = "contextpacks";
+pub const REVIEWS_DIR: &str = "reviews";
+
+pub fn layer1_dir(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join(LAYER1_DIR)
+}
+
+pub fn contextpacks_dir(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join(CONTEXTPACKS_DIR)
+}
+
+pub fn reviews_dir(project_path: &Path, mission_id: &str) -> PathBuf {
+    mission_dir(project_path, mission_id).join(REVIEWS_DIR)
+}
+
+pub fn layer1_chapter_card_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("chapter_card.json")
+}
+
+pub fn layer1_recent_facts_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("recent_facts.json")
+}
+
+pub fn layer1_active_cast_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("active_cast.json")
+}
+
+pub fn layer1_active_foreshadowing_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("active_foreshadowing.json")
+}
+
+pub fn layer1_previous_summary_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("previous_summary.json")
+}
+
+pub fn layer1_risk_ledger_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    layer1_dir(project_path, mission_id).join("risk_ledger.json")
+}
+
+pub fn latest_contextpack_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    contextpacks_dir(project_path, mission_id).join("contextpack.json")
+}
+
+pub fn review_latest_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("latest.json")
+}
+
+pub fn review_reports_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("reports.jsonl")
+}
+
+pub fn pending_review_decision_path(project_path: &Path, mission_id: &str) -> PathBuf {
+    reviews_dir(project_path, mission_id).join("pending_decision.json")
+}
+
 // ── Init ────────────────────────────────────────────────────────
 
 /// Create the mission directory and write initial artifacts.
@@ -68,6 +133,9 @@ pub fn init_mission_dir(
 
     // Create empty handoffs.jsonl
     std::fs::write(handoffs_path(project_path, mission_id), "")?;
+
+    // Create empty worker_runs.jsonl (append-only)
+    std::fs::write(worker_runs_path(project_path, mission_id), "")?;
 
     Ok(dir)
 }
@@ -178,6 +246,102 @@ pub fn read_handoffs(project_path: &Path, mission_id: &str) -> Result<Vec<Handof
     Ok(entries)
 }
 
+fn read_optional_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<T>, AppError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(path)?;
+    let doc: T = serde_json::from_str(&content)?;
+    Ok(Some(doc))
+}
+
+// ── Read: Layer1 / ContextPack (M2) ─────────────────────────────
+
+pub fn read_layer1_chapter_card(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ChapterCard>, AppError> {
+    read_optional_json(&layer1_chapter_card_path(project_path, mission_id))
+}
+
+pub fn read_layer1_recent_facts(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<RecentFacts>, AppError> {
+    read_optional_json(&layer1_recent_facts_path(project_path, mission_id))
+}
+
+pub fn read_layer1_active_cast(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ActiveCast>, AppError> {
+    read_optional_json(&layer1_active_cast_path(project_path, mission_id))
+}
+
+pub fn read_layer1_snapshot(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Layer1Snapshot, AppError> {
+    Ok(Layer1Snapshot {
+        chapter_card: read_layer1_chapter_card(project_path, mission_id)?,
+        recent_facts: read_layer1_recent_facts(project_path, mission_id)?,
+        active_cast: read_layer1_active_cast(project_path, mission_id)?,
+        active_foreshadowing: read_optional_json(&layer1_active_foreshadowing_path(
+            project_path,
+            mission_id,
+        ))?,
+        previous_summary: read_optional_json(&layer1_previous_summary_path(
+            project_path,
+            mission_id,
+        ))?,
+        risk_ledger: read_optional_json(&layer1_risk_ledger_path(project_path, mission_id))?,
+    })
+}
+
+pub fn read_latest_contextpack(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ContextPack>, AppError> {
+    read_optional_json(&latest_contextpack_path(project_path, mission_id))
+}
+
+// ── Read: Reviews (M3) ────────────────────────────────────────
+
+pub fn read_review_latest(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ReviewReport>, AppError> {
+    read_optional_json(&review_latest_path(project_path, mission_id))
+}
+
+pub fn read_review_reports(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Vec<ReviewReport>, AppError> {
+    let path = review_reports_path(project_path, mission_id);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let content = std::fs::read_to_string(&path)?;
+    let entries: Vec<ReviewReport> = content
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| {
+            serde_json::from_str(l)
+                .map_err(|e| tracing::warn!(target: "mission", line = %l, "review report parse error: {e}"))
+                .ok()
+        })
+        .collect();
+    Ok(entries)
+}
+
+pub fn read_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<Option<ReviewDecisionRequest>, AppError> {
+    read_optional_json(&pending_review_decision_path(project_path, mission_id))
+}
+
 // ── Write (update) ──────────────────────────────────────────────
 
 pub fn write_features(
@@ -209,6 +373,123 @@ pub fn append_handoff(
     Ok(())
 }
 
+pub fn append_worker_run(
+    project_path: &Path,
+    mission_id: &str,
+    entry: &WorkerRunEntry,
+) -> Result<(), AppError> {
+    let path = worker_runs_path(project_path, mission_id);
+    let line = serde_json::to_string(entry)? + "\n";
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    file.write_all(line.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+
+// ── Write: Layer1 / ContextPack (M2) ────────────────────────────
+
+fn ensure_parent_dir(path: &Path) -> Result<(), AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+pub fn write_layer1_chapter_card(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ChapterCard,
+) -> Result<(), AppError> {
+    let path = layer1_chapter_card_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn write_layer1_recent_facts(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &RecentFacts,
+) -> Result<(), AppError> {
+    let path = layer1_recent_facts_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn write_layer1_active_cast(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ActiveCast,
+) -> Result<(), AppError> {
+    let path = layer1_active_cast_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn write_latest_contextpack(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ContextPack,
+) -> Result<(), AppError> {
+    let path = latest_contextpack_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+// ── Write: Reviews (M3) ───────────────────────────────────────
+
+pub fn write_review_latest(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ReviewReport,
+) -> Result<(), AppError> {
+    let path = review_latest_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn append_review_report(
+    project_path: &Path,
+    mission_id: &str,
+    entry: &ReviewReport,
+) -> Result<(), AppError> {
+    let path = review_reports_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    let line = serde_json::to_string(entry)? + "\n";
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    file.write_all(line.as_bytes())?;
+    file.flush()?;
+    Ok(())
+}
+
+pub fn write_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+    doc: &ReviewDecisionRequest,
+) -> Result<(), AppError> {
+    let path = pending_review_decision_path(project_path, mission_id);
+    ensure_parent_dir(&path)?;
+    atomic_write_json(&path, doc)
+}
+
+pub fn clear_pending_review_decision(
+    project_path: &Path,
+    mission_id: &str,
+) -> Result<(), AppError> {
+    let path = pending_review_decision_path(project_path, mission_id);
+    if path.exists() {
+        std::fs::remove_file(&path)?;
+    }
+    Ok(())
+}
+
 // ── List missions ───────────────────────────────────────────────
 
 pub fn list_missions(project_path: &Path) -> Result<Vec<String>, AppError> {
@@ -236,6 +517,10 @@ pub fn list_missions(project_path: &Path) -> Result<Vec<String>, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mission::contextpack_types::{TokenBudget, CONTEXTPACK_SCHEMA_VERSION};
+    use crate::mission::layer1_types::{
+        ChapterCardStatus, ChapterWorkflowKind, LAYER1_SCHEMA_VERSION,
+    };
     use std::fs;
 
     fn temp_project_dir() -> PathBuf {
@@ -301,6 +586,7 @@ mod tests {
         assert!(features_path(&project, mission_id).exists());
         assert!(state_path(&project, mission_id).exists());
         assert!(handoffs_path(&project, mission_id).exists());
+        assert!(worker_runs_path(&project, mission_id).exists());
 
         // Read back
         let md = read_mission_md(&project, mission_id).unwrap();
@@ -342,6 +628,52 @@ mod tests {
 
         let read_back = read_features(&project, mission_id).unwrap();
         assert_eq!(read_back.features[0].status, FeatureStatus::InProgress);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn test_layer1_and_contextpack_io_lazy_create() {
+        let project = temp_project_dir();
+        let mission_id = "mis_test_layer1";
+
+        let features_doc = FeaturesDoc::new(mission_id.to_string(), "T".to_string(), Vec::new());
+        let state_doc = StateDoc::new(
+            mission_id.to_string(),
+            project.to_string_lossy().to_string(),
+        );
+        init_mission_dir(&project, mission_id, "t", &features_doc, &state_doc).unwrap();
+
+        // Layer1 dirs should be lazy: write should create parents.
+        let cc = ChapterCard {
+            schema_version: LAYER1_SCHEMA_VERSION,
+            scope_ref: "chapter:ch_1".to_string(),
+            scope_locator: Some("vol1/ch1.json".to_string()),
+            objective: "Test objective".to_string(),
+            workflow_kind: ChapterWorkflowKind::Chapter,
+            hard_constraints: vec!["Keep tense".to_string()],
+            success_criteria: vec!["Sounds good".to_string()],
+            status: ChapterCardStatus::Active,
+            updated_at: 1,
+        };
+        write_layer1_chapter_card(&project, mission_id, &cc).unwrap();
+        assert!(layer1_chapter_card_path(&project, mission_id).exists());
+
+        let snap = read_layer1_snapshot(&project, mission_id).unwrap();
+        assert!(snap.chapter_card.is_some());
+        assert!(snap.recent_facts.is_none());
+
+        let mut cp = ContextPack::default();
+        cp.schema_version = CONTEXTPACK_SCHEMA_VERSION;
+        cp.scope_ref = "chapter:ch_1".to_string();
+        cp.token_budget = TokenBudget::Small;
+        cp.generated_at = 2;
+        write_latest_contextpack(&project, mission_id, &cp).unwrap();
+        assert!(latest_contextpack_path(&project, mission_id).exists());
+
+        let loaded = read_latest_contextpack(&project, mission_id).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().scope_ref, "chapter:ch_1");
 
         let _ = fs::remove_dir_all(&project);
     }

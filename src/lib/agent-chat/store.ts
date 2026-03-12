@@ -105,6 +105,31 @@ function createTurnBindingConflictError(input: {
   return error
 }
 
+function resolvePendingRequestKeyForTurnBinding(state: AgentChatState, clientRequestId: string): string | undefined {
+  if (
+    state.pendingRequestsByClientRequestId[clientRequestId]
+    || state.pendingUserMessageIdsByClientRequestId[clientRequestId]
+  ) {
+    return clientRequestId
+  }
+
+  const pendingRequests = Object.values(state.pendingRequestsByClientRequestId)
+    .filter((request) => request.sessionId === state.session_id)
+    .filter((request) => typeof state.boundTurnByClientRequestId[request.clientRequestId] !== 'number')
+
+  if (pendingRequests.length === 0) {
+    const pendingMessageKeys = Object.keys(state.pendingUserMessageIdsByClientRequestId)
+    if (pendingMessageKeys.length === 1) {
+      return pendingMessageKeys[0]
+    }
+    return undefined
+  }
+
+  return [...pendingRequests]
+    .sort((left, right) => left.createdAt - right.createdAt)
+    .at(0)?.clientRequestId
+}
+
 function clearPendingTurnStatePatch(state: AgentChatState) {
   const pendingMessageIds = new Set(
     Object.values(state.pendingUserMessageIdsByClientRequestId).flat(),
@@ -320,17 +345,35 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
 
       const existingClientRequestId = state.clientRequestIdByTurnId[turn]
       if (existingClientRequestId && existingClientRequestId !== clientRequestId) {
-        throw createTurnBindingConflictError({
-          clientRequestId,
-          existingTurn: turn,
-          nextTurn: turn,
-        })
+        // The turn is already bound under a different client_request_id.
+        // Treat this as an alias instead of a fatal conflict so late / alternate IDs
+        // (e.g. runtime ack vs event stream) cannot break the UI binding layer.
+        set((currentState) => ({
+          boundTurnByClientRequestId: {
+            ...currentState.boundTurnByClientRequestId,
+            [clientRequestId]: turn,
+          },
+        }))
+
+        return {
+          alreadyBound: true,
+          turn,
+          cancelRequested: false,
+          messagesToPersist: [],
+        }
       }
 
-      const pendingRequest = state.pendingRequestsByClientRequestId[clientRequestId]
-      const pendingMessageIds = state.pendingUserMessageIdsByClientRequestId[clientRequestId] || []
+      const pendingKey = resolvePendingRequestKeyForTurnBinding(state, clientRequestId)
+      const pendingRequest = pendingKey
+        ? state.pendingRequestsByClientRequestId[pendingKey]
+        : undefined
+      const pendingMessageIds = pendingKey
+        ? state.pendingUserMessageIdsByClientRequestId[pendingKey] || []
+        : []
       const pendingMessageIdSet = new Set(pendingMessageIds)
       const messagesToPersist = [] as AgentChatState['messages']
+
+      const cancelRequested = pendingRequest?.status === 'cancel_requested'
 
       set((currentState) => {
         const nextMessages = currentState.messages.map((message) => {
@@ -347,22 +390,29 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
         })
 
         const nextPendingRequests = { ...currentState.pendingRequestsByClientRequestId }
-        delete nextPendingRequests[clientRequestId]
+        const nextPendingUserMessageIds = { ...currentState.pendingUserMessageIdsByClientRequestId }
 
-        const nextPendingUserMessageIds = {
-          ...currentState.pendingUserMessageIdsByClientRequestId,
+        if (pendingKey) {
+          delete nextPendingRequests[pendingKey]
+          delete nextPendingUserMessageIds[pendingKey]
         }
+
+        // Also clear any stale entries under the authoritative clientRequestId (best-effort).
+        delete nextPendingRequests[clientRequestId]
         delete nextPendingUserMessageIds[clientRequestId]
+
+        const nextBoundTurnByClientRequestId = {
+          ...currentState.boundTurnByClientRequestId,
+          [clientRequestId]: turn,
+          ...(pendingKey && pendingKey !== clientRequestId ? { [pendingKey]: turn } : {}),
+        }
 
         return {
           turn,
           ...reduceMarkTurnStarted(currentState, turn),
           messages: nextMessages,
           pendingRequestsByClientRequestId: nextPendingRequests,
-          boundTurnByClientRequestId: {
-            ...currentState.boundTurnByClientRequestId,
-            [clientRequestId]: turn,
-          },
+          boundTurnByClientRequestId: nextBoundTurnByClientRequestId,
           pendingUserMessageIdsByClientRequestId: nextPendingUserMessageIds,
           clientRequestIdByTurnId: {
             ...currentState.clientRequestIdByTurnId,
@@ -374,7 +424,7 @@ export const useAgentChatStore = create<AgentChatState>((set, get) => {
       return {
         alreadyBound: false,
         turn,
-        cancelRequested: pendingRequest?.status === 'cancel_requested',
+        cancelRequested,
         messagesToPersist,
       }
     },

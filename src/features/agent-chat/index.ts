@@ -9,16 +9,31 @@ import {
   appendChapterHistoryEvent,
   getOpenAiProviderSettings,
   saveOpenAiProviderSettings,
+  missionCreate as missionCreateCommand,
   missionStart as missionStartCommand,
   missionPause as missionPauseCommand,
   missionResume as missionResumeCommand,
   missionCancel as missionCancelCommand,
   missionGetStatus as missionGetStatusCommand,
   missionList as missionListCommand,
+  missionLayer1Get as missionLayer1GetCommand,
+  missionLayer1Upsert as missionLayer1UpsertCommand,
+  missionContextpackGetLatest as missionContextpackGetLatestCommand,
+  missionContextpackBuild as missionContextpackBuildCommand,
+  missionReviewGetLatest as missionReviewGetLatestCommand,
+  missionReviewList as missionReviewListCommand,
+  missionReviewGetPendingDecision as missionReviewGetPendingDecisionCommand,
+  missionReviewAnswer as missionReviewAnswerCommand,
+  type MissionCreateInput,
+  type MissionCreateOutput,
+  type MissionLayer1Snapshot,
+  type MissionLayer1UpsertInput,
+  type ContextPack,
   type MissionStartInput,
+  type MissionContextpackBuildInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
-import type { MissionGetStatusOutput } from '@/lib/tauri-commands/mission'
+import type { MissionGetStatusOutput, MissionReviewAnswerInput } from '@/lib/tauri-commands/mission'
 
 type ErrorRecord = Record<string, unknown>
 
@@ -168,6 +183,10 @@ export async function missionStartFeature(input: MissionStartInput): Promise<voi
   await missionStartCommand(input)
 }
 
+export async function missionCreateFeature(input: MissionCreateInput): Promise<MissionCreateOutput> {
+  return missionCreateCommand(input)
+}
+
 export async function missionPauseFeature(projectPath: string, missionId: string): Promise<void> {
   await missionPauseCommand(projectPath, missionId)
 }
@@ -189,4 +208,53 @@ export async function missionGetStatusFeature(
 
 export async function missionListFeature(projectPath: string): Promise<string[]> {
   return missionListCommand(projectPath)
+}
+
+export async function missionLayer1GetFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<MissionLayer1Snapshot> {
+  return missionLayer1GetCommand(projectPath, missionId)
+}
+
+export async function missionLayer1UpsertFeature(input: MissionLayer1UpsertInput): Promise<void> {
+  return missionLayer1UpsertCommand(input)
+}
+
+export async function missionContextpackGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+): Promise<ContextPack | null> {
+  return missionContextpackGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionContextpackBuildFeature(
+  input: MissionContextpackBuildInput,
+): Promise<ContextPack> {
+  return missionContextpackBuildCommand(input)
+}
+
+export async function missionReviewGetLatestFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetLatestCommand(projectPath, missionId)
+}
+
+export async function missionReviewListFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewListCommand(projectPath, missionId)
+}
+
+export async function missionReviewGetPendingDecisionFeature(
+  projectPath: string,
+  missionId: string,
+) {
+  return missionReviewGetPendingDecisionCommand(projectPath, missionId)
+}
+
+export async function missionReviewAnswerFeature(input: MissionReviewAnswerInput): Promise<void> {
+  await missionReviewAnswerCommand(input)
 }

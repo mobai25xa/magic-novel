@@ -103,4 +103,7 @@ pub mod event_types {
     pub const COMPACTION_STARTED: &str = "COMPACTION_STARTED";
     pub const COMPACTION_FINISHED: &str = "COMPACTION_FINISHED";
     pub const COMPACTION_FALLBACK: &str = "COMPACTION_FALLBACK";
+
+    // Review (P1)
+    pub const REVIEW_RECORDED: &str = "REVIEW_RECORDED";
 }

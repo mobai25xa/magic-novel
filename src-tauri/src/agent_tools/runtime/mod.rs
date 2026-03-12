@@ -14,6 +14,8 @@ use crate::agent_tools::registry::{get_manifest, visible_tools_for_model};
 use crate::agent_tools::tools::{
     create_tool, delete_tool, edit_tool, grep_tool, ls_tool, move_tool, read_tool,
 };
+use crate::review::engine as review_engine;
+use crate::review::types::ReviewRunInput;
 use helpers::{
     edit_entity_ref, emit_from_result, extract_revision, extract_tx_id, map_app_error,
     read_entity_ref, tool_error,
@@ -291,6 +293,49 @@ pub fn execute_grep(input: GrepInput, call_id: String) -> ToolResult<Value> {
             },
         },
         Err(err) => map_app_error("grep", call_id, started, err),
+    };
+
+    emit_from_result(&result, "execute");
+    result
+}
+
+pub fn execute_review_check(
+    project_path: &str,
+    input: ReviewRunInput,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+    if get_manifest("review_check").is_none() {
+        return tool_error(
+            "review_check",
+            call_id,
+            started,
+            "E_TOOL_DISABLED",
+            &disabled_tool_message("review_check"),
+            false,
+            FaultDomain::Policy,
+        );
+    }
+
+    let read_set = Some(input.target_refs.clone());
+
+    let result = match review_engine::run_review(std::path::Path::new(project_path), input) {
+        Ok(report) => ToolResult {
+            ok: true,
+            data: Some(serde_json::to_value(report).expect("review report should serialize")),
+            error: None,
+            meta: ToolMeta {
+                tool: "review_check".to_string(),
+                call_id,
+                duration_ms: started.elapsed().as_millis() as u64,
+                revision_before: None,
+                revision_after: None,
+                tx_id: None,
+                read_set,
+                write_set: None,
+            },
+        },
+        Err(err) => map_app_error("review_check", call_id, started, err),
     };
 
     emit_from_result(&result, "execute");

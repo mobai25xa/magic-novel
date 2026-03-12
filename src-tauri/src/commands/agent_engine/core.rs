@@ -686,7 +686,7 @@ pub async fn agent_turn_cancel(
     let suspended_project_path = suspended.as_ref().map(|state| state.project_path.clone());
     let had_suspended = suspended.is_some();
 
-    if let Some(suspended) = suspended {
+    if let Some(ref suspended) = suspended {
         let mut cancelled_suspended = suspended.clone();
         cancelled_suspended.suspend_reason = StopReason::Cancel;
         let snapshot_input = RuntimeSnapshotUpsertInput::from_suspended(
@@ -708,32 +708,29 @@ pub async fn agent_turn_cancel(
         }
     }
 
-    let turn_id = cancelled
-        .as_ref()
-        .map(|meta| meta.turn_id)
-        .filter(|value| *value > 0)
-        .unwrap_or(input.turn_id);
+    // If we cancelled an active running turn, the loop will emit TURN_CANCELLED.
+    // Only emit here for suspended turns (no running loop to emit).
+    if had_suspended {
+        let turn_id = suspended
+            .as_ref()
+            .map(|state| state.conversation_state.current_turn)
+            .filter(|value| *value > 0)
+            .unwrap_or(input.turn_id);
 
-    let cancelled_client_request_id = cancelled
-        .as_ref()
-        .and_then(|meta| meta.client_request_id.clone());
+        let mut emitter = AgentEventEmitter::new(app_handle, input.session_id.clone(), turn_id);
 
-    let mut emitter = AgentEventEmitter::new(app_handle, input.session_id.clone(), turn_id)
-        .with_client_request_id(cancelled_client_request_id.clone());
+        if let Some(project_path) = suspended_project_path {
+            let persistence = SessionPersistenceSink::new(project_path, input.session_id.clone())
+                .with_hydration_source(Some("cancel_command".to_string()));
+            emitter = emitter.with_persistence(persistence);
+        }
 
-    if let Some(project_path) = suspended_project_path {
-        let persistence = SessionPersistenceSink::new(project_path, input.session_id.clone())
-            .with_client_request_id(cancelled_client_request_id)
-            .with_hydration_source(Some("cancel_command".to_string()));
-        emitter = emitter.with_persistence(persistence);
+        emitter.turn_cancelled()?;
     }
-
-    emitter.turn_cancelled()?;
 
     tracing::info!(
         target: "agent_engine",
         session_id = %input.session_id,
-        turn_id,
         token_cancelled = cancelled.is_some(),
         had_suspended,
         "agent_turn_cancel executed"
@@ -926,6 +923,7 @@ pub async fn agent_turn_resume(
             suspended.project_path.clone(),
             suspended.loop_config.approval_mode,
             suspended.loop_config.clarification_mode,
+            cancel_token.clone(),
         )
         .with_active_chapter_path(suspended.active_chapter_path.clone())
         .with_active_skill(suspended.active_skill.clone());
