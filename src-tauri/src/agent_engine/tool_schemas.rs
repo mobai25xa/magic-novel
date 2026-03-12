@@ -173,7 +173,7 @@ mod tests {
         let bundle =
             build_tool_schema_bundle(ClarificationMode::Interactive, false, AgentMode::Writing);
 
-        assert_eq!(bundle.exposed_tools.len(), 13);
+        assert_eq!(bundle.exposed_tools.len(), 14);
         assert!(bundle.skipped_tools.is_empty());
         assert!(tool_names(bundle.schemas).contains(&"edit".to_string()));
     }

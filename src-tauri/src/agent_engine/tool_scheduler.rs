@@ -406,7 +406,8 @@ impl<S: EventSink> ToolScheduler<S> {
         self.emitter.tool_call_started(tc, &call_id)?;
 
         if !self.is_tool_allowed(&tc.tool_name) {
-            let result = tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
+            let result =
+                tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
             self.emitter.tool_call_progress(tc, &call_id, "error")?;
             let trace = Some(build_tool_trace(&tc.tool_name, &result));
             self.emitter
@@ -482,7 +483,8 @@ impl<S: EventSink> ToolScheduler<S> {
     async fn execute_disallowed(&self, tc: &ToolCallInfo) -> Result<AgentMessage, AppError> {
         let call_id = format!("tool_{}", uuid::Uuid::new_v4());
         self.emitter.tool_call_started(tc, &call_id)?;
-        let result = tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
+        let result =
+            tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
         self.emitter.tool_call_progress(tc, &call_id, "error")?;
         let trace = Some(build_tool_trace(&tc.tool_name, &result));
         self.emitter

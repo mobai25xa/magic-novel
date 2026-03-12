@@ -380,7 +380,11 @@ fn replace_context_message(state: &mut ConversationState, text: &str) {
 }
 
 fn build_layer1_section(project_path: &str, mission_id: &Option<String>) -> (Option<String>, u64) {
-    let Some(mission_id) = mission_id.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+    let Some(mission_id) = mission_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
         return (None, 0);
     };
 
@@ -457,14 +461,19 @@ fn build_contextpack_section(
     project_path: &str,
     mission_id: &Option<String>,
 ) -> (Option<String>, u64) {
-    let Some(mission_id) = mission_id.as_ref().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
+    let Some(mission_id) = mission_id
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
         return (None, 0);
     };
 
     let project_path = std::path::Path::new(project_path);
     let section = match mission_artifacts::read_latest_contextpack(project_path, &mission_id) {
         Ok(cp) => {
-            let staleness = check_contextpack_staleness(project_path, &mission_id, cp.as_ref()).ok();
+            let staleness =
+                check_contextpack_staleness(project_path, &mission_id, cp.as_ref()).ok();
             Some(summarize_contextpack(cp.as_ref(), staleness.as_ref()))
         }
         Err(e) => Some(format!("ContextPack:\n(unavailable: {} )", e.message)),
@@ -537,12 +546,7 @@ fn summarize_contextpack(
         for ev in cp.evidence_snippets.iter().take(3) {
             let src = ev.source_ref.trim();
             let reason = truncate_inline(&ev.reason, 60);
-            let snippet_1 = ev
-                .snippet
-                .lines()
-                .next()
-                .unwrap_or("")
-                .trim();
+            let snippet_1 = ev.snippet.lines().next().unwrap_or("").trim();
             ev_lines.push(format!(
                 "  - [{}] {}: {}",
                 src,

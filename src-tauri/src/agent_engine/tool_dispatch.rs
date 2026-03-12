@@ -4,13 +4,14 @@ use serde_json::json;
 
 use crate::agent_tools::runtime::{
     execute_create, execute_delete, execute_edit, execute_grep, execute_ls, execute_move,
-    execute_read,
+    execute_read, execute_review_check,
 };
 
 use super::types::ToolCallInfo;
 
 mod context_tools;
 mod parse;
+mod parse_review;
 
 use context_tools::{
     execute_character_sheet_tool, execute_outline_tool, execute_search_knowledge_tool,
@@ -19,6 +20,7 @@ use parse::{
     parse_create_input, parse_delete_input, parse_edit_input, parse_grep_input, parse_ls_input,
     parse_move_input, parse_read_input,
 };
+use parse_review::parse_review_check_input;
 
 const SKILL_FIELDS: &[&str] = &["skill"];
 
@@ -32,6 +34,7 @@ pub fn dispatch_supports_tool(tool_name: &str) -> bool {
             | "move"
             | "ls"
             | "grep"
+            | "review_check"
             | "askuser"
             | "skill"
             | "todowrite"
@@ -97,6 +100,13 @@ pub fn execute_tool_call(
             match input {
                 Ok(i) => execute_grep(i, call_id.to_string()),
                 Err(e) => tool_parse_error("grep", call_id, &e),
+            }
+        }
+        "review_check" => {
+            let input = parse_review_check_input(&tc.args);
+            match input {
+                Ok(i) => execute_review_check(project_path, i, call_id.to_string()),
+                Err(e) => tool_parse_error("review_check", call_id, &e),
             }
         }
         "askuser" => {

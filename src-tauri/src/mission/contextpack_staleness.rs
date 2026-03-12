@@ -23,9 +23,7 @@ pub struct ContextPackStalenessStatus {
 ///
 /// Uses `.magic_novel/guidelines.md` (project rules) and `~/.magic/rule.md` (global rules) if present.
 pub fn compute_rules_fingerprint(project_path: &Path) -> i64 {
-    let guidelines_path = project_path
-        .join(".magic_novel")
-        .join("guidelines.md");
+    let guidelines_path = project_path.join(".magic_novel").join("guidelines.md");
     let guidelines = std::fs::read_to_string(&guidelines_path).unwrap_or_default();
     let global = global_config::load_global_rules()
         .map(|r| r.content)
@@ -75,7 +73,10 @@ pub fn compute_current_source_revisions(
         revision: compute_rules_fingerprint(project_path),
     });
 
-    if let Some(locator) = cc.and_then(|cc| cc.scope_locator).map(|s| s.trim().to_string()) {
+    if let Some(locator) = cc
+        .and_then(|cc| cc.scope_locator)
+        .map(|s| s.trim().to_string())
+    {
         if !locator.is_empty() {
             let rel = locator.replace('\\', "/");
             let full = project_path.join("manuscripts").join(rel);
@@ -181,7 +182,9 @@ fn u64_to_revision(v: u64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mission::contextpack_builder::{build_and_persist_contextpack, BuildContextPackInput};
+    use crate::mission::contextpack_builder::{
+        build_and_persist_contextpack, BuildContextPackInput,
+    };
     use crate::mission::layer1_types::{
         ChapterCard, ChapterCardStatus, ChapterWorkflowKind, LAYER1_SCHEMA_VERSION,
     };

@@ -6,6 +6,7 @@ pub mod artifacts;
 pub mod contextpack_builder;
 pub mod contextpack_staleness;
 pub mod contextpack_types;
+pub mod effective_rules_v0;
 pub mod events;
 pub mod layer1_types;
 pub mod orchestrator;

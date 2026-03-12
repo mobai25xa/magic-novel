@@ -1,6 +1,6 @@
 {
-  "total_tools": 13,
-  "provider_safe_tools": 13,
+  "total_tools": 14,
+  "provider_safe_tools": 14,
   "tools": [
     {
       "tool_name": "read",
@@ -120,6 +120,23 @@
       "provider_safe_risk": "medium",
       "schema_property_count": 5,
       "schema_max_depth": 7
+    },
+    {
+      "tool_name": "review_check",
+      "manifest_id": "novel.review_check",
+      "llm_name": "review_check",
+      "layer": "core_resource",
+      "risk_level": "low",
+      "confirmation": "never",
+      "idempotency": "required",
+      "parallel_safe": true,
+      "externally_handled": false,
+      "visible_in_writing_mode": true,
+      "visible_in_planning_mode": true,
+      "provider_safe": true,
+      "provider_safe_risk": "medium",
+      "schema_property_count": 8,
+      "schema_max_depth": 6
     },
     {
       "tool_name": "askuser",

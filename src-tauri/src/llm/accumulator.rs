@@ -101,7 +101,8 @@ impl StreamAccumulator {
                         let extracted = extract_closed_json_fields(&accum.raw_args);
                         if !extracted.is_empty() {
                             if !accum.parsed_args.is_object() {
-                                accum.parsed_args = serde_json::Value::Object(serde_json::Map::new());
+                                accum.parsed_args =
+                                    serde_json::Value::Object(serde_json::Map::new());
                             }
                             if let Some(obj) = accum.parsed_args.as_object_mut() {
                                 for (k, v) in extracted {
@@ -123,7 +124,8 @@ impl StreamAccumulator {
                         let extracted = extract_closed_json_fields(&accum.raw_args);
                         if !extracted.is_empty() {
                             if !accum.parsed_args.is_object() {
-                                accum.parsed_args = serde_json::Value::Object(serde_json::Map::new());
+                                accum.parsed_args =
+                                    serde_json::Value::Object(serde_json::Map::new());
                             }
                             if let Some(obj) = accum.parsed_args.as_object_mut() {
                                 for (k, v) in extracted {
