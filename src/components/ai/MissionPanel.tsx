@@ -122,37 +122,6 @@ function computeIssueCountByWorkerId(handoffs: MissionStatusPayload['handoffs'])
   return counts
 }
 
-function resolveWorkersDefaultOpen(input: {
-  liveState: string
-  workerEntries: Array<[string, { status: string }]>
-  failedHandoffs: number
-}) {
-  if (input.failedHandoffs > 0) {
-    return true
-  }
-
-  const hasRunning = input.workerEntries.some(([, info]) => info.status === 'running')
-  if (hasRunning) {
-    return true
-  }
-
-  return input.liveState === 'running' || input.liveState === 'initializing'
-}
-
-function computeIssueCountByWorkerId(handoffs: MissionStatusPayload['handoffs']) {
-  const counts: Record<string, number> = {}
-  for (const entry of handoffs) {
-    const wid = String(entry.worker_id ?? '')
-    if (!wid) {
-      continue
-    }
-
-    const issues = Array.isArray(entry.issues) ? entry.issues.length : 0
-    counts[wid] = (counts[wid] ?? 0) + issues
-  }
-  return counts
-}
-
 export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelProps) {
   const lastLayer1UpdatedAtRef = useRef<number>(0)
   const lastContextPackBuiltAtRef = useRef<number>(0)
