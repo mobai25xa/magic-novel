@@ -103,6 +103,8 @@ pub struct AckPayload {
 pub struct FeatureCompletedPayload {
     pub feature_id: String,
     pub ok: bool,
+    #[serde(default)]
+    pub session_id: String,
     pub handoff: HandoffEntry,
 }
 
@@ -194,10 +196,16 @@ impl WorkerEvent {
         }
     }
 
-    pub fn feature_completed(feature_id: &str, ok: bool, handoff: HandoffEntry) -> Self {
+    pub fn feature_completed(
+        feature_id: &str,
+        ok: bool,
+        session_id: String,
+        handoff: HandoffEntry,
+    ) -> Self {
         let completed = FeatureCompletedPayload {
             feature_id: feature_id.to_string(),
             ok,
+            session_id,
             handoff,
         };
         Self {
@@ -352,7 +360,12 @@ mod tests {
             issues: Vec::new(),
         };
 
-        let evt = WorkerEvent::feature_completed("f1", true, handoff);
+        let evt = WorkerEvent::feature_completed(
+            "f1",
+            true,
+            "worker_sess_test".to_string(),
+            handoff,
+        );
         let line = evt.to_ndjson_line().unwrap();
         let parsed = WorkerEvent::from_ndjson_line(&line).unwrap();
         assert_eq!(parsed.event_type, WorkerEventType::FeatureCompleted);
@@ -360,6 +373,7 @@ mod tests {
         let payload: FeatureCompletedPayload = serde_json::from_value(parsed.payload).unwrap();
         assert_eq!(payload.feature_id, "f1");
         assert!(payload.ok);
+        assert_eq!(payload.session_id, "worker_sess_test");
         assert_eq!(payload.handoff.summary, "done");
     }
 

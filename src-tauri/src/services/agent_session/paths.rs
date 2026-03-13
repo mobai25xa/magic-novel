@@ -7,6 +7,7 @@ pub const SESSIONS_DIR: &str = "sessions";
 pub const INDEX_FILE: &str = "index.json";
 pub const STREAM_SUFFIX: &str = ".jsonl";
 pub const SETTINGS_SUFFIX: &str = ".settings.json";
+pub const CARD_SUFFIX: &str = ".card.json";
 
 pub fn sessions_root(project_path: &Path) -> PathBuf {
     project_path
@@ -21,6 +22,10 @@ pub fn session_stream_path(project_path: &Path, session_id: &str) -> PathBuf {
 
 pub fn session_settings_path(project_path: &Path, session_id: &str) -> PathBuf {
     sessions_root(project_path).join(format!("{session_id}{SETTINGS_SUFFIX}"))
+}
+
+pub fn session_card_path(project_path: &Path, session_id: &str) -> PathBuf {
+    sessions_root(project_path).join(format!("{session_id}{CARD_SUFFIX}"))
 }
 
 pub fn session_index_path(project_path: &Path) -> PathBuf {

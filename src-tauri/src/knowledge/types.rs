@@ -71,6 +71,19 @@ pub enum KnowledgeDeltaStatus {
     Rejected,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KnowledgeDecisionActor {
+    User,
+    Orchestrator,
+}
+
+impl Default for KnowledgeDecisionActor {
+    fn default() -> Self {
+        Self::User
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KnowledgeDeltaTarget {
     pub r#ref: String,
@@ -159,6 +172,8 @@ pub struct KnowledgeDecisionInput {
     pub schema_version: i32,
     pub bundle_id: String,
     pub delta_id: String,
+    #[serde(default)]
+    pub actor: KnowledgeDecisionActor,
     #[serde(default)]
     pub accepted_item_ids: Vec<String>,
     #[serde(default)]

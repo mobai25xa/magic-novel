@@ -49,7 +49,7 @@ async fn main() {
         Arc::new(TokioMutex::new(None));
 
     let (feature_tx, mut feature_rx) = mpsc::channel::<StartFeaturePayload>(1);
-    let (result_tx, mut result_rx) = mpsc::channel::<(String, HandoffEntry)>(1);
+    let (result_tx, mut result_rx) = mpsc::channel::<(String, String, HandoffEntry)>(1);
 
     let state_exec = Arc::clone(&state);
     let cancel_exec = Arc::clone(&cancel_token_holder);
@@ -80,6 +80,7 @@ async fn main() {
             }
 
             let feature_id = payload.feature.id.clone();
+            let session_id = payload.session_id.clone();
             let worker_id = ws.worker_id.clone();
             let cancel_check = cancel_token.clone();
             let result = match execute_feature(&ws, &payload, cancel_token).await {
@@ -122,7 +123,7 @@ async fn main() {
                 }
             };
 
-            if result_tx.send((feature_id, handoff)).await.is_err() {
+            if result_tx.send((feature_id, session_id, handoff)).await.is_err() {
                 break;
             }
         }
@@ -134,11 +135,16 @@ async fn main() {
     loop {
         tokio::select! {
             maybe_result = result_rx.recv() => {
-                let Some((feature_id, handoff)) = maybe_result else {
+                let Some((feature_id, session_id, handoff)) = maybe_result else {
                     break;
                 };
                 let ok = handoff.ok;
-                send_event(&WorkerEvent::feature_completed(&feature_id, ok, handoff));
+                send_event(&WorkerEvent::feature_completed(
+                    &feature_id,
+                    ok,
+                    session_id,
+                    handoff,
+                ));
             }
             line_result = lines.next_line() => {
                 let line = match line_result {

@@ -11,6 +11,9 @@ use crate::mission::process_manager::{ProcessManager, WorkerProcess};
 use crate::mission::types::*;
 use crate::mission::worker_protocol::{FeatureCompletedPayload, WorkerEventType};
 use crate::models::AppError;
+use crate::services::agent_session::{
+    self as agent_session, CanonUpdatesAcceptedEntry, CanonUpdatesProposedEntry,
+};
 use crate::services::global_config;
 
 use crate::review::types as review_types;
@@ -629,10 +632,16 @@ pub(super) fn spawn_worker_supervision_tasks(
                                                                                 // ── M4 Knowledge Writeback: propose → gate (safe auto-accept) ─
                                                                                 // Contract: must run after ReviewGate and must persist artifacts.
                                                                                 let project_path = std::path::Path::new(&project_path_bg);
-                                                                                let source_session_id = format!(
-                                                                                    "mission:{}/feature:{}/worker:{}",
-                                                                                    mission_id, completed.feature_id, worker_id
-                                                                                );
+                                                                                let source_session_id = completed.session_id.trim().to_string();
+                                                                                let source_session_id = if source_session_id.is_empty() {
+                                                                                    // Fallback for legacy workers that don't emit session_id.
+                                                                                    format!(
+                                                                                        "mission:{}/feature:{}/worker:{}",
+                                                                                        mission_id, completed.feature_id, worker_id
+                                                                                    )
+                                                                                } else {
+                                                                                    source_session_id
+                                                                                };
 
                                                                                 let bundle = match knowledge_writeback::generate_proposal_bundle_after_closeout(
                                                                                     project_path,
@@ -734,6 +743,19 @@ pub(super) fn spawn_worker_supervision_tasks(
                                                                                         }
 
                                                                                         if !gate_blocked {
+                                                                                            let _ = agent_session::record_canon_updates_proposed(
+                                                                                                project_path,
+                                                                                                &bundle.source_session_id,
+                                                                                                bundle.branch_id.as_ref(),
+                                                                                                CanonUpdatesProposedEntry {
+                                                                                                    bundle_id: bundle.bundle_id.clone(),
+                                                                                                    delta_id: delta.knowledge_delta_id.clone(),
+                                                                                                    scope_ref: bundle.scope_ref.clone(),
+                                                                                                    kinds: knowledge_writeback::proposal_kinds(&bundle),
+                                                                                                    ts: bundle.generated_at,
+                                                                                                },
+                                                                                            );
+
                                                                                             // Best-effort: notify UI.
                                                                                             let _ = emitter_bg.knowledge_proposed(&bundle);
 
@@ -770,6 +792,7 @@ pub(super) fn spawn_worker_supervision_tasks(
                                                                                                         &mission_id,
                                                                                                         &bundle,
                                                                                                         &delta,
+                                                                                                        knowledge_types::KnowledgeDecisionActor::Orchestrator,
                                                                                                     ) {
                                                                                                         Ok(applied) => {
                                                                                                             if let Err(e) = artifacts::write_knowledge_delta_latest(
@@ -793,6 +816,23 @@ pub(super) fn spawn_worker_supervision_tasks(
                                                                                                                     project_path,
                                                                                                                     &mission_id,
                                                                                                                     &applied,
+                                                                                                                );
+                                                                                                                let targets = knowledge_writeback::accepted_target_refs(&bundle, &applied);
+                                                                                                                let _ = agent_session::record_canon_updates_accepted(
+                                                                                                                    project_path,
+                                                                                                                    &bundle.source_session_id,
+                                                                                                                    bundle.branch_id.as_ref(),
+                                                                                                                    CanonUpdatesAcceptedEntry {
+                                                                                                                        delta_id: applied.knowledge_delta_id.clone(),
+                                                                                                                        applied_at: applied.applied_at.unwrap_or_default(),
+                                                                                                                        targets: targets.clone(),
+                                                                                                                        rollback_token: applied
+                                                                                                                            .rollback
+                                                                                                                            .as_ref()
+                                                                                                                            .and_then(|rb| rb.token.clone()),
+                                                                                                                        rolled_back_at: None,
+                                                                                                                    },
+                                                                                                                    &targets,
                                                                                                                 );
                                                                                                                 let _ = emitter_bg.knowledge_applied(&applied);
                                                                                                             }

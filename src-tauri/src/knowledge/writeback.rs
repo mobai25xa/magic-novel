@@ -1,16 +1,16 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::knowledge::types::{
-    KnowledgeAcceptPolicy, KnowledgeConflict, KnowledgeDecisionInput, KnowledgeDelta,
-    KnowledgeDeltaChange, KnowledgeDeltaStatus, KnowledgeDeltaTarget, KnowledgeOp,
+    KnowledgeAcceptPolicy, KnowledgeConflict, KnowledgeDecisionActor, KnowledgeDecisionInput,
+    KnowledgeDelta, KnowledgeDeltaChange, KnowledgeDeltaStatus, KnowledgeDeltaTarget, KnowledgeOp,
     KnowledgeProposalBundle, KnowledgeProposalItem, KnowledgeRollback, KnowledgeRollbackKind,
-    PendingKnowledgeDecision, KNOWLEDGE_CANON_CONFLICT, KNOWLEDGE_POLICY_CONFLICT,
-    KNOWLEDGE_PROPOSAL_INVALID, KNOWLEDGE_REVIEW_BLOCKED, KNOWLEDGE_REVISION_CONFLICT,
-    KNOWLEDGE_SOURCE_MISSING,
+    PendingKnowledgeDecision, KNOWLEDGE_BRANCH_STALE, KNOWLEDGE_CANON_CONFLICT,
+    KNOWLEDGE_POLICY_CONFLICT, KNOWLEDGE_PROPOSAL_INVALID, KNOWLEDGE_REVIEW_BLOCKED,
+    KNOWLEDGE_REVISION_CONFLICT, KNOWLEDGE_SOURCE_MISSING,
 };
 use crate::mission::artifacts;
 use crate::models::{AppError, Chapter};
@@ -31,6 +31,18 @@ struct StoredKnowledgeObject {
     pub source_session_ids: Vec<String>,
     #[serde(default)]
     pub source_refs: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_review_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archived_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_at: Option<i64>,
     pub created_at: i64,
     pub updated_at: i64,
     #[serde(default)]
@@ -98,8 +110,78 @@ fn knowledge_root_write(project_path: &Path) -> Result<PathBuf, AppError> {
     crate::services::knowledge_paths::resolve_knowledge_root_for_write(project_path)
 }
 
+const DEFAULT_ACTIVE_BRANCH_ID: &str = "branch/main";
+const BRANCH_STATE_FILE: &str = "branch_state.json";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BranchStateDoc {
+    pub schema_version: i32,
+    pub active_branch_id: String,
+    pub updated_at: i64,
+}
+
+fn normalize_branch_id<'a>(value: Option<&'a String>) -> Option<&'a str> {
+    value.map(|s| s.trim()).filter(|s| !s.is_empty())
+}
+
+fn branch_state_path(project_path: &Path) -> PathBuf {
+    knowledge_root_read(project_path).join(BRANCH_STATE_FILE)
+}
+
+fn resolve_active_branch_id(project_path: &Path) -> String {
+    let p = branch_state_path(project_path);
+    if let Ok(raw) = std::fs::read_to_string(&p) {
+        if let Ok(doc) = serde_json::from_str::<BranchStateDoc>(&raw) {
+            let id = doc.active_branch_id.trim();
+            if !id.is_empty() {
+                return id.to_string();
+            }
+        }
+    }
+
+    DEFAULT_ACTIVE_BRANCH_ID.to_string()
+}
+
+fn branch_stale_reason(project_path: &Path, bundle_branch_id: Option<&String>) -> Option<String> {
+    let active = resolve_active_branch_id(project_path);
+    let Some(branch_id) = normalize_branch_id(bundle_branch_id) else {
+        return Some(format!(
+            "bundle.branch_id is missing; active_branch_id={active}"
+        ));
+    };
+
+    if branch_id != active {
+        return Some(format!(
+            "bundle.branch_id={branch_id} does not match active_branch_id={active}"
+        ));
+    }
+
+    None
+}
+
+pub fn validate_bundle_branch_active(
+    project_path: &Path,
+    bundle: &KnowledgeProposalBundle,
+) -> Result<(), AppError> {
+    if let Some(reason) = branch_stale_reason(project_path, bundle.branch_id.as_ref()) {
+        return Err(AppError::invalid_argument(format!(
+            "{KNOWLEDGE_BRANCH_STALE}: {reason}"
+        )));
+    }
+    Ok(())
+}
+
 fn stored_object_path(project_path: &Path, target_ref: &str) -> PathBuf {
     knowledge_root_read(project_path).join(target_ref)
+}
+
+fn history_object_ref(target_ref: &str, revision: i64) -> String {
+    let target_ref = normalize_path(target_ref);
+    if let Some(prefix) = target_ref.strip_suffix(".json") {
+        format!("_history/{prefix}.rev_{revision}.json")
+    } else {
+        format!("_history/{target_ref}.rev_{revision}.json")
+    }
 }
 
 fn read_stored_object(path: &Path) -> Result<Option<StoredKnowledgeObject>, AppError> {
@@ -130,6 +212,54 @@ fn merge_unique(mut base: Vec<String>, extra: &[String]) -> Vec<String> {
     base
 }
 
+pub fn proposal_kinds(bundle: &KnowledgeProposalBundle) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for item in &bundle.proposal_items {
+        let kind = item.kind.trim();
+        if kind.is_empty() {
+            continue;
+        }
+        if seen.insert(kind.to_string()) {
+            out.push(kind.to_string());
+        }
+    }
+    out
+}
+
+pub fn accepted_target_refs(
+    bundle: &KnowledgeProposalBundle,
+    delta: &KnowledgeDelta,
+) -> Vec<String> {
+    let accepted = delta
+        .accepted_item_ids
+        .as_ref()
+        .cloned()
+        .unwrap_or_default();
+    if accepted.is_empty() {
+        return Vec::new();
+    }
+
+    let accepted_set: HashSet<String> = accepted.into_iter().collect();
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for item in &bundle.proposal_items {
+        if !accepted_set.contains(&item.item_id) {
+            continue;
+        }
+        let Some(target_ref) = item.target_ref.as_ref().map(|s| normalize_path(s)) else {
+            continue;
+        };
+        if target_ref.is_empty() {
+            continue;
+        }
+        if seen.insert(target_ref.clone()) {
+            out.push(target_ref);
+        }
+    }
+    out
+}
+
 fn add_conflict(
     conflicts: &mut Vec<KnowledgeConflict>,
     conflict_type: &str,
@@ -148,7 +278,7 @@ fn add_conflict(
 fn kind_allows_auto_if_pass(kind: &str) -> bool {
     matches!(
         kind,
-        "chapter_summary" | "recent_fact" | "foreshadow" | "character"
+        "chapter_summary" | "recent_fact" | "foreshadow"
     )
 }
 
@@ -168,22 +298,116 @@ fn validate_auto_policy_fields(kind: &str, fields: &serde_json::Value) -> bool {
 
             obj.contains_key("status_label")
         }
-        "character" => {
-            let Some(obj) = fields.as_object() else {
-                return false;
-            };
-
-            // Only allow low-risk character state updates to be auto-accepted.
-            for k in obj.keys() {
-                if !matches!(k.as_str(), "character_ref" | "current_state") {
-                    return false;
-                }
-            }
-
-            obj.get("current_state").is_some_and(|v| v.is_array())
-        }
+        // Spec: character updates must be manual/orchestrator-explicit (never auto).
+        "character" => false,
         _ => true,
     }
+}
+
+fn normalize_summary_key(input: &str) -> String {
+    let s = input.trim().to_lowercase();
+    if s.is_empty() {
+        return String::new();
+    }
+
+    let mut out = String::with_capacity(s.len());
+    let mut prev_space = false;
+    for ch in s.chars() {
+        if ch.is_whitespace() {
+            if !prev_space {
+                out.push(' ');
+                prev_space = true;
+            }
+        } else {
+            out.push(ch);
+            prev_space = false;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn foreshadow_progress_rank(status_label: &str) -> Option<i32> {
+    match status_label.trim().to_lowercase().as_str() {
+        "seeded" => Some(0),
+        "active" => Some(1),
+        "partially_paid" => Some(2),
+        "paid" => Some(3),
+        _ => None,
+    }
+}
+
+fn foreshadow_status_regresses(prev: &str, next: &str) -> bool {
+    let prev_norm = prev.trim().to_lowercase();
+    let next_norm = next.trim().to_lowercase();
+
+    if prev_norm == "paid" && next_norm != "paid" {
+        return true;
+    }
+
+    match (foreshadow_progress_rank(&prev_norm), foreshadow_progress_rank(&next_norm)) {
+        (Some(p), Some(n)) => n < p,
+        _ => false,
+    }
+}
+
+fn recent_fact_dir_ref(target_ref: &str) -> Option<String> {
+    let tr = normalize_path(target_ref);
+    if !tr.starts_with("recent_facts/") {
+        return None;
+    }
+    tr.rsplit_once('/').map(|(dir, _)| dir.to_string())
+}
+
+fn load_existing_recent_fact_index(
+    project_path: &Path,
+    dir_ref: &str,
+) -> Vec<(String, String)> {
+    let dir_ref = normalize_path(dir_ref);
+    let Ok(rel) = ensure_safe_relative_path(&dir_ref) else {
+        return Vec::new();
+    };
+    let dir = knowledge_root_read(project_path).join(rel);
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for entry in rd.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if !ft.is_file() {
+            continue;
+        }
+        let Some(name) = entry.file_name().to_str().map(|s| s.to_string()) else {
+            continue;
+        };
+        if !name.ends_with(".json") {
+            continue;
+        }
+        let existing_ref = format!("{dir_ref}/{name}");
+        let Ok(Some(obj)) = read_stored_object(&entry.path()) else {
+            continue;
+        };
+        if obj.kind != "recent_fact" {
+            continue;
+        }
+        if obj.status == "archived" {
+            continue;
+        }
+        let Some(summary) = obj.fields.get("summary").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let key = normalize_summary_key(summary);
+        if key.is_empty() {
+            continue;
+        }
+        out.push((existing_ref, key));
+        if out.len() >= 200 {
+            break;
+        }
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -298,7 +522,9 @@ pub fn generate_proposal_bundle_after_closeout(
         .or_else(|| layer1_cc.as_ref().and_then(|cc| cc.scope_locator.clone()))
         .map(|s| normalize_path(&s));
 
-    let chapter_locator = locator.clone().unwrap_or_else(|| format!("unknown/{bundle_id}.json"));
+    let chapter_locator = locator
+        .clone()
+        .unwrap_or_else(|| format!("unknown/{bundle_id}.json"));
     let chapter_slug = slugify_locator(&chapter_locator);
 
     // ── Chapter summary proposal ───────────────────────────────
@@ -454,7 +680,8 @@ pub fn generate_proposal_bundle_after_closeout(
                     "chapter closeout: update character current_state ({})",
                     char_ref
                 ),
-                accept_policy: KnowledgeAcceptPolicy::AutoIfPass,
+                // Spec: character updates require explicit decision (no auto accept).
+                accept_policy: KnowledgeAcceptPolicy::Manual,
             });
         }
     }
@@ -557,7 +784,7 @@ pub fn generate_proposal_bundle_after_closeout(
         schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
         bundle_id,
         scope_ref,
-        branch_id: None,
+        branch_id: Some(resolve_active_branch_id(project_path)),
         source_session_id,
         source_review_id,
         generated_at: now,
@@ -565,7 +792,10 @@ pub fn generate_proposal_bundle_after_closeout(
     })
 }
 
-fn load_chapter_summary_fields(project_path: &Path, chapter_locator: &str) -> Option<serde_json::Value> {
+fn load_chapter_summary_fields(
+    project_path: &Path,
+    chapter_locator: &str,
+) -> Option<serde_json::Value> {
     let p = project_path.join("manuscripts").join(chapter_locator);
     let ch: Chapter = crate::services::read_json(&p).ok()?;
     let summary = ch.summary.unwrap_or_default();
@@ -604,6 +834,16 @@ pub fn gate_bundle(
         rollback: None,
     };
 
+    if let Some(reason) = branch_stale_reason(project_path, bundle.branch_id.as_ref()) {
+        add_conflict(
+            &mut delta.conflicts,
+            KNOWLEDGE_BRANCH_STALE,
+            reason,
+            None,
+            None,
+        );
+    }
+
     if bundle.source_session_id.trim().is_empty() {
         add_conflict(
             &mut delta.conflicts,
@@ -630,6 +870,8 @@ pub fn gate_bundle(
     }
 
     // Build targets/changes and detect conflicts.
+    let mut recent_fact_index_cache: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut recent_fact_seen_in_bundle: HashMap<String, HashMap<String, String>> = HashMap::new();
     for item in &bundle.proposal_items {
         let target_ref = item
             .target_ref
@@ -727,6 +969,51 @@ pub fn gate_bundle(
             continue;
         }
 
+        // Semantic dedupe: recent_fact summary must not duplicate accepted truth within the same dir.
+        if item.kind == "recent_fact" {
+            if let Some(summary) = item.fields.get("summary").and_then(|v| v.as_str()) {
+                let key = normalize_summary_key(summary);
+                if !key.is_empty() {
+                    if let Some(dir_ref) = recent_fact_dir_ref(tr) {
+                        let dir_seen = recent_fact_seen_in_bundle
+                            .entry(dir_ref.clone())
+                            .or_default();
+                        if let Some(prev_item_id) = dir_seen.get(&key) {
+                            add_conflict(
+                                &mut delta.conflicts,
+                                KNOWLEDGE_CANON_CONFLICT,
+                                format!(
+                                    "duplicate recent_fact summary within bundle (matches item_id={prev_item_id})"
+                                ),
+                                Some(item.item_id.clone()),
+                                Some(tr.to_string()),
+                            );
+                        } else {
+                            dir_seen.insert(key.clone(), item.item_id.clone());
+                        }
+
+                        let idx = recent_fact_index_cache
+                            .entry(dir_ref.clone())
+                            .or_insert_with(|| load_existing_recent_fact_index(project_path, &dir_ref));
+                        if let Some((existing_ref, _)) = idx
+                            .iter()
+                            .find(|(r, s)| s == &key && r.as_str() != tr)
+                        {
+                            add_conflict(
+                                &mut delta.conflicts,
+                                KNOWLEDGE_CANON_CONFLICT,
+                                format!(
+                                    "duplicate recent_fact summary already accepted at {existing_ref}"
+                                ),
+                                Some(item.item_id.clone()),
+                                Some(tr.to_string()),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         // Target existence and revision conflict checks.
         let p = stored_object_path(project_path, tr);
         match item.op {
@@ -763,6 +1050,26 @@ pub fn gate_bundle(
                                     Some(item.item_id.clone()),
                                     Some(tr.to_string()),
                                 );
+                            }
+                        }
+
+                        // Semantic contradiction: foreshadow status must not regress.
+                        if item.kind == "foreshadow" {
+                            if let (Some(prev), Some(next)) = (
+                                obj.fields.get("status_label").and_then(|v| v.as_str()),
+                                item.fields.get("status_label").and_then(|v| v.as_str()),
+                            ) {
+                                if foreshadow_status_regresses(prev, next) {
+                                    add_conflict(
+                                        &mut delta.conflicts,
+                                        KNOWLEDGE_CANON_CONFLICT,
+                                        format!(
+                                            "foreshadow status regressed: prev={prev} next={next}"
+                                        ),
+                                        Some(item.item_id.clone()),
+                                        Some(tr.to_string()),
+                                    );
+                                }
                             }
                         }
                     }
@@ -819,6 +1126,40 @@ pub fn gate_bundle(
     Ok(delta)
 }
 
+pub fn repropose_bundle_refresh_target_revisions(
+    project_path: &Path,
+    bundle: &KnowledgeProposalBundle,
+) -> Result<KnowledgeProposalBundle, AppError> {
+    let mut out = bundle.clone();
+    out.bundle_id = format!("kbundle_{}", uuid::Uuid::new_v4());
+    out.generated_at = chrono::Utc::now().timestamp_millis();
+
+    for item in &mut out.proposal_items {
+        let Some(tr) = item
+            .target_ref
+            .as_ref()
+            .map(|s| normalize_path(s))
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        item.target_ref = Some(tr.clone());
+
+        if !matches!(item.op, KnowledgeOp::Update | KnowledgeOp::Archive | KnowledgeOp::Restore) {
+            continue;
+        }
+        if ensure_safe_relative_path(&tr).is_err() {
+            continue;
+        }
+        let p = stored_object_path(project_path, &tr);
+        if let Ok(Some(obj)) = read_stored_object(&p) {
+            item.target_revision = Some(obj.revision);
+        }
+    }
+
+    Ok(out)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct RollbackManifest {
     pub schema_version: i32,
@@ -847,6 +1188,7 @@ pub fn apply_accepted(
     mission_id: &str,
     bundle: &KnowledgeProposalBundle,
     delta: &KnowledgeDelta,
+    actor: KnowledgeDecisionActor,
 ) -> Result<KnowledgeDelta, AppError> {
     if delta.status != KnowledgeDeltaStatus::Accepted {
         return Err(AppError::invalid_argument(
@@ -859,6 +1201,8 @@ pub fn apply_accepted(
         ));
     }
 
+    validate_bundle_branch_active(project_path, bundle)?;
+
     let accepted = delta.accepted_item_ids.clone().unwrap_or_default();
     if accepted.is_empty() {
         return Err(AppError::invalid_argument(
@@ -867,6 +1211,10 @@ pub fn apply_accepted(
     }
 
     let now = chrono::Utc::now().timestamp_millis();
+    let accepted_by = match actor {
+        KnowledgeDecisionActor::User => "user",
+        KnowledgeDecisionActor::Orchestrator => "orchestrator",
+    };
     let root = knowledge_root_write(project_path)?;
 
     let rollback_token = format!("rbk_{}", delta.knowledge_delta_id);
@@ -879,6 +1227,8 @@ pub fn apply_accepted(
         target_ref: String,
         full_path: PathBuf,
         existed: bool,
+        prev: Option<StoredKnowledgeObject>,
+        history_ref: Option<String>,
     }
 
     // ── Preflight: validate all accepted items before any writes ─
@@ -903,6 +1253,8 @@ pub fn apply_accepted(
             })?;
         let full_path = root.join(ensure_safe_relative_path(&target_ref)?);
         let existed = full_path.exists();
+        let mut prev: Option<StoredKnowledgeObject> = None;
+        let mut history_ref: Option<String> = None;
 
         match item.op {
             KnowledgeOp::Create => {
@@ -931,6 +1283,8 @@ pub fn apply_accepted(
                         )));
                     }
                 }
+                history_ref = Some(history_object_ref(&target_ref, current.revision));
+                prev = Some(current);
             }
         }
 
@@ -939,6 +1293,8 @@ pub fn apply_accepted(
             target_ref,
             full_path,
             existed,
+            prev,
+            history_ref,
         });
     }
 
@@ -966,6 +1322,14 @@ pub fn apply_accepted(
             existed: p.existed,
             backup_file,
         });
+
+        if let Some(history_ref) = p.history_ref.as_ref() {
+            manifest.entries.push(RollbackEntry {
+                rel_path: history_ref.clone(),
+                existed: false,
+                backup_file: None,
+            });
+        }
     }
 
     crate::utils::atomic_write::atomic_write_json(&rb_dir.join("manifest.json"), &manifest)?;
@@ -980,7 +1344,10 @@ pub fn apply_accepted(
             }
 
             // Re-check revision just before write (best-effort OCC).
-            if matches!(item.op, KnowledgeOp::Update | KnowledgeOp::Archive | KnowledgeOp::Restore) {
+            if matches!(
+                item.op,
+                KnowledgeOp::Update | KnowledgeOp::Archive | KnowledgeOp::Restore
+            ) {
                 let current = read_stored_object(&p.full_path)?.ok_or_else(|| {
                     AppError::invalid_argument(format!(
                         "{KNOWLEDGE_CANON_CONFLICT}: target missing for update"
@@ -996,21 +1363,51 @@ pub fn apply_accepted(
                 }
             }
 
-            let prev = read_stored_object(&p.full_path)?;
-            let (created_at, next_revision, mut source_session_ids, mut source_refs) = match prev {
+            let (
+                created_at,
+                next_revision,
+                mut source_session_ids,
+                mut source_refs,
+                existing_source_review_id,
+                previous_archived_at,
+            ) = match p.prev.clone() {
                 Some(obj) => (
                     obj.created_at,
                     obj.revision.saturating_add(1),
                     obj.source_session_ids,
                     obj.source_refs,
+                    obj.source_review_id,
+                    obj.archived_at,
                 ),
                 None => (
                     now,
                     1,
                     vec![bundle.source_session_id.clone()],
                     Vec::new(),
+                    None,
+                    None,
                 ),
             };
+
+            if let (Some(prev), Some(history_ref)) = (p.prev.as_ref(), p.history_ref.as_ref()) {
+                let history_path = root.join(ensure_safe_relative_path(history_ref)?);
+                if let Some(parent) = history_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+
+                let mut superseded = prev.clone();
+                superseded.status = "superseded".to_string();
+                superseded.superseded_by = Some(format!("{}:{}", item.kind, p.target_ref));
+                superseded.superseded_at = Some(now);
+                superseded.updated_at = now;
+
+                crate::utils::atomic_write::atomic_write_json(&history_path, &superseded)?;
+            }
+
+            let source_review_id = bundle
+                .source_review_id
+                .clone()
+                .or(existing_source_review_id);
 
             source_session_ids =
                 merge_unique(source_session_ids, &[bundle.source_session_id.clone()]);
@@ -1019,6 +1416,12 @@ pub fn apply_accepted(
             let status = match item.op {
                 KnowledgeOp::Archive => "archived",
                 _ => "accepted",
+            };
+            let archived_at = match item.op {
+                KnowledgeOp::Archive => Some(now),
+                KnowledgeOp::Restore => None,
+                KnowledgeOp::Update => None,
+                KnowledgeOp::Create => previous_archived_at,
             };
 
             let stored = StoredKnowledgeObject {
@@ -1030,6 +1433,12 @@ pub fn apply_accepted(
                 revision: next_revision,
                 source_session_ids,
                 source_refs,
+                source_review_id,
+                accepted_by: Some(accepted_by.to_string()),
+                accepted_at: Some(now),
+                archived_at,
+                superseded_by: None,
+                superseded_at: None,
                 created_at,
                 updated_at: now,
                 fields: item.fields.clone(),
@@ -1114,7 +1523,10 @@ pub fn rollback(
     Ok((restored, deleted))
 }
 
-pub fn build_pending_decision(bundle: &KnowledgeProposalBundle, delta: &KnowledgeDelta) -> PendingKnowledgeDecision {
+pub fn build_pending_decision(
+    bundle: &KnowledgeProposalBundle,
+    delta: &KnowledgeDelta,
+) -> PendingKnowledgeDecision {
     PendingKnowledgeDecision {
         schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
         bundle_id: bundle.bundle_id.clone(),
@@ -1162,12 +1574,34 @@ pub fn apply_decision_to_delta(
         ));
     }
 
-    let bundle_ids: HashSet<String> = bundle.proposal_items.iter().map(|i| i.item_id.clone()).collect();
+    let bundle_ids: HashSet<String> = bundle
+        .proposal_items
+        .iter()
+        .map(|i| i.item_id.clone())
+        .collect();
     for id in accepted_set.iter().chain(rejected_set.iter()) {
         if !bundle_ids.contains(id) {
             return Err(AppError::invalid_argument(
                 "decision references unknown item_id",
             ));
+        }
+    }
+
+    // Enforce accept_policy=orchestrator_only.
+    if decision.actor != KnowledgeDecisionActor::Orchestrator {
+        for item_id in &accepted {
+            let policy = bundle
+                .proposal_items
+                .iter()
+                .find(|it| it.item_id == *item_id)
+                .map(|it| it.accept_policy.clone())
+                .unwrap_or(KnowledgeAcceptPolicy::Manual);
+
+            if policy == KnowledgeAcceptPolicy::OrchestratorOnly {
+                return Err(AppError::invalid_argument(format!(
+                    "{KNOWLEDGE_POLICY_CONFLICT}: accept_policy=orchestrator_only cannot be accepted by user (item_id={item_id})"
+                )));
+            }
         }
     }
 
@@ -1222,9 +1656,9 @@ pub fn apply_decision_to_delta(
 mod tests {
     use super::*;
     use crate::knowledge::types::{
-        KnowledgeAcceptPolicy, KnowledgeDecisionInput, KnowledgeDeltaStatus,
-        KnowledgeOp, KnowledgeProposalBundle, KnowledgeProposalItem,
-        KNOWLEDGE_REVISION_CONFLICT,
+        KnowledgeAcceptPolicy, KnowledgeDecisionActor, KnowledgeDecisionInput,
+        KnowledgeDeltaStatus, KnowledgeOp, KnowledgeProposalBundle, KnowledgeProposalItem,
+        KNOWLEDGE_BRANCH_STALE, KNOWLEDGE_CANON_CONFLICT, KNOWLEDGE_REVISION_CONFLICT,
     };
 
     fn temp_project_dir() -> PathBuf {
@@ -1260,7 +1694,7 @@ mod tests {
             schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
             bundle_id: format!("kbundle_{}", uuid::Uuid::new_v4()),
             scope_ref: "chapter:vol1/ch1.json".to_string(),
-            branch_id: None,
+            branch_id: Some(DEFAULT_ACTIVE_BRANCH_ID.to_string()),
             source_session_id: "sess_test".to_string(),
             source_review_id: Some("rev_test".to_string()),
             generated_at: chrono::Utc::now().timestamp_millis(),
@@ -1360,7 +1794,8 @@ mod tests {
     #[test]
     fn gate_detects_revision_conflict() {
         let project = temp_project_dir();
-        let root = crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
         let target_ref = "chapter_summaries/vol1/ch1.json";
         let full = root.join(target_ref);
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -1375,6 +1810,12 @@ mod tests {
                 revision: 2,
                 source_session_ids: vec!["s".to_string()],
                 source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
                 created_at: 1,
                 updated_at: 2,
                 fields: json!({"summary": "old"}),
@@ -1393,6 +1834,177 @@ mod tests {
         let bundle = mk_bundle(vec![item.clone()]);
         let delta = gate_bundle(&project, &bundle, None).unwrap();
         assert!(delta
+            .conflicts
+            .iter()
+            .any(|c| c.conflict_type == KNOWLEDGE_REVISION_CONFLICT));
+    }
+
+    #[test]
+    fn gate_detects_foreshadow_status_regression() {
+        let project = temp_project_dir();
+
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let target_ref = "foreshadow/foo.json";
+        let full = root.join(target_ref);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        crate::utils::atomic_write::atomic_write_json(
+            &full,
+            &StoredKnowledgeObject {
+                schema_version: STORED_OBJECT_SCHEMA_VERSION,
+                r#ref: "foreshadow:foo".to_string(),
+                kind: "foreshadow".to_string(),
+                status: "accepted".to_string(),
+                branch_id: None,
+                revision: 3,
+                source_session_ids: vec!["s".to_string()],
+                source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
+                created_at: 1,
+                updated_at: 2,
+                fields: json!({
+                    "seed_ref": "seed:a",
+                    "status_label": "paid",
+                    "current_notes": ""
+                }),
+            },
+        )
+        .unwrap();
+
+        let item = mk_item(
+            "foreshadow",
+            KnowledgeOp::Update,
+            target_ref,
+            Some(3),
+            KnowledgeAcceptPolicy::Manual,
+            json!({
+                "seed_ref": "seed:a",
+                "status_label": "active",
+                "current_notes": ""
+            }),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = gate_bundle(&project, &bundle, None).unwrap();
+
+        assert!(delta.conflicts.iter().any(|c| {
+            c.conflict_type == KNOWLEDGE_CANON_CONFLICT
+                && c.item_id.as_deref() == Some(item.item_id.as_str())
+        }));
+    }
+
+    #[test]
+    fn gate_detects_duplicate_recent_fact_summary_against_existing() {
+        let project = temp_project_dir();
+
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let existing_ref = "recent_facts/vol1_ch1/f1.json";
+        let full = root.join(existing_ref);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        crate::utils::atomic_write::atomic_write_json(
+            &full,
+            &StoredKnowledgeObject {
+                schema_version: STORED_OBJECT_SCHEMA_VERSION,
+                r#ref: "recent_fact:f1".to_string(),
+                kind: "recent_fact".to_string(),
+                status: "accepted".to_string(),
+                branch_id: None,
+                revision: 1,
+                source_session_ids: vec!["s".to_string()],
+                source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
+                created_at: 1,
+                updated_at: 2,
+                fields: json!({"summary": "Same fact"}),
+            },
+        )
+        .unwrap();
+
+        let item = mk_item(
+            "recent_fact",
+            KnowledgeOp::Create,
+            "recent_facts/vol1_ch1/f2.json",
+            None,
+            KnowledgeAcceptPolicy::Manual,
+            json!({"summary": "Same fact"}),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = gate_bundle(&project, &bundle, None).unwrap();
+
+        assert!(delta.conflicts.iter().any(|c| {
+            c.conflict_type == KNOWLEDGE_CANON_CONFLICT
+                && c.item_id.as_deref() == Some(item.item_id.as_str())
+        }));
+    }
+
+    #[test]
+    fn repropose_refreshes_target_revision_and_clears_revision_conflict() {
+        let project = temp_project_dir();
+
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let target_ref = "terms/foo.json";
+        let full = root.join(target_ref);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        crate::utils::atomic_write::atomic_write_json(
+            &full,
+            &StoredKnowledgeObject {
+                schema_version: STORED_OBJECT_SCHEMA_VERSION,
+                r#ref: "term:foo".to_string(),
+                kind: "term".to_string(),
+                status: "accepted".to_string(),
+                branch_id: None,
+                revision: 2,
+                source_session_ids: vec!["s".to_string()],
+                source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
+                created_at: 1,
+                updated_at: 2,
+                fields: json!({"a": 1}),
+            },
+        )
+        .unwrap();
+
+        let item = mk_item(
+            "term",
+            KnowledgeOp::Update,
+            target_ref,
+            Some(1),
+            KnowledgeAcceptPolicy::Manual,
+            json!({"a": 2}),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = gate_bundle(&project, &bundle, None).unwrap();
+        assert!(delta
+            .conflicts
+            .iter()
+            .any(|c| c.conflict_type == KNOWLEDGE_REVISION_CONFLICT));
+
+        let rebased = repropose_bundle_refresh_target_revisions(&project, &bundle).unwrap();
+        let rebased_item = rebased
+            .proposal_items
+            .iter()
+            .find(|it| it.item_id == item.item_id)
+            .unwrap();
+        assert_eq!(rebased_item.target_revision, Some(2));
+
+        let delta2 = gate_bundle(&project, &rebased, None).unwrap();
+        assert!(!delta2
             .conflicts
             .iter()
             .any(|c| c.conflict_type == KNOWLEDGE_REVISION_CONFLICT));
@@ -1431,8 +2043,19 @@ mod tests {
             rollback: None,
         };
 
-        let applied = apply_accepted(&project, mission_id, &bundle, &delta).unwrap();
-        let token = applied.rollback.as_ref().and_then(|r| r.token.clone()).unwrap();
+        let applied = apply_accepted(
+            &project,
+            mission_id,
+            &bundle,
+            &delta,
+            KnowledgeDecisionActor::User,
+        )
+        .unwrap();
+        let token = applied
+            .rollback
+            .as_ref()
+            .and_then(|r| r.token.clone())
+            .unwrap();
 
         let root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(&project);
         assert!(root.join("terms/foo.json").exists());
@@ -1446,7 +2069,8 @@ mod tests {
         let project = temp_project_dir();
         let mission_id = "mis_test_apply_update";
 
-        let root = crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
         let target_ref = "terms/foo.json";
         let full = root.join(target_ref);
         std::fs::create_dir_all(full.parent().unwrap()).unwrap();
@@ -1461,6 +2085,12 @@ mod tests {
                 revision: 5,
                 source_session_ids: vec!["s".to_string()],
                 source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
                 created_at: 1,
                 updated_at: 2,
                 fields: json!({"a": 1}),
@@ -1496,19 +2126,130 @@ mod tests {
             rollback: None,
         };
 
-        let applied = apply_accepted(&project, mission_id, &bundle, &delta).unwrap();
-        let token = applied.rollback.as_ref().and_then(|r| r.token.clone()).unwrap();
+        let applied = apply_accepted(
+            &project,
+            mission_id,
+            &bundle,
+            &delta,
+            KnowledgeDecisionActor::User,
+        )
+        .unwrap();
+        let token = applied
+            .rollback
+            .as_ref()
+            .and_then(|r| r.token.clone())
+            .unwrap();
 
         let raw = std::fs::read_to_string(&full).unwrap();
         let obj: StoredKnowledgeObject = serde_json::from_str(&raw).unwrap();
         assert_eq!(obj.revision, 6);
         assert_eq!(obj.fields["a"], json!(2));
+        assert!(obj.archived_at.is_none());
+
+        let history = root.join("_history/terms/foo.rev_5.json");
+        let raw = std::fs::read_to_string(&history).unwrap();
+        let superseded: StoredKnowledgeObject = serde_json::from_str(&raw).unwrap();
+        assert_eq!(superseded.status, "superseded");
+        assert_eq!(
+            superseded.superseded_by.as_deref(),
+            Some("term:terms/foo.json")
+        );
+        assert!(superseded.superseded_at.is_some());
 
         rollback(&project, mission_id, &token).unwrap();
         let raw = std::fs::read_to_string(&full).unwrap();
         let obj: StoredKnowledgeObject = serde_json::from_str(&raw).unwrap();
         assert_eq!(obj.revision, 5);
         assert_eq!(obj.fields["a"], json!(1));
+        assert!(!history.exists());
+    }
+
+    #[test]
+    fn apply_archive_sets_archived_at_and_preserves_superseded_snapshot() {
+        let project = temp_project_dir();
+        let mission_id = "mis_test_apply_archive";
+
+        let root =
+            crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project).unwrap();
+        let target_ref = "terms/foo.json";
+        let full = root.join(target_ref);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        crate::utils::atomic_write::atomic_write_json(
+            &full,
+            &StoredKnowledgeObject {
+                schema_version: STORED_OBJECT_SCHEMA_VERSION,
+                r#ref: "term:foo".to_string(),
+                kind: "term".to_string(),
+                status: "accepted".to_string(),
+                branch_id: None,
+                revision: 2,
+                source_session_ids: vec!["s".to_string()],
+                source_refs: vec!["r".to_string()],
+                source_review_id: None,
+                accepted_by: None,
+                accepted_at: None,
+                archived_at: None,
+                superseded_by: None,
+                superseded_at: None,
+                created_at: 1,
+                updated_at: 2,
+                fields: json!({"a": 1}),
+            },
+        )
+        .unwrap();
+
+        let item = mk_item(
+            "term",
+            KnowledgeOp::Archive,
+            target_ref,
+            Some(2),
+            KnowledgeAcceptPolicy::Manual,
+            json!({"a": 1}),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = KnowledgeDelta {
+            schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
+            knowledge_delta_id: "kdelta_apply_archive".to_string(),
+            status: KnowledgeDeltaStatus::Accepted,
+            scope_ref: bundle.scope_ref.clone(),
+            branch_id: None,
+            source_session_id: bundle.source_session_id.clone(),
+            source_review_id: bundle.source_review_id.clone(),
+            generated_at: bundle.generated_at,
+            targets: Vec::new(),
+            changes: Vec::new(),
+            evidence_refs: Vec::new(),
+            conflicts: Vec::new(),
+            accepted_item_ids: Some(vec![item.item_id.clone()]),
+            rejected_item_ids: None,
+            applied_at: None,
+            rollback: None,
+        };
+
+        apply_accepted(
+            &project,
+            mission_id,
+            &bundle,
+            &delta,
+            KnowledgeDecisionActor::User,
+        )
+        .unwrap();
+
+        let raw = std::fs::read_to_string(&full).unwrap();
+        let obj: StoredKnowledgeObject = serde_json::from_str(&raw).unwrap();
+        assert_eq!(obj.status, "archived");
+        assert!(obj.archived_at.is_some());
+        assert!(obj.superseded_at.is_none());
+
+        let history = root.join("_history/terms/foo.rev_2.json");
+        let raw = std::fs::read_to_string(&history).unwrap();
+        let superseded: StoredKnowledgeObject = serde_json::from_str(&raw).unwrap();
+        assert_eq!(superseded.status, "superseded");
+        assert_eq!(
+            superseded.superseded_by.as_deref(),
+            Some("term:terms/foo.json")
+        );
+        assert!(superseded.superseded_at.is_some());
     }
 
     #[test]
@@ -1552,7 +2293,14 @@ mod tests {
             rollback: None,
         };
 
-        let err = apply_accepted(&project, mission_id, &bundle, &delta).unwrap_err();
+        let err = apply_accepted(
+            &project,
+            mission_id,
+            &bundle,
+            &delta,
+            KnowledgeDecisionActor::User,
+        )
+        .unwrap_err();
         assert!(err.message.contains("KNOWLEDGE_CANON_CONFLICT"));
 
         let root = crate::services::knowledge_paths::resolve_knowledge_root_for_read(&project);
@@ -1598,6 +2346,7 @@ mod tests {
             schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
             bundle_id: bundle.bundle_id.clone(),
             delta_id: delta.knowledge_delta_id.clone(),
+            actor: KnowledgeDecisionActor::User,
             accepted_item_ids: vec![item.item_id.clone()],
             rejected_item_ids: Vec::new(),
         };
@@ -1609,11 +2358,16 @@ mod tests {
         decision_reject(&bundle, &mut delta, &item.item_id);
     }
 
-    fn decision_reject(bundle: &KnowledgeProposalBundle, delta: &mut KnowledgeDelta, item_id: &str) {
+    fn decision_reject(
+        bundle: &KnowledgeProposalBundle,
+        delta: &mut KnowledgeDelta,
+        item_id: &str,
+    ) {
         let decision = KnowledgeDecisionInput {
             schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
             bundle_id: bundle.bundle_id.clone(),
             delta_id: delta.knowledge_delta_id.clone(),
+            actor: KnowledgeDecisionActor::User,
             accepted_item_ids: Vec::new(),
             rejected_item_ids: vec![item_id.to_string()],
         };
@@ -1622,5 +2376,111 @@ mod tests {
             .conflicts
             .iter()
             .all(|c| c.item_id.as_deref() != Some(item_id)));
+    }
+
+    #[test]
+    fn gate_adds_branch_stale_conflict_when_bundle_branch_mismatches_active() {
+        let item = mk_item(
+            "chapter_summary",
+            KnowledgeOp::Create,
+            "chapter_summaries/vol1/ch1.json",
+            None,
+            KnowledgeAcceptPolicy::Manual,
+            json!({"summary": "x"}),
+        );
+        let mut bundle = mk_bundle(vec![item]);
+        bundle.branch_id = Some("branch/other".to_string());
+
+        let delta = gate_bundle(&temp_project_dir(), &bundle, None).unwrap();
+        assert!(delta
+            .conflicts
+            .iter()
+            .any(|c| c.conflict_type == KNOWLEDGE_BRANCH_STALE && c.item_id.is_none()));
+    }
+
+    #[test]
+    fn decide_disallows_user_accepting_orchestrator_only_item() {
+        let item = mk_item(
+            "term",
+            KnowledgeOp::Create,
+            "terms/foo.json",
+            None,
+            KnowledgeAcceptPolicy::OrchestratorOnly,
+            json!({"summary": "x"}),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = KnowledgeDelta {
+            schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
+            knowledge_delta_id: "kdelta_orch_only".to_string(),
+            status: KnowledgeDeltaStatus::Proposed,
+            scope_ref: bundle.scope_ref.clone(),
+            branch_id: bundle.branch_id.clone(),
+            source_session_id: bundle.source_session_id.clone(),
+            source_review_id: bundle.source_review_id.clone(),
+            generated_at: bundle.generated_at,
+            targets: Vec::new(),
+            changes: Vec::new(),
+            evidence_refs: Vec::new(),
+            conflicts: Vec::new(),
+            accepted_item_ids: None,
+            rejected_item_ids: None,
+            applied_at: None,
+            rollback: None,
+        };
+
+        let decision = KnowledgeDecisionInput {
+            schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
+            bundle_id: bundle.bundle_id.clone(),
+            delta_id: delta.knowledge_delta_id.clone(),
+            actor: KnowledgeDecisionActor::User,
+            accepted_item_ids: vec![item.item_id.clone()],
+            rejected_item_ids: Vec::new(),
+        };
+
+        let err = apply_decision_to_delta(&bundle, delta, &decision).unwrap_err();
+        assert!(err.message.contains(KNOWLEDGE_POLICY_CONFLICT));
+    }
+
+    #[test]
+    fn decide_allows_orchestrator_accepting_orchestrator_only_item() {
+        let item = mk_item(
+            "term",
+            KnowledgeOp::Create,
+            "terms/foo.json",
+            None,
+            KnowledgeAcceptPolicy::OrchestratorOnly,
+            json!({"summary": "x"}),
+        );
+        let bundle = mk_bundle(vec![item.clone()]);
+        let delta = KnowledgeDelta {
+            schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
+            knowledge_delta_id: "kdelta_orch_only_ok".to_string(),
+            status: KnowledgeDeltaStatus::Proposed,
+            scope_ref: bundle.scope_ref.clone(),
+            branch_id: bundle.branch_id.clone(),
+            source_session_id: bundle.source_session_id.clone(),
+            source_review_id: bundle.source_review_id.clone(),
+            generated_at: bundle.generated_at,
+            targets: Vec::new(),
+            changes: Vec::new(),
+            evidence_refs: Vec::new(),
+            conflicts: Vec::new(),
+            accepted_item_ids: None,
+            rejected_item_ids: None,
+            applied_at: None,
+            rollback: None,
+        };
+
+        let decision = KnowledgeDecisionInput {
+            schema_version: crate::knowledge::types::KNOWLEDGE_SCHEMA_VERSION,
+            bundle_id: bundle.bundle_id.clone(),
+            delta_id: delta.knowledge_delta_id.clone(),
+            actor: KnowledgeDecisionActor::Orchestrator,
+            accepted_item_ids: vec![item.item_id.clone()],
+            rejected_item_ids: Vec::new(),
+        };
+
+        let updated = apply_decision_to_delta(&bundle, delta, &decision).unwrap();
+        assert_eq!(updated.accepted_item_ids.unwrap_or_default().len(), 1);
     }
 }

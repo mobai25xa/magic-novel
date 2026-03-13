@@ -1,4 +1,5 @@
 mod contract;
+pub mod card;
 pub mod migration;
 pub mod migration_engine;
 pub mod paths;
@@ -12,6 +13,7 @@ pub mod types;
 #[cfg(test)]
 mod tests;
 
+pub use card::*;
 pub use migration::*;
 pub use migration_engine::*;
 pub use paths::*;

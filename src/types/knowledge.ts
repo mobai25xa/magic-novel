@@ -2,6 +2,8 @@ export type KnowledgeItemOp = 'create' | 'update' | 'archive' | 'restore'
 
 export type KnowledgeAcceptPolicy = 'auto_if_pass' | 'manual' | 'orchestrator_only'
 
+export type KnowledgeDecisionActor = 'user' | 'orchestrator'
+
 export type KnowledgeDeltaStatus = 'proposed' | 'accepted' | 'applied' | 'rejected'
 
 export type KnowledgeConflict = {
@@ -74,8 +76,10 @@ export type KnowledgeDelta = {
 } & Record<string, unknown>
 
 export type KnowledgeDecisionInput = {
-  bundle_id?: string
-  delta_id?: string
+  schema_version: number
+  bundle_id: string
+  delta_id: string
+  actor?: KnowledgeDecisionActor
   accepted_item_ids: string[]
   rejected_item_ids: string[]
 } & Record<string, unknown>

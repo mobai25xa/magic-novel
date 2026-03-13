@@ -141,6 +141,9 @@ export function KnowledgeDecisionPanel({ items, disabled, onSubmit, className }:
   const handleSetDecision = useCallback((item: KnowledgeDecisionItemLike, next: DecisionOverride) => {
     const itemId = item.item_id
     const policy = normalizeAcceptPolicy(item.accept_policy)
+    if (policy === 'orchestrator_only' && next === 'accept') {
+      return
+    }
     const defaultDecision: Decision = policy === 'auto_if_pass' ? 'accept' : 'undecided'
 
     setOverrides((prev) => {
@@ -314,7 +317,8 @@ export function KnowledgeDecisionPanel({ items, disabled, onSubmit, className }:
                     variant={decision === 'accept' ? 'default' : 'outline'}
                     className="text-xs font-medium disabled:opacity-50"
                     onClick={() => handleSetDecision(item, 'accept')}
-                    disabled={disabled}
+                    disabled={disabled || policy === 'orchestrator_only'}
+                    title={policy === 'orchestrator_only' ? 'orchestrator_only items cannot be accepted by user' : undefined}
                   >
                     Accept
                   </Button>

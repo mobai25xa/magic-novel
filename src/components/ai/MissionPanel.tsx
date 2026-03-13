@@ -448,7 +448,6 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
   // Load initial status from backend
   const refreshStatus = useCallback(async () => {
-    const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes, knowledgeRes, knowledgeTimelineRes] = await Promise.allSettled([
     const [statusRes, layer1Res, packRes, reviewRes, reviewListRes, decisionRes, knowledgeRes, knowledgeTimelineRes, macroRes] = await Promise.allSettled([
       missionGetStatusFeature(projectPath, missionId),
       missionLayer1GetFeature(projectPath, missionId),
@@ -571,7 +570,6 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     setKnowledgeAcceptedByItemId(next)
   }, [knowledgeLatest?.bundle])
 
-  // Optional P1: auto-refresh when backend emits Layer1/ContextPack events.
   // Optional P1: auto-refresh when backend emits Layer1/ContextPack/Macro events.
   useEffect(() => {
     const layer1Ts = missionUi?.layer1UpdatedAt ?? 0
@@ -584,8 +582,6 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
     const packChanged = packTs > 0 && packTs !== lastContextPackBuiltAtRef.current
     const reviewChanged = reviewTs > 0 && reviewTs !== lastReviewUpdatedAtRef.current
     const knowledgeChanged = knowledgeTs > 0 && knowledgeTs !== lastKnowledgeUpdatedAtRef.current
-
-    if (!layer1Changed && !packChanged && !reviewChanged && !knowledgeChanged) {
     const macroChanged = macroTs > 0 && macroTs !== lastMacroStateUpdatedAtRef.current
 
     if (!layer1Changed && !packChanged && !reviewChanged && !knowledgeChanged && !macroChanged) {
@@ -616,7 +612,6 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       pendingAutoRefreshRef.current = null
       void refreshStatus()
     }, 120)
-  }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, missionUi?.knowledgeUpdatedAt, refreshStatus])
   }, [missionUi?.layer1UpdatedAt, missionUi?.contextPackBuiltAt, missionUi?.reviewUpdatedAt, missionUi?.knowledgeUpdatedAt, missionUi?.macroStateUpdatedAt, refreshStatus])
 
   useEffect(() => {
@@ -750,6 +745,12 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
       return
     }
 
+    const deltaId = knowledgeLatest?.delta?.knowledge_delta_id
+    if (!deltaId) {
+      setKnowledgeActionError('Missing knowledge delta_id for decision')
+      return
+    }
+
     const accepted_item_ids = bundle.proposal_items
       .filter((item) => Boolean(knowledgeAcceptedByItemId[item.item_id]))
       .map((item) => item.item_id)
@@ -764,8 +765,10 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
         project_path: projectPath,
         mission_id: missionId,
         decision: {
+          schema_version: 1,
+          actor: 'user',
           bundle_id: bundle.bundle_id,
-          delta_id: knowledgeLatest?.delta?.knowledge_delta_id,
+          delta_id: deltaId,
           accepted_item_ids,
           rejected_item_ids,
         },
@@ -885,7 +888,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
   const knowledgeDefaultOpen = knowledgeConflictCount > 0 || Boolean(missionUi?.knowledgeDecisionRequired)
   const knowledgeOpen = knowledgeOpenOverride ?? knowledgeDefaultOpen
   const canKnowledgeDecide = Boolean(knowledgeBundle && knowledgeProposalCount > 0)
-  const canKnowledgeApply = knowledgeDelta?.status === 'accepted'
+  const canKnowledgeApply = knowledgeDelta?.status === 'accepted' && knowledgeConflictCount === 0
   const canKnowledgeRollback = knowledgeDelta?.status === 'applied'
 
   const fixInProgress = Boolean(missionUi?.fixupInProgress)
@@ -1333,7 +1336,7 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
                       const items = knowledgeBundle.proposal_items
                       const next: Record<string, boolean> = {}
                       for (const item of items) {
-                        next[item.item_id] = true
+                        next[item.item_id] = String(item.accept_policy ?? '').trim() !== 'orchestrator_only'
                       }
                       setKnowledgeAcceptedByItemId(next)
                     }}
@@ -1368,26 +1371,40 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
 
             {knowledgeBundle?.proposal_items?.length ? (
               <div className="space-y-2">
-                {knowledgeBundle.proposal_items.map((item) => (
-                  <div
-                    key={item.item_id}
-                    className="rounded-md border border-border/60 bg-background px-2.5 py-2 text-xs"
-                  >
-                    <div className="flex items-start gap-2">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={Boolean(knowledgeAcceptedByItemId[item.item_id])}
-                        onChange={() => {
-                          setKnowledgeAcceptedByItemId((prev) => ({
-                            ...prev,
-                            [item.item_id]: !prev[item.item_id],
-                          }))
-                        }}
-                        disabled={knowledgeActionLoading}
-                      />
+                {knowledgeBundle.proposal_items.map((item) => {
+                  const policy = String(item.accept_policy ?? '').trim()
+                  const checked = Boolean(knowledgeAcceptedByItemId[item.item_id])
+                  const canToggleToAccept = policy !== 'orchestrator_only'
 
-                      <div className="min-w-0 flex-1">
+                  return (
+                    <div
+                      key={item.item_id}
+                      className="rounded-md border border-border/60 bg-background px-2.5 py-2 text-xs"
+                    >
+                      <div className="flex items-start gap-2">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={checked}
+                          onChange={() => {
+                            if (!canToggleToAccept && !checked) {
+                              return
+                            }
+
+                            setKnowledgeAcceptedByItemId((prev) => ({
+                              ...prev,
+                              [item.item_id]: !prev[item.item_id],
+                            }))
+                          }}
+                          disabled={knowledgeActionLoading || (!canToggleToAccept && !checked)}
+                          title={
+                            !canToggleToAccept
+                              ? 'orchestrator_only items cannot be accepted by user'
+                              : undefined
+                          }
+                        />
+
+                        <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                           <span className="font-mono text-[11px] text-muted-foreground">{item.kind}</span>
                           <span className="opacity-80">{item.op}</span>
@@ -1441,7 +1458,8 @@ export function MissionPanel({ projectPath, missionId, onClose }: MissionPanelPr
                       </div>
                     </div>
                   </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
               <div className="text-muted-foreground">No proposals recorded yet.</div>
