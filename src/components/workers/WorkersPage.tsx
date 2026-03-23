@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  type LucideIcon,
   Route, Globe2, Users, Feather,
   Globe, Network,
-  Database, Regex, UserCheck,
+  Database, Regex,
   SpellCheck, BookOpenCheck,
   MessageSquarePlus, Play,
 } from 'lucide-react'
@@ -11,8 +12,11 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
 import {
   deleteWorkerFeature,
+  isBuiltinWorkerToolName,
   listWorkersFeature,
+  resolveWorkerVisibleTools,
   saveWorkerFeature,
+  type BuiltinWorkerToolName,
   type WorkerDefinition,
 } from '@/features/global-config'
 import {
@@ -40,11 +44,10 @@ import { WorkerCard } from './WorkerCard'
 import type { WorkerCardData } from './types'
 import { useProjectStore } from '@/state/project'
 import {
-  AVAILABLE_WORKER_TOOLS,
+  AVAILABLE_WORKER_PRESETS,
   createEmptyWorkerForm,
   parseWorkerFormValue,
   safeParseWorkerJson,
-  toggleTool,
   validateWorkerForm,
   workerToFormValue,
   type WorkerFormValue,
@@ -96,15 +99,17 @@ const CARD_META_FALLBACK: Pick<WorkerCardData, 'icon' | 'colorClass' | 'status' 
   primaryActionIcon: MessageSquarePlus,
 }
 
-const TOOL_ICON_BY_NAME = {
-  read: BookOpenCheck,
-  edit: SpellCheck,
-  create: MessageSquarePlus,
-  ls: Database,
-  grep: Regex,
-  outline: Route,
-  character_sheet: UserCheck,
-  search_knowledge: Network,
+const TOOL_ICON_BY_NAME: Record<BuiltinWorkerToolName, LucideIcon> = {
+  workspace_map: Database,
+  context_read: BookOpenCheck,
+  context_search: Regex,
+  knowledge_read: Globe2,
+  knowledge_write: Network,
+  draft_write: SpellCheck,
+  structure_edit: MessageSquarePlus,
+  review_check: Feather,
+  skill: Users,
+  todowrite: Route,
 } as const
 
 export function WorkersPage() {
@@ -172,7 +177,6 @@ export function WorkersPage() {
       requiredName: wp.requiredName,
       requiredDisplayName: wp.requiredDisplayName,
       requiredPrompt: wp.requiredPrompt,
-      requiredTools: wp.requiredTools,
     })
     if (validationError) {
       toast.warning(wp.saveFailed, validationError)
@@ -188,7 +192,7 @@ export function WorkersPage() {
     } catch (error) {
       toast.error(wp.saveFailed, String(error))
     }
-  }, [form, loadWorkers, selectedWorker, wp.requiredDisplayName, wp.requiredName, wp.requiredPrompt, wp.requiredTools, wp.saveFailed, wp.saved, wp.update])
+  }, [form, loadWorkers, selectedWorker, wp.requiredDisplayName, wp.requiredName, wp.requiredPrompt, wp.saveFailed, wp.saved, wp.update])
 
   const handleDeleteWorker = useCallback(async (name: string) => {
     if (!confirm(wp.deleteConfirm)) {
@@ -269,7 +273,7 @@ export function WorkersPage() {
           depends_on: [],
           expected_behavior: [
             'Runs safely within the project directory.',
-            'Uses only whitelisted tools.',
+            'Uses only the tools allowed by its capability policy.',
             'Produces a short summary and exits.',
           ],
           verification_steps: [
@@ -421,34 +425,95 @@ export function WorkersPage() {
                 />
               </div>
 
-              <div>
-                <div className="text-xs text-muted-foreground mb-2">{wp.toolWhitelistLabel}</div>
-                <div className="flex flex-wrap gap-2">
-                  {AVAILABLE_WORKER_TOOLS.map((tool) => {
-                    const selected = form.tool_whitelist.includes(tool)
-                    return (
-                      <button
-                        key={tool}
-                        type="button"
-                        className={`tag ${selected ? 'tag-info' : 'tag-hover'}`}
-                        onClick={() => setForm((prev) => toggleTool(prev, tool))}
-                      >
-                        {tool}
-                      </button>
-                    )
-                  })}
+              <div className="grid grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.capabilityPresetLabel}</div>
+                  <select
+                    value={form.capability_preset}
+                    onChange={(event) => setForm((prev) => ({ ...prev, capability_preset: event.target.value as WorkerFormState['capability_preset'] }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    {AVAILABLE_WORKER_PRESETS.map((preset) => (
+                      <option key={preset} value={preset}>
+                        {preset}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.modeLabel}</div>
+                  <select
+                    value={form.mode}
+                    onChange={(event) => setForm((prev) => ({ ...prev, mode: event.target.value as WorkerFormState['mode'] }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="writing">writing</option>
+                    <option value="planning">planning</option>
+                  </select>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.approvalModeLabel}</div>
+                  <select
+                    value={form.approval_mode}
+                    onChange={(event) => setForm((prev) => ({ ...prev, approval_mode: event.target.value as WorkerFormState['approval_mode'] }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="auto">auto</option>
+                    <option value="confirm_writes">confirm_writes</option>
+                  </select>
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.clarificationModeLabel}</div>
+                  <select
+                    value={form.clarification_mode}
+                    onChange={(event) => setForm((prev) => ({ ...prev, clarification_mode: event.target.value as WorkerFormState['clarification_mode'] }))}
+                    className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="headless_defer">headless_defer</option>
+                    <option value="interactive">interactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <label className="settings-section flex items-center justify-between px-3 py-2">
+                  <span className="text-sm">{wp.allowDelegateLabel}</span>
+                  <input
+                    type="checkbox"
+                    checked={form.allow_delegate}
+                    onChange={(event) => setForm((prev) => ({ ...prev, allow_delegate: event.target.checked }))}
+                  />
+                </label>
+                <label className="settings-section flex items-center justify-between px-3 py-2">
+                  <span className="text-sm">{wp.allowSkillActivationLabel}</span>
+                  <input
+                    type="checkbox"
+                    checked={form.allow_skill_activation}
+                    onChange={(event) => setForm((prev) => ({ ...prev, allow_skill_activation: event.target.checked }))}
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.hiddenToolsLabel}</div>
+                  <Input
+                    value={form.hidden_tools}
+                    onChange={(event) => setForm((prev) => ({ ...prev, hidden_tools: event.target.value }))}
+                    placeholder={wp.hiddenToolsPlaceholder}
+                  />
+                </div>
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">{wp.forcedToolsLabel}</div>
+                  <Input
+                    value={form.forced_tools}
+                    onChange={(event) => setForm((prev) => ({ ...prev, forced_tools: event.target.value }))}
+                    placeholder={wp.forcedToolsPlaceholder}
+                  />
                 </div>
               </div>
 
               <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">{wp.matchKeywordsLabel}</div>
-                  <Input
-                    value={form.match_keywords}
-                    onChange={(event) => setForm((prev) => ({ ...prev, match_keywords: event.target.value }))}
-                    placeholder={wp.matchKeywordsPlaceholder}
-                  />
-                </div>
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">{wp.maxRoundsLabel}</div>
                   <Input
@@ -514,6 +579,7 @@ export function WorkersPage() {
 
 function toWorkerCardData(worker: WorkerDefinition, index: number): WorkerCardData {
   const meta = WORKER_CARD_META[worker.name] ?? fallbackMetaByIndex(index)
+  const tools = resolveWorkerVisibleTools(worker)
   return {
     id: worker.name,
     title: worker.display_name || worker.name,
@@ -523,9 +589,9 @@ function toWorkerCardData(worker: WorkerDefinition, index: number): WorkerCardDa
     status: meta.status,
     statusLabel: meta.statusLabel,
     systemPrompt: worker.system_prompt,
-    tools: worker.tool_whitelist.map((toolName) => ({
+    tools: tools.map((toolName) => ({
       name: toolName,
-      icon: TOOL_ICON_BY_NAME[toolName as keyof typeof TOOL_ICON_BY_NAME] ?? Globe,
+      icon: isBuiltinWorkerToolName(toolName) ? TOOL_ICON_BY_NAME[toolName] : Globe,
     })),
     primaryAction: meta.primaryAction,
     primaryActionIcon: meta.primaryActionIcon,

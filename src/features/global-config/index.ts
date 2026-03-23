@@ -9,11 +9,20 @@ import {
   saveGlobalRulesClient,
   saveSkillClient,
   saveWorkerClient,
+  type CapabilityPreset,
   type SkillDefinition,
   type WorkerDefinition,
 } from '@/platform/tauri/clients/global-config-client'
 
-export type { SkillDefinition, WorkerDefinition }
+export type { CapabilityPreset, SkillDefinition, WorkerDefinition }
+export {
+  BUILTIN_WORKER_TOOL_NAMES,
+  WORKER_CAPABILITY_PRESETS,
+  isBuiltinWorkerToolName,
+  resolveWorkerVisibleTools,
+  toolsForCapabilityPreset,
+  type BuiltinWorkerToolName,
+} from './worker-tool-contract'
 
 export async function listSkillsFeature(): Promise<SkillDefinition[]> {
   return listSkillsClient()

@@ -39,6 +39,12 @@ import {
   type MissionContextpackBuildInput,
   type OpenAiChatCompletionInput,
 } from '@/lib/tauri-commands'
+import {
+  missionInterrupt as missionInterruptCommand,
+  missionRecover as missionRecoverCommand,
+  missionResumeWithConfig as missionResumeWithConfigCommand,
+  type MissionResumeWithConfigInput,
+} from '@/lib/tauri-commands/mission-lifecycle'
 import type {
   MissionGetStatusOutput,
   MissionReviewAnswerInput,
@@ -210,8 +216,22 @@ export async function missionResumeFeature(projectPath: string, missionId: strin
   await missionResumeCommand(projectPath, missionId)
 }
 
+export async function missionResumeWithConfigFeature(
+  input: MissionResumeWithConfigInput,
+): Promise<void> {
+  await missionResumeWithConfigCommand(input)
+}
+
 export async function missionCancelFeature(projectPath: string, missionId: string): Promise<void> {
   await missionCancelCommand(projectPath, missionId)
+}
+
+export async function missionInterruptFeature(projectPath: string, missionId: string): Promise<void> {
+  await missionInterruptCommand(projectPath, missionId)
+}
+
+export async function missionRecoverFeature(projectPath: string, missionId: string): Promise<void> {
+  await missionRecoverCommand(projectPath, missionId)
 }
 
 export async function missionGetStatusFeature(

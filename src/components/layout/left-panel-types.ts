@@ -16,7 +16,7 @@ export type LeftPanelFileNode = {
 function normalizeAssetRelativePath(path: string, kind: LeftPanelFileNode['kind']) {
   if (kind !== 'asset_dir' && kind !== 'asset_file') return undefined
   const normalized = String(path || '').replace(/\\/g, '/')
-  return normalized.startsWith('magic_assets/') ? normalized.slice('magic_assets/'.length) : normalized
+  return normalized.startsWith('assets/') ? normalized.slice('assets/'.length) : normalized
 }
 
 export function convertFileNode(node: LeftPanelFileNode) {

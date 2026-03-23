@@ -21,6 +21,7 @@ export const aiZh = {
     sessionReadOnlyReasonMissingRuntime: '缺少运行态快照，无法继续执行。',
     sessionReadOnlyReasonLegacySession: '旧会话不支持运行态恢复。',
     sessionReadOnlyReasonConfigMissing: '恢复所需的提供者配置缺失。',
+    missionInputDisabledActive: '当前任务仍在进行中，请先在任务面板中查看、暂停或完成该任务',
     sessionInputDisabledReadOnly: '当前会话为只读，已禁用发送',
     sessionInputDisabledSuspended: '当前会话处于暂停中，请先完成恢复操作',
     historyStateInteractive: '可继续',
@@ -42,6 +43,7 @@ export const aiZh = {
     taskRunning: '执行中',
     taskDone: '执行完成',
     generating: '生成中',
+    workingOn: '正在',
   },
   turn: {
     label: 'Turn',
@@ -52,6 +54,14 @@ export const aiZh = {
     thinking: '推理过程',
     thinkingPlaceholder: '...',
     assistantPlaceholder: '助手正在整理回复...',
+    executionPhaseLabel: {
+      orchestrator: '规划任务',
+      context: '加载上下文',
+      draft: '生成草稿',
+      review: '执行审查',
+      knowledge: '更新知识库',
+      other: '其他',
+    },
     phaseLabel: {
       queued: '排队中',
       planning: '规划中',

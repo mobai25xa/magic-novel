@@ -1,6 +1,9 @@
 use crate::mission::artifacts;
 
-pub(super) fn should_enable_terminology_gate(project_path: &std::path::Path, mission_id: &str) -> bool {
+pub(super) fn should_enable_terminology_gate(
+    project_path: &std::path::Path,
+    mission_id: &str,
+) -> bool {
     let cc = artifacts::read_layer1_chapter_card(project_path, mission_id)
         .ok()
         .flatten();
@@ -32,7 +35,10 @@ pub(super) fn should_enable_terminology_gate(project_path: &std::path::Path, mis
     )
 }
 
-pub(super) fn should_enable_foreshadow_gate(project_path: &std::path::Path, mission_id: &str) -> bool {
+pub(super) fn should_enable_foreshadow_gate(
+    project_path: &std::path::Path,
+    mission_id: &str,
+) -> bool {
     let path = artifacts::layer1_active_foreshadowing_path(project_path, mission_id);
     if path.exists() {
         let raw = match std::fs::read_to_string(&path) {

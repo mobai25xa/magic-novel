@@ -13,6 +13,9 @@ use crate::mission::events::MissionEventEmitter;
 use crate::mission::macro_types::*;
 use crate::mission::orchestrator::Orchestrator;
 use crate::mission::types::*;
+use crate::mission::workflow_types::{
+    MissionWorkflowKind, SummaryJobPolicy, WorkflowCreationReason,
+};
 use crate::models::AppError;
 
 // ── DTOs ───────────────────────────────────────────────────────
@@ -29,10 +32,24 @@ pub struct MacroCreateInput {
     pub auto_fix_on_block: bool,
     #[serde(default = "default_token_budget")]
     pub token_budget: TokenBudget,
+    #[serde(default = "default_summary_job_policy")]
+    pub summary_job_policy: SummaryJobPolicy,
 }
 
 fn default_token_budget() -> TokenBudget {
     TokenBudget::Medium
+}
+
+fn default_summary_job_policy() -> SummaryJobPolicy {
+    SummaryJobPolicy::NoSummaryJob
+}
+
+fn macro_stage_when_all_chapters_complete(config: &MacroWorkflowConfig) -> MacroStage {
+    if config.uses_explicit_summary_job() {
+        MacroStage::Integrate
+    } else {
+        MacroStage::Completed
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,12 +86,12 @@ fn generate_macro_features(targets: &[ChapterTarget]) -> Vec<Feature> {
         let ctx_desc = format!(
             "Build ContextPack for chapter {} ({})",
             idx,
-            target.display_title.as_deref().unwrap_or(&target.chapter_ref)
+            target
+                .display_title
+                .as_deref()
+                .unwrap_or(&target.chapter_ref)
         );
-        let draft_desc = format!(
-            "Draft chapter {} to {}",
-            idx, target.write_path
-        );
+        let draft_desc = format!("Draft chapter {} to {}", idx, target.write_path);
 
         // context depends on previous chapter's last feature
         let ctx_deps = match &prev_id {
@@ -105,9 +122,7 @@ fn generate_macro_features(targets: &[ChapterTarget]) -> Vec<Feature> {
             skill: "draft".to_string(),
             preconditions: Vec::new(),
             depends_on: vec![ctx_id],
-            expected_behavior: vec![
-                format!("Write chapter content to {}", target.write_path),
-            ],
+            expected_behavior: vec![format!("Write chapter content to {}", target.write_path)],
             verification_steps: Vec::new(),
             write_paths: vec![target.write_path.clone()],
         });
@@ -120,9 +135,7 @@ fn generate_macro_features(targets: &[ChapterTarget]) -> Vec<Feature> {
 
 // ── C5: Initial state builder ──────────────────────────────────
 
-fn build_initial_macro_state(
-    config: &MacroWorkflowConfig,
-) -> MacroWorkflowState {
+fn build_initial_macro_state(config: &MacroWorkflowConfig) -> MacroWorkflowState {
     let now = chrono::Utc::now().timestamp_millis();
     let chapters = config
         .chapter_targets
@@ -136,7 +149,7 @@ fn build_initial_macro_state(
             latest_contextpack_ref: None,
             latest_review_id: None,
             latest_knowledge_delta_id: None,
-            last_handoff_summary: None,
+            last_result_summary: None,
             updated_at: now,
         })
         .collect();
@@ -179,7 +192,7 @@ fn rebuild_macro_state_from_features(
             latest_contextpack_ref: None,
             latest_review_id: None,
             latest_knowledge_delta_id: None,
-            last_handoff_summary: None,
+            last_result_summary: None,
             updated_at: now,
         })
         .collect();
@@ -242,10 +255,23 @@ fn rebuild_macro_state_from_features(
         }
     }
 
-    // If all chapters completed, mark integrate
-    let all_done = chapters.iter().all(|c| c.status == ChapterRunStatus::Completed);
+    // If all chapters completed, mark integrate/completed based on summary policy.
+    let all_done = chapters
+        .iter()
+        .all(|c| c.status == ChapterRunStatus::Completed);
     if all_done && num_chapters > 0 {
-        current_stage = MacroStage::Integrate;
+        current_stage = macro_stage_when_all_chapters_complete(config);
+        if config.uses_explicit_summary_job() {
+            if let Some(integrator) = features_doc
+                .features
+                .iter()
+                .find(|f| f.id == INTEGRATOR_FEATURE_ID)
+            {
+                if integrator.status == FeatureStatus::Completed {
+                    current_stage = MacroStage::Completed;
+                }
+            }
+        }
     }
 
     Ok(MacroWorkflowState {
@@ -278,6 +304,59 @@ pub fn update_macro_state_on_feature_event(
         Some(s) => s,
         None => return Ok(()), // not a macro mission
     };
+    let config = artifacts::read_macro_config(project_path, mission_id)?.unwrap_or_else(|| {
+        MacroWorkflowConfig {
+            schema_version: MACRO_SCHEMA_VERSION,
+            macro_id: state.macro_id.clone(),
+            mission_id: state.mission_id.clone(),
+            workflow_kind: state.workflow_kind.clone(),
+            objective: state.objective.clone(),
+            chapter_targets: state
+                .chapters
+                .iter()
+                .map(|chapter| ChapterTarget {
+                    chapter_ref: chapter.chapter_ref.clone(),
+                    write_path: chapter.write_path.clone(),
+                    display_title: chapter.display_title.clone(),
+                })
+                .collect(),
+            strict_review: false,
+            auto_fix_on_block: false,
+            token_budget: TokenBudget::Medium,
+            summary_job_policy: SummaryJobPolicy::NoSummaryJob,
+            created_at: state.last_transition_at,
+        }
+    });
+    let now = chrono::Utc::now().timestamp_millis();
+
+    if feature_id == INTEGRATOR_FEATURE_ID {
+        if matches!(new_status, FeatureStatus::Completed)
+            && state
+                .chapters
+                .iter()
+                .all(|chapter| chapter.status == ChapterRunStatus::Completed)
+        {
+            state.current_stage = MacroStage::Completed;
+            state.last_transition_at = now;
+            state.last_error = None;
+
+            artifacts::write_macro_state(project_path, mission_id, &state)?;
+            let _ = artifacts::append_macro_checkpoint(
+                project_path,
+                mission_id,
+                &serde_json::json!({
+                    "ts": now,
+                    "event": "macro_completed",
+                    "feature_id": feature_id,
+                }),
+            );
+
+            if let Some(em) = emitter {
+                let _ = em.macro_state_updated(&state);
+            }
+        }
+        return Ok(());
+    }
 
     // Parse feature_id pattern: ch{N}_context or ch{N}_draft
     let (chapter_idx, stage) = match parse_macro_feature_id(feature_id) {
@@ -288,8 +367,6 @@ pub fn update_macro_state_on_feature_event(
     if chapter_idx >= state.chapters.len() {
         return Ok(());
     }
-
-    let now = chrono::Utc::now().timestamp_millis();
 
     match new_status {
         FeatureStatus::InProgress => {
@@ -303,11 +380,13 @@ pub fn update_macro_state_on_feature_event(
             if stage == MacroStage::Draft {
                 state.chapters[chapter_idx].status = ChapterRunStatus::Completed;
                 state.chapters[chapter_idx].stage = Some(MacroStage::Completed);
-                let all_done = state.chapters.iter().all(|c| {
-                    c.status == ChapterRunStatus::Completed
-                });
+                state.current_index = chapter_idx as i32;
+                let all_done = state
+                    .chapters
+                    .iter()
+                    .all(|c| c.status == ChapterRunStatus::Completed);
                 if all_done {
-                    state.current_stage = MacroStage::Integrate;
+                    state.current_stage = macro_stage_when_all_chapters_complete(&config);
                 }
             }
         }
@@ -332,6 +411,24 @@ pub fn update_macro_state_on_feature_event(
     state.last_transition_at = now;
 
     artifacts::write_macro_state(project_path, mission_id, &state)?;
+
+    if matches!(new_status, FeatureStatus::Completed)
+        && matches!(state.current_stage, MacroStage::Completed)
+        && state
+            .chapters
+            .iter()
+            .all(|chapter| chapter.status == ChapterRunStatus::Completed)
+    {
+        let _ = artifacts::append_macro_checkpoint(
+            project_path,
+            mission_id,
+            &serde_json::json!({
+                "ts": now,
+                "event": "macro_completed",
+                "feature_id": feature_id,
+            }),
+        );
+    }
 
     // C8: append checkpoint
     let _ = artifacts::append_macro_checkpoint(
@@ -380,9 +477,7 @@ fn parse_macro_feature_id(feature_id: &str) -> Option<(usize, MacroStage)> {
 // ── C3: Tauri commands ─────────────────────────────────────────
 
 #[command]
-pub async fn mission_macro_create(
-    input: MacroCreateInput,
-) -> Result<MacroCreateOutput, AppError> {
+pub async fn mission_macro_create(input: MacroCreateInput) -> Result<MacroCreateOutput, AppError> {
     let project_path = std::path::Path::new(&input.project_path);
 
     if input.chapter_targets.is_empty() {
@@ -395,7 +490,7 @@ pub async fn mission_macro_create(
 
     // C4: generate feature pipeline from chapter targets
     let mut features = generate_macro_features(&input.chapter_targets);
-    super::append_integrator_feature_if_missing(&mut features);
+    super::apply_summary_job_policy(&input.summary_job_policy, &mut features);
 
     // Create the underlying mission via Orchestrator
     let title = format!("Macro: {}", input.objective);
@@ -405,8 +500,15 @@ pub async fn mission_macro_create(
         input.objective,
         input.chapter_targets.len()
     );
-    let mission_id =
-        Orchestrator::create_mission(project_path, &title, &mission_text, features)?;
+    let mission_id = Orchestrator::create_mission(
+        project_path,
+        &title,
+        &mission_text,
+        features,
+        MissionWorkflowKind::Macro,
+        WorkflowCreationReason::MacroWorkflow,
+        input.summary_job_policy.clone(),
+    )?;
 
     // Build and write macro config (immutable)
     let config = MacroWorkflowConfig {
@@ -419,6 +521,7 @@ pub async fn mission_macro_create(
         strict_review: input.strict_review,
         auto_fix_on_block: input.auto_fix_on_block,
         token_budget: input.token_budget,
+        summary_job_policy: input.summary_job_policy.clone(),
         created_at: chrono::Utc::now().timestamp_millis(),
     };
     artifacts::write_macro_config(project_path, &mission_id, &config)?;
@@ -455,11 +558,7 @@ pub async fn mission_macro_get_state(
         if let Some(ref cfg) = config {
             match rebuild_macro_state_from_features(project_path, &input.mission_id, cfg) {
                 Ok(rebuilt) => {
-                    let _ = artifacts::write_macro_state(
-                        project_path,
-                        &input.mission_id,
-                        &rebuilt,
-                    );
+                    let _ = artifacts::write_macro_state(project_path, &input.mission_id, &rebuilt);
                     state = Some(rebuilt);
                 }
                 Err(e) => {
@@ -581,6 +680,326 @@ pub fn try_recover_macro_state_on_resume(
     }
 }
 
+fn load_macro_state_for_mutation(
+    project_path: &std::path::Path,
+    mission_id: &str,
+) -> Result<Option<(MacroWorkflowConfig, MacroWorkflowState)>, AppError> {
+    let Some(config) = artifacts::read_macro_config(project_path, mission_id)? else {
+        return Ok(None);
+    };
+
+    let state = match artifacts::read_macro_state(project_path, mission_id)? {
+        Some(state) => state,
+        None => build_initial_macro_state(&config),
+    };
+
+    Ok(Some((config, state)))
+}
+
+fn persist_macro_state_change(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    state: &MacroWorkflowState,
+    checkpoint: serde_json::Value,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    artifacts::write_macro_state(project_path, mission_id, state)?;
+    let _ = artifacts::append_macro_checkpoint(project_path, mission_id, &checkpoint);
+
+    if let Some(emitter) = emitter {
+        let _ = emitter.macro_state_updated(state);
+    }
+
+    Ok(())
+}
+
+fn mutate_macro_chapter_state(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    emitter: Option<&MissionEventEmitter>,
+    mutate: impl FnOnce(&MacroWorkflowConfig, &mut MacroWorkflowState, i64),
+    checkpoint: impl FnOnce(i64) -> serde_json::Value,
+) -> Result<(), AppError> {
+    let Some((config, mut state)) = load_macro_state_for_mutation(project_path, mission_id)? else {
+        return Ok(());
+    };
+    if chapter_idx >= state.chapters.len() {
+        return Ok(());
+    }
+
+    let now = chrono::Utc::now().timestamp_millis();
+    state.current_index = chapter_idx as i32;
+    state.last_transition_at = now;
+    state.chapters[chapter_idx].updated_at = now;
+
+    mutate(&config, &mut state, now);
+
+    persist_macro_state_change(project_path, mission_id, &state, checkpoint(now), emitter)
+}
+
+pub fn macro_on_review_started(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            state.current_stage = MacroStage::Review;
+            state.last_error = None;
+            state.chapters[chapter_idx].status = ChapterRunStatus::Running;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Review);
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "review_started",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+            })
+        },
+    )
+}
+
+pub fn macro_on_review_completed(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    review_id: &str,
+    overall_status: &str,
+    blocked: bool,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            state.chapters[chapter_idx].latest_review_id = Some(review_id.trim().to_string());
+            state.chapters[chapter_idx].stage = Some(MacroStage::Review);
+            if blocked {
+                state.current_stage = MacroStage::Blocked;
+                state.chapters[chapter_idx].status = ChapterRunStatus::Blocked;
+                state.last_error = Some(MacroLastError {
+                    code: "E_MACRO_REVIEW_BLOCKED".to_string(),
+                    message: format!("Review blocked chapter {}", chapter_idx + 1),
+                    feature_id: Some(feature_id.to_string()),
+                    worker_id: None,
+                });
+            } else {
+                state.current_stage = MacroStage::Review;
+                state.chapters[chapter_idx].status = ChapterRunStatus::Running;
+                state.last_error = None;
+            }
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "review_completed",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+                "review_id": review_id,
+                "overall_status": overall_status,
+                "blocked": blocked,
+            })
+        },
+    )
+}
+
+pub fn macro_on_writeback_started(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    review_id: Option<&str>,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            if let Some(review_id) = review_id {
+                state.chapters[chapter_idx].latest_review_id = Some(review_id.trim().to_string());
+            }
+            state.current_stage = MacroStage::Writeback;
+            state.chapters[chapter_idx].status = ChapterRunStatus::Running;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Writeback);
+            state.last_error = None;
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "writeback_started",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+                "review_id": review_id,
+            })
+        },
+    )
+}
+
+pub fn macro_on_writeback_blocked(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    knowledge_delta_id: Option<&str>,
+    reason: &str,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            if let Some(knowledge_delta_id) = knowledge_delta_id {
+                state.chapters[chapter_idx].latest_knowledge_delta_id =
+                    Some(knowledge_delta_id.trim().to_string());
+            }
+            state.current_stage = MacroStage::Blocked;
+            state.chapters[chapter_idx].status = ChapterRunStatus::Blocked;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Writeback);
+            state.last_error = Some(MacroLastError {
+                code: "E_MACRO_WRITEBACK_BLOCKED".to_string(),
+                message: reason.to_string(),
+                feature_id: Some(feature_id.to_string()),
+                worker_id: None,
+            });
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "writeback_blocked",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+                "knowledge_delta_id": knowledge_delta_id,
+                "reason": reason,
+            })
+        },
+    )
+}
+
+pub fn macro_on_writeback_completed(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    knowledge_delta_id: Option<&str>,
+    knowledge_status: &str,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            if let Some(knowledge_delta_id) = knowledge_delta_id {
+                state.chapters[chapter_idx].latest_knowledge_delta_id =
+                    Some(knowledge_delta_id.trim().to_string());
+            }
+            state.current_stage = MacroStage::Writeback;
+            state.chapters[chapter_idx].status = ChapterRunStatus::Running;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Writeback);
+            state.last_error = None;
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "writeback_completed",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+                "knowledge_delta_id": knowledge_delta_id,
+                "knowledge_status": knowledge_status,
+            })
+        },
+    )
+}
+
+pub fn macro_mark_chapter_completed(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |config, state, _now| {
+            state.chapters[chapter_idx].status = ChapterRunStatus::Completed;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Completed);
+            let all_done = state
+                .chapters
+                .iter()
+                .all(|chapter| chapter.status == ChapterRunStatus::Completed);
+            state.current_stage = if all_done {
+                macro_stage_when_all_chapters_complete(config)
+            } else {
+                MacroStage::Completed
+            };
+            state.last_error = None;
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "chapter_completed",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+            })
+        },
+    )
+}
+
+pub fn macro_block_invalid_chapter_write_targets(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    chapter_idx: usize,
+    feature_id: &str,
+    reason: &str,
+    emitter: Option<&MissionEventEmitter>,
+) -> Result<(), AppError> {
+    mutate_macro_chapter_state(
+        project_path,
+        mission_id,
+        chapter_idx,
+        emitter,
+        |_config, state, _now| {
+            state.current_stage = MacroStage::Blocked;
+            state.chapters[chapter_idx].status = ChapterRunStatus::Blocked;
+            state.chapters[chapter_idx].stage = Some(MacroStage::Blocked);
+            state.last_error = Some(MacroLastError {
+                code: "E_MACRO_INVALID_CHAPTER_TARGET".to_string(),
+                message: reason.to_string(),
+                feature_id: Some(feature_id.to_string()),
+                worker_id: None,
+            });
+        },
+        |now| {
+            serde_json::json!({
+                "ts": now,
+                "event": "invalid_chapter_write_targets",
+                "chapter_idx": chapter_idx,
+                "feature_id": feature_id,
+                "reason": reason,
+            })
+        },
+    )
+}
+
 // ── C9: Tests ──────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -667,6 +1086,7 @@ mod tests {
             strict_review: false,
             auto_fix_on_block: false,
             token_budget: TokenBudget::Medium,
+            summary_job_policy: SummaryJobPolicy::NoSummaryJob,
             created_at: 0,
         }
     }
@@ -699,7 +1119,12 @@ mod tests {
             id: id.into(),
             status,
             description: id.into(),
-            skill: if id.contains("context") { "context" } else { "draft" }.into(),
+            skill: if id.contains("context") {
+                "context"
+            } else {
+                "draft"
+            }
+            .into(),
             preconditions: vec![],
             depends_on: vec![],
             expected_behavior: vec![],
@@ -713,12 +1138,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = make_test_config("mis1", 2);
 
-        write_test_features(tmp.path(), "mis1", vec![
-            make_feature("ch1_context", FeatureStatus::Pending, vec![]),
-            make_feature("ch1_draft", FeatureStatus::Pending, vec!["chapters/ch1.md".into()]),
-            make_feature("ch2_context", FeatureStatus::Pending, vec![]),
-            make_feature("ch2_draft", FeatureStatus::Pending, vec!["chapters/ch2.md".into()]),
-        ]);
+        write_test_features(
+            tmp.path(),
+            "mis1",
+            vec![
+                make_feature("ch1_context", FeatureStatus::Pending, vec![]),
+                make_feature(
+                    "ch1_draft",
+                    FeatureStatus::Pending,
+                    vec!["chapters/ch1.md".into()],
+                ),
+                make_feature("ch2_context", FeatureStatus::Pending, vec![]),
+                make_feature(
+                    "ch2_draft",
+                    FeatureStatus::Pending,
+                    vec!["chapters/ch2.md".into()],
+                ),
+            ],
+        );
 
         let state = rebuild_macro_state_from_features(tmp.path(), "mis1", &config).unwrap();
         assert_eq!(state.current_index, -1);
@@ -732,14 +1169,30 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = make_test_config("mis2", 3);
 
-        write_test_features(tmp.path(), "mis2", vec![
-            make_feature("ch1_context", FeatureStatus::Completed, vec![]),
-            make_feature("ch1_draft", FeatureStatus::Completed, vec!["chapters/ch1.md".into()]),
-            make_feature("ch2_context", FeatureStatus::Completed, vec![]),
-            make_feature("ch2_draft", FeatureStatus::InProgress, vec!["chapters/ch2.md".into()]),
-            make_feature("ch3_context", FeatureStatus::Pending, vec![]),
-            make_feature("ch3_draft", FeatureStatus::Pending, vec!["chapters/ch3.md".into()]),
-        ]);
+        write_test_features(
+            tmp.path(),
+            "mis2",
+            vec![
+                make_feature("ch1_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch1_draft",
+                    FeatureStatus::Completed,
+                    vec!["chapters/ch1.md".into()],
+                ),
+                make_feature("ch2_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch2_draft",
+                    FeatureStatus::InProgress,
+                    vec!["chapters/ch2.md".into()],
+                ),
+                make_feature("ch3_context", FeatureStatus::Pending, vec![]),
+                make_feature(
+                    "ch3_draft",
+                    FeatureStatus::Pending,
+                    vec!["chapters/ch3.md".into()],
+                ),
+            ],
+        );
 
         let state = rebuild_macro_state_from_features(tmp.path(), "mis2", &config).unwrap();
         // ch1 fully done
@@ -756,21 +1209,113 @@ mod tests {
     }
 
     #[test]
-    fn rebuild_all_completed_triggers_integrate() {
+    fn rebuild_all_completed_without_summary_job_marks_completed() {
         let tmp = tempfile::tempdir().unwrap();
         let config = make_test_config("mis3", 2);
 
-        write_test_features(tmp.path(), "mis3", vec![
-            make_feature("ch1_context", FeatureStatus::Completed, vec![]),
-            make_feature("ch1_draft", FeatureStatus::Completed, vec!["chapters/ch1.md".into()]),
-            make_feature("ch2_context", FeatureStatus::Completed, vec![]),
-            make_feature("ch2_draft", FeatureStatus::Completed, vec!["chapters/ch2.md".into()]),
-        ]);
+        write_test_features(
+            tmp.path(),
+            "mis3",
+            vec![
+                make_feature("ch1_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch1_draft",
+                    FeatureStatus::Completed,
+                    vec!["chapters/ch1.md".into()],
+                ),
+                make_feature("ch2_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch2_draft",
+                    FeatureStatus::Completed,
+                    vec!["chapters/ch2.md".into()],
+                ),
+            ],
+        );
 
         let state = rebuild_macro_state_from_features(tmp.path(), "mis3", &config).unwrap();
         assert_eq!(state.chapters[0].status, ChapterRunStatus::Completed);
         assert_eq!(state.chapters[1].status, ChapterRunStatus::Completed);
+        assert_eq!(state.current_stage, MacroStage::Completed);
+    }
+
+    #[test]
+    fn rebuild_all_completed_with_explicit_summary_job_stays_in_integrate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = make_test_config("mis_explicit", 2);
+        config.summary_job_policy = SummaryJobPolicy::ExplicitSummaryJob;
+
+        write_test_features(
+            tmp.path(),
+            "mis_explicit",
+            vec![
+                make_feature("ch1_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch1_draft",
+                    FeatureStatus::Completed,
+                    vec!["chapters/ch1.md".into()],
+                ),
+                make_feature("ch2_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch2_draft",
+                    FeatureStatus::Completed,
+                    vec!["chapters/ch2.md".into()],
+                ),
+                make_feature(INTEGRATOR_FEATURE_ID, FeatureStatus::Pending, vec![]),
+            ],
+        );
+
+        let state = rebuild_macro_state_from_features(tmp.path(), "mis_explicit", &config).unwrap();
         assert_eq!(state.current_stage, MacroStage::Integrate);
+    }
+
+    #[test]
+    fn integrator_completion_marks_macro_completed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut config = make_test_config("mis_integrator", 1);
+        config.summary_job_policy = SummaryJobPolicy::ExplicitSummaryJob;
+        artifacts::write_macro_config(tmp.path(), "mis_integrator", &config).unwrap();
+        artifacts::write_macro_state(
+            tmp.path(),
+            "mis_integrator",
+            &MacroWorkflowState {
+                schema_version: MACRO_SCHEMA_VERSION,
+                macro_id: config.macro_id.clone(),
+                mission_id: config.mission_id.clone(),
+                workflow_kind: config.workflow_kind.clone(),
+                objective: config.objective.clone(),
+                current_index: 0,
+                current_stage: MacroStage::Integrate,
+                chapters: vec![ChapterRunState {
+                    chapter_ref: "vol1/ch1".into(),
+                    write_path: "chapters/ch1.md".into(),
+                    display_title: None,
+                    status: ChapterRunStatus::Completed,
+                    stage: Some(MacroStage::Completed),
+                    latest_contextpack_ref: None,
+                    latest_review_id: None,
+                    latest_knowledge_delta_id: None,
+                    last_result_summary: None,
+                    updated_at: 0,
+                }],
+                last_transition_at: 0,
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        update_macro_state_on_feature_event(
+            tmp.path(),
+            "mis_integrator",
+            INTEGRATOR_FEATURE_ID,
+            &FeatureStatus::Completed,
+            None,
+        )
+        .unwrap();
+
+        let state = artifacts::read_macro_state(tmp.path(), "mis_integrator")
+            .unwrap()
+            .expect("macro state");
+        assert_eq!(state.current_stage, MacroStage::Completed);
     }
 
     #[test]
@@ -778,12 +1323,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let config = make_test_config("mis4", 2);
 
-        write_test_features(tmp.path(), "mis4", vec![
-            make_feature("ch1_context", FeatureStatus::Completed, vec![]),
-            make_feature("ch1_draft", FeatureStatus::Failed, vec!["chapters/ch1.md".into()]),
-            make_feature("ch2_context", FeatureStatus::Pending, vec![]),
-            make_feature("ch2_draft", FeatureStatus::Pending, vec!["chapters/ch2.md".into()]),
-        ]);
+        write_test_features(
+            tmp.path(),
+            "mis4",
+            vec![
+                make_feature("ch1_context", FeatureStatus::Completed, vec![]),
+                make_feature(
+                    "ch1_draft",
+                    FeatureStatus::Failed,
+                    vec!["chapters/ch1.md".into()],
+                ),
+                make_feature("ch2_context", FeatureStatus::Pending, vec![]),
+                make_feature(
+                    "ch2_draft",
+                    FeatureStatus::Pending,
+                    vec!["chapters/ch2.md".into()],
+                ),
+            ],
+        );
 
         let state = rebuild_macro_state_from_features(tmp.path(), "mis4", &config).unwrap();
         assert_eq!(state.chapters[0].status, ChapterRunStatus::Failed);

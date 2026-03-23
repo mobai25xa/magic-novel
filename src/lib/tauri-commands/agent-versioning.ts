@@ -1,16 +1,10 @@
 import type {
   Actor,
-  CommitRequest,
-  CommitResult,
   EntityHead,
-  ExportRequest,
-  ExportResult,
   FetchOpenAiModelsInput,
   OpenAiChatCompletionInput,
   OpenAiModelListResult,
   OpenAiProviderSettings,
-  PreviewRequest,
-  PreviewResult,
   RecoverOutput,
   RollbackByCallIdInput,
   RollbackByRevisionInput,
@@ -21,9 +15,6 @@ import {
   aiOpenAiChatCompletionClient,
   fetchOpenAiModelsClient,
   getOpenAiProviderSettingsClient,
-  jvmCommitPatchClient,
-  jvmExportChapterClient,
-  jvmPreviewPatchClient,
   saveOpenAiProviderSettingsClient,
   vcGetCurrentHeadClient,
   vcRecoverClient,
@@ -76,18 +67,6 @@ export async function aiOpenAiChatCompletion(input: OpenAiChatCompletionInput): 
   return aiOpenAiChatCompletionClient(input)
 }
 
-export async function jvmExportChapter(input: ExportRequest): Promise<ExportResult> {
-  return jvmExportChapterClient(input)
-}
-
-export async function jvmPreviewPatch(input: PreviewRequest): Promise<PreviewResult> {
-  return jvmPreviewPatchClient(input)
-}
-
-export async function jvmCommitPatch(input: CommitRequest): Promise<CommitResult> {
-  return jvmCommitPatchClient(input)
-}
-
 export async function vcGetCurrentHead(projectPath: string, entityId: string): Promise<EntityHead> {
   return vcGetCurrentHeadClient(projectPath, entityId)
 }
@@ -106,17 +85,11 @@ export async function vcRecover(projectPath: string): Promise<RecoverOutput> {
 
 export type {
   Actor,
-  CommitRequest,
-  CommitResult,
   EntityHead,
-  ExportRequest,
-  ExportResult,
   FetchOpenAiModelsInput,
   OpenAiChatCompletionInput,
   OpenAiModelListResult,
   OpenAiProviderSettings,
-  PreviewRequest,
-  PreviewResult,
   RecoverOutput,
   RollbackByCallIdInput,
   RollbackByRevisionInput,

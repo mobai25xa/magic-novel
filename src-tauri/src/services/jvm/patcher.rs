@@ -26,8 +26,8 @@ pub fn generate_patch_ops(
     }
 
     let (desired_ids, desired_blocks) = build_desired_blocks(md_blocks);
-    let mut ops = build_delete_ops(&base_ids, &desired_ids);
-    ops.extend(build_update_insert_ops(
+    let mut patch_ops = build_delete_ops(&base_ids, &desired_ids);
+    patch_ops.extend(build_update_insert_ops(
         &base_blocks,
         &base_ids,
         &id_to_base_index,
@@ -40,8 +40,8 @@ pub fn generate_patch_ops(
         all_diagnostics.push(warn);
     }
 
-    let diff_summary = summarize(&ops);
-    (ops, all_diagnostics, diff_summary)
+    let diff_summary = summarize(&patch_ops);
+    (patch_ops, all_diagnostics, diff_summary)
 }
 
 fn collect_base_ids(base_blocks: &[serde_json::Value]) -> Vec<Option<String>> {
@@ -144,7 +144,7 @@ fn build_update_insert_ops(
     let base_id_set: std::collections::HashSet<String> =
         base_ids.iter().filter_map(|id| id.clone()).collect();
 
-    let mut ops: Vec<PatchOp> = vec![];
+    let mut patch_ops: Vec<PatchOp> = vec![];
     let mut last_existing_id: Option<String> = None;
     let mut pending_insert_after: Option<String> = None;
     let mut pending_insert_blocks: Vec<serde_json::Value> = vec![];
@@ -154,7 +154,7 @@ fn build_update_insert_ops(
         if let Some(id) = id_opt.clone() {
             if base_id_set.contains(&id) {
                 flush_pending_inserts(
-                    &mut ops,
+                    &mut patch_ops,
                     &mut pending_insert_after,
                     &mut pending_insert_blocks,
                 );
@@ -162,7 +162,7 @@ fn build_update_insert_ops(
                 if let Some(base_idx) = id_to_base_index.get(&id).copied() {
                     let base_block = &base_blocks[base_idx];
                     if !json_blocks_equivalent(base_block, block) {
-                        ops.push(PatchOp::UpdateBlock {
+                        patch_ops.push(PatchOp::UpdateBlock {
                             block_id: id.clone(),
                             before: None,
                             after: block.clone(),
@@ -181,15 +181,15 @@ fn build_update_insert_ops(
     }
 
     flush_pending_inserts(
-        &mut ops,
+        &mut patch_ops,
         &mut pending_insert_after,
         &mut pending_insert_blocks,
     );
-    ops
+    patch_ops
 }
 
 fn flush_pending_inserts(
-    ops: &mut Vec<PatchOp>,
+    patch_ops: &mut Vec<PatchOp>,
     pending_insert_after: &mut Option<String>,
     pending_insert_blocks: &mut Vec<serde_json::Value>,
 ) {
@@ -197,7 +197,7 @@ fn flush_pending_inserts(
         return;
     }
 
-    ops.push(PatchOp::InsertBlocks {
+    patch_ops.push(PatchOp::InsertBlocks {
         after_block_id: pending_insert_after.clone(),
         blocks: std::mem::take(pending_insert_blocks),
     });
@@ -218,10 +218,12 @@ fn build_order_change_warning(
     Some(Diagnostic {
         level: DiagnosticLevel::Warn,
         code: "E_JVM_VALIDATION_FAIL".to_string(),
-        message: "block order changed; move ops not emitted (will apply as delete/insert)"
+        message: "block order changed; move operations not emitted (will apply as delete/insert)"
             .to_string(),
         block_id: None,
-        suggestion: Some("consider patch-preferred mode with explicit move_block ops".to_string()),
+        suggestion: Some(
+            "consider patch-preferred mode with explicit move_block operations".to_string(),
+        ),
     })
 }
 
@@ -281,13 +283,13 @@ fn walk(node: &serde_json::Value, out: &mut String) {
     }
 }
 
-fn summarize(ops: &[PatchOp]) -> Vec<String> {
+fn summarize(patch_ops: &[PatchOp]) -> Vec<String> {
     let mut inserts = 0;
     let mut updates = 0;
     let mut deletes = 0;
     let mut moves = 0;
 
-    for op in ops {
+    for op in patch_ops {
         match op {
             PatchOp::InsertBlocks { blocks, .. } => inserts += blocks.len(),
             PatchOp::UpdateBlock { .. } => updates += 1,

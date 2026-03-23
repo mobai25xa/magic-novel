@@ -1,37 +1,37 @@
 import type {
   AiProposal,
   AssetKind,
+  AssetLibraryNode,
   AssetSummary,
   DailyStats,
-  MagicAssetNode,
   MonthSummary,
   WritingSession,
 } from '@/platform/tauri/clients/assets-client'
 import {
   appendChapterHistoryEventClient,
   copyAssetClient,
-  createMagicAssetFileClient,
-  createMagicAssetFolderClient,
-  deleteMagicAssetPathClient,
+  createAssetFileClient,
+  createAssetFolderClient,
+  deleteAssetPathClient,
   endWritingSessionClient,
   getAiProposalClient,
   getChapterHistoryClient,
   getConsecutiveDaysClient,
-  getMagicAssetsTreeClient,
+  getAssetsTreeClient,
   getMonthStatsClient,
   getWritingStatsClient,
   getYearStatsClient,
   listAiProposalsClient,
   listAssetsClient,
   readAssetClient,
-  readMagicAssetClient,
+  readAssetFileClient,
   recordWordsWrittenClient,
   saveAiProposalClient,
   saveAssetClient,
-  saveMagicAssetClient,
+  saveAssetFileClient,
   startWritingSessionClient,
-  updateMagicAssetFolderTitleClient,
-  updateMagicAssetTitleClient,
+  updateAssetFileTitleClient,
+  updateAssetFolderTitleClient,
   updateProposalStatusClient,
   updateWritingSessionClient,
 } from '@/platform/tauri/clients/assets-client'
@@ -57,45 +57,45 @@ export async function copyAsset(
   return copyAssetClient(fromProjectPath, toProjectPath, kind, assetId)
 }
 
-export async function getMagicAssetsTree(projectPath: string): Promise<MagicAssetNode[]> {
-  return getMagicAssetsTreeClient(projectPath)
+export async function getAssetsTree(projectPath: string): Promise<AssetLibraryNode[]> {
+  return getAssetsTreeClient(projectPath)
 }
 
-export async function readMagicAsset(projectPath: string, relativePath: string): Promise<unknown> {
-  return readMagicAssetClient(projectPath, relativePath)
+export async function readAssetFile(projectPath: string, relativePath: string): Promise<unknown> {
+  return readAssetFileClient(projectPath, relativePath)
 }
 
-export async function saveMagicAsset(projectPath: string, relativePath: string, asset: unknown): Promise<void> {
-  return saveMagicAssetClient(projectPath, relativePath, asset)
+export async function saveAssetFile(projectPath: string, relativePath: string, asset: unknown): Promise<void> {
+  return saveAssetFileClient(projectPath, relativePath, asset)
 }
 
-export async function createMagicAssetFolder(
+export async function createAssetFolder(
   projectPath: string,
   parentRelativeDir: string,
   title: string,
 ): Promise<string> {
-  return createMagicAssetFolderClient(projectPath, parentRelativeDir, title)
+  return createAssetFolderClient(projectPath, parentRelativeDir, title)
 }
 
-export async function createMagicAssetFile(
+export async function createAssetFile(
   projectPath: string,
   parentRelativeDir: string,
   assetKind: AssetKind,
   title: string,
 ): Promise<string> {
-  return createMagicAssetFileClient(projectPath, parentRelativeDir, assetKind, title)
+  return createAssetFileClient(projectPath, parentRelativeDir, assetKind, title)
 }
 
-export async function updateMagicAssetTitle(projectPath: string, relativePath: string, newTitle: string): Promise<void> {
-  return updateMagicAssetTitleClient(projectPath, relativePath, newTitle)
+export async function updateAssetFileTitle(projectPath: string, relativePath: string, newTitle: string): Promise<void> {
+  return updateAssetFileTitleClient(projectPath, relativePath, newTitle)
 }
 
-export async function updateMagicAssetFolderTitle(projectPath: string, relativeDir: string, newTitle: string): Promise<void> {
-  return updateMagicAssetFolderTitleClient(projectPath, relativeDir, newTitle)
+export async function updateAssetFolderTitle(projectPath: string, relativeDir: string, newTitle: string): Promise<void> {
+  return updateAssetFolderTitleClient(projectPath, relativeDir, newTitle)
 }
 
-export async function deleteMagicAssetPath(projectPath: string, relativePath: string): Promise<void> {
-  return deleteMagicAssetPathClient(projectPath, relativePath)
+export async function deleteAssetPath(projectPath: string, relativePath: string): Promise<void> {
+  return deleteAssetPathClient(projectPath, relativePath)
 }
 
 export async function saveAiProposal(projectPath: string, proposal: AiProposal): Promise<string> {
@@ -167,9 +167,9 @@ export async function getConsecutiveDays(rootDir?: string): Promise<number> {
 export type {
   AiProposal,
   AssetKind,
+  AssetLibraryNode,
   AssetSummary,
   DailyStats,
-  MagicAssetNode,
   MonthSummary,
   WritingSession,
 }

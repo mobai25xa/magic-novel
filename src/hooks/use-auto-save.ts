@@ -10,7 +10,7 @@ export function useAutoSave(editor: Editor | null) {
   const { projectPath, setTree } = useProjectStore()
   const { projectsRootDir } = useSettingsStore()
 
-  const activeDocPath = currentDocKind === 'asset' ? currentAssetPath : currentChapterPath
+  const activeDocPath = currentDocKind === 'chapter' ? currentChapterPath : currentAssetPath
 
   useAutoSaveSession({
     editor,

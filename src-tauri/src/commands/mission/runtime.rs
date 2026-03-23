@@ -25,9 +25,9 @@ pub(super) struct MissionWorkerHandle {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct MissionProgressLogEntry {
-    ts: i64,
-    message: String,
+pub(crate) struct MissionProgressLogEntry {
+    pub ts: i64,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +171,18 @@ pub(super) fn append_mission_recovery_log(
     let _ = crate::utils::atomic_write::atomic_write_json(&path, &log);
 }
 
+pub(crate) fn read_mission_recovery_log(
+    project_path: &std::path::Path,
+    mission_id: &str,
+) -> Vec<MissionProgressLogEntry> {
+    let path = mission_recovery_log_path(project_path, mission_id);
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<MissionRecoveryLog>(&raw).ok())
+        .map(|log| log.entries)
+        .unwrap_or_default()
+}
+
 pub(super) fn clear_worker_from_state(
     project_path: &std::path::Path,
     mission_id: &str,
@@ -244,7 +256,7 @@ pub(super) fn pause_mission_with_log(
         .unwrap_or(MissionState::Paused);
 
     match old_state {
-        MissionState::Completed => {
+        MissionState::Completed | MissionState::Cancelled | MissionState::Failed => {
             paused_config_registry().remove(mission_id);
         }
         MissionState::Paused => {

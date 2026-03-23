@@ -3,6 +3,7 @@ import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
 import { useTranslation } from '@/hooks/use-translation'
 import { useToast } from '@/magic-ui/components'
+import { openEditorTarget } from '@/features/editor-navigation/open-editor-target'
 import { LeftPanelView, type LeftPanelViewProps } from './left-panel-view'
 import { useLeftPanelViewProps } from './use-left-panel-view-props'
 import {
@@ -20,7 +21,7 @@ import {
 
 export function LeftPanel() {
   const { project, projectPath, tree, selectedPath, setTree, setSelectedPath } = useProjectStore()
-  const { setCurrentChapter, setContent, currentChapterPath, setIsDirty, setCurrentAsset } = useEditorStore()
+  const { setCurrentChapter, setContent, currentChapterPath, setIsDirty } = useEditorStore()
   const { translations } = useTranslation()
   const { addToast } = useToast()
 
@@ -63,13 +64,11 @@ export function LeftPanel() {
     addToast,
     translations,
     onCreated: (relativePath, title) => {
-      setSelectedPath(`magic_assets/${relativePath}`)
-      setCurrentAsset(relativePath, title)
-      setContent({
-        type: 'doc',
-        content: [{ type: 'paragraph', content: [] }],
+      setSelectedPath(`knowledge:${relativePath}`)
+      void openEditorTarget(`knowledge:${relativePath}`, {
+        revealLeftTree: true,
+        switchLeftTab: true,
       })
-      setIsDirty(false)
     },
   })
 
@@ -106,4 +105,3 @@ export function LeftPanel() {
 
   return <LeftPanelView {...viewProps} />
 }
-

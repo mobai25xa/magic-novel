@@ -289,15 +289,15 @@ mod tests {
 
         acc.apply(&LlmStreamEvent::ToolCallStart {
             id: "call_1".to_string(),
-            name: "read".to_string(),
+            name: "context_read".to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_1".to_string(),
-            delta: r#"{"path""#.to_string(),
+            delta: r#"{"target_ref""#.to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_1".to_string(),
-            delta: r#":"chapter1"}"#.to_string(),
+            delta: r#":"chapter:manuscripts/vol_1/ch_1.json"}"#.to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallEnd {
             id: "call_1".to_string(),
@@ -308,8 +308,11 @@ mod tests {
 
         let output = acc.into_turn_output().unwrap();
         assert_eq!(output.tool_calls.len(), 1);
-        assert_eq!(output.tool_calls[0].tool_name, "read");
-        assert_eq!(output.tool_calls[0].args["path"], "chapter1");
+        assert_eq!(output.tool_calls[0].tool_name, "context_read");
+        assert_eq!(
+            output.tool_calls[0].args["target_ref"],
+            "chapter:manuscripts/vol_1/ch_1.json"
+        );
         // Has tool calls -> stop_reason is Success (loop continues)
         assert_eq!(output.stop_reason, StopReason::Success);
     }
@@ -321,11 +324,11 @@ mod tests {
         // Tool 1
         acc.apply(&LlmStreamEvent::ToolCallStart {
             id: "call_1".to_string(),
-            name: "read".to_string(),
+            name: "context_read".to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_1".to_string(),
-            delta: r#"{"path":"ch1"}"#.to_string(),
+            delta: r#"{"target_ref":"chapter:manuscripts/vol_1/ch_1.json"}"#.to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallEnd {
             id: "call_1".to_string(),
@@ -334,11 +337,11 @@ mod tests {
         // Tool 2
         acc.apply(&LlmStreamEvent::ToolCallStart {
             id: "call_2".to_string(),
-            name: "ls".to_string(),
+            name: "workspace_map".to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_2".to_string(),
-            delta: r#"{"cwd":"/"}"#.to_string(),
+            delta: r#"{"scope":"book"}"#.to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallEnd {
             id: "call_2".to_string(),
@@ -346,8 +349,8 @@ mod tests {
 
         let output = acc.into_turn_output().unwrap();
         assert_eq!(output.tool_calls.len(), 2);
-        assert_eq!(output.tool_calls[0].tool_name, "read");
-        assert_eq!(output.tool_calls[1].tool_name, "ls");
+        assert_eq!(output.tool_calls[0].tool_name, "context_read");
+        assert_eq!(output.tool_calls[1].tool_name, "workspace_map");
     }
 
     #[test]
@@ -356,13 +359,13 @@ mod tests {
 
         acc.apply(&LlmStreamEvent::ToolCallStart {
             id: "call_1".to_string(),
-            name: "edit".to_string(),
+            name: "draft_write".to_string(),
         });
 
         // Partial JSON - should not crash, keeps last-good
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_1".to_string(),
-            delta: r#"{"path":"#.to_string(),
+            delta: "{\"target_ref\":\"".to_string(),
         });
 
         // At this point, raw_args is incomplete JSON
@@ -373,14 +376,24 @@ mod tests {
         // Complete the JSON
         acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
             id: "call_1".to_string(),
-            delta: r#""test.txt"}"#.to_string(),
+            delta: r#"chapter:manuscripts/vol_1/ch_1.json"}"#.to_string(),
         });
         acc.apply(&LlmStreamEvent::ToolCallEnd {
             id: "call_1".to_string(),
         });
 
         let tc = acc.tool_calls.get("call_1").unwrap();
-        assert_eq!(tc.parsed_args["path"], "test.txt");
+        assert_eq!(
+            tc.raw_args,
+            r#"{"target_ref":"chapter:manuscripts/vol_1/ch_1.json"}"#
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&tc.raw_args).expect("raw_args should be valid JSON");
+        assert_eq!(parsed["target_ref"], "chapter:manuscripts/vol_1/ch_1.json");
+        assert_eq!(
+            tc.parsed_args["target_ref"],
+            "chapter:manuscripts/vol_1/ch_1.json"
+        );
         assert!(tc.complete);
     }
 

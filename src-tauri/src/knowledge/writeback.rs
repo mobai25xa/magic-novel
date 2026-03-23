@@ -276,10 +276,7 @@ fn add_conflict(
 }
 
 fn kind_allows_auto_if_pass(kind: &str) -> bool {
-    matches!(
-        kind,
-        "chapter_summary" | "recent_fact" | "foreshadow"
-    )
+    matches!(kind, "chapter_summary" | "recent_fact" | "foreshadow")
 }
 
 fn validate_auto_policy_fields(kind: &str, fields: &serde_json::Value) -> bool {
@@ -344,7 +341,10 @@ fn foreshadow_status_regresses(prev: &str, next: &str) -> bool {
         return true;
     }
 
-    match (foreshadow_progress_rank(&prev_norm), foreshadow_progress_rank(&next_norm)) {
+    match (
+        foreshadow_progress_rank(&prev_norm),
+        foreshadow_progress_rank(&next_norm),
+    ) {
         (Some(p), Some(n)) => n < p,
         _ => false,
     }
@@ -358,10 +358,7 @@ fn recent_fact_dir_ref(target_ref: &str) -> Option<String> {
     tr.rsplit_once('/').map(|(dir, _)| dir.to_string())
 }
 
-fn load_existing_recent_fact_index(
-    project_path: &Path,
-    dir_ref: &str,
-) -> Vec<(String, String)> {
+fn load_existing_recent_fact_index(project_path: &Path, dir_ref: &str) -> Vec<(String, String)> {
     let dir_ref = normalize_path(dir_ref);
     let Ok(rel) = ensure_safe_relative_path(&dir_ref) else {
         return Vec::new();
@@ -994,10 +991,11 @@ pub fn gate_bundle(
 
                         let idx = recent_fact_index_cache
                             .entry(dir_ref.clone())
-                            .or_insert_with(|| load_existing_recent_fact_index(project_path, &dir_ref));
-                        if let Some((existing_ref, _)) = idx
-                            .iter()
-                            .find(|(r, s)| s == &key && r.as_str() != tr)
+                            .or_insert_with(|| {
+                                load_existing_recent_fact_index(project_path, &dir_ref)
+                            });
+                        if let Some((existing_ref, _)) =
+                            idx.iter().find(|(r, s)| s == &key && r.as_str() != tr)
                         {
                             add_conflict(
                                 &mut delta.conflicts,
@@ -1145,7 +1143,10 @@ pub fn repropose_bundle_refresh_target_revisions(
         };
         item.target_ref = Some(tr.clone());
 
-        if !matches!(item.op, KnowledgeOp::Update | KnowledgeOp::Archive | KnowledgeOp::Restore) {
+        if !matches!(
+            item.op,
+            KnowledgeOp::Update | KnowledgeOp::Archive | KnowledgeOp::Restore
+        ) {
             continue;
         }
         if ensure_safe_relative_path(&tr).is_err() {
@@ -1467,6 +1468,9 @@ pub fn apply_accepted(
         kind: KnowledgeRollbackKind::Hard,
         token: Some(rollback_token),
     });
+
+    // DevC: bump canon_version after every successful apply (shared core, not command-specific).
+    let _ = crate::gate_integration::bump_canon_version(project_path);
     Ok(out)
 }
 
@@ -1519,6 +1523,9 @@ pub fn rollback(
 
     // Touch a marker for audit.
     let _ = std::fs::write(rb_dir.join("rolled_back_at.txt"), format!("{now}"));
+
+    // DevC: bump canon_version after every successful rollback (shared core, not command-specific).
+    let _ = crate::gate_integration::bump_canon_version(project_path);
 
     Ok((restored, deleted))
 }

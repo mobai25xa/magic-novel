@@ -8,8 +8,8 @@ export interface AssetSummary {
 
 export type AssetKind = 'lore' | 'prompt' | 'worldview' | 'outline' | 'character'
 
-export type MagicAssetNode =
-  | { kind: 'dir'; name: string; path: string; title?: string; children: MagicAssetNode[] }
+export type AssetLibraryNode =
+  | { kind: 'dir'; name: string; path: string; title?: string; children: AssetLibraryNode[] }
   | {
       kind: 'file'
       name: string
@@ -69,57 +69,57 @@ export async function copyAssetClient(
   return invokeTauri('copy_asset', { fromProjectPath, toProjectPath, kind, assetId })
 }
 
-export async function getMagicAssetsTreeClient(projectPath: string): Promise<MagicAssetNode[]> {
-  return invokeTauri('get_magic_assets_tree', { projectPath })
+export async function getAssetsTreeClient(projectPath: string): Promise<AssetLibraryNode[]> {
+  return invokeTauri('get_assets_tree', { projectPath })
 }
 
-export async function readMagicAssetClient(projectPath: string, relativePath: string): Promise<unknown> {
-  return invokeTauri('read_magic_asset', { projectPath, relativePath })
+export async function readAssetFileClient(projectPath: string, relativePath: string): Promise<unknown> {
+  return invokeTauri('read_asset_file', { projectPath, relativePath })
 }
 
-export async function saveMagicAssetClient(
+export async function saveAssetFileClient(
   projectPath: string,
   relativePath: string,
   asset: unknown,
 ): Promise<void> {
-  return invokeTauri('save_magic_asset', { projectPath, relativePath, asset })
+  return invokeTauri('save_asset_file', { projectPath, relativePath, asset })
 }
 
-export async function createMagicAssetFolderClient(
+export async function createAssetFolderClient(
   projectPath: string,
   parentRelativeDir: string,
   title: string,
 ): Promise<string> {
-  return invokeTauri('create_magic_asset_folder', { projectPath, parentRelativeDir, title })
+  return invokeTauri('create_asset_folder', { projectPath, parentRelativeDir, title })
 }
 
-export async function createMagicAssetFileClient(
+export async function createAssetFileClient(
   projectPath: string,
   parentRelativeDir: string,
   assetKind: AssetKind,
   title: string,
 ): Promise<string> {
-  return invokeTauri('create_magic_asset_file', { projectPath, parentRelativeDir, assetKind, title })
+  return invokeTauri('create_asset_file', { projectPath, parentRelativeDir, assetKind, title })
 }
 
-export async function updateMagicAssetTitleClient(
+export async function updateAssetFileTitleClient(
   projectPath: string,
   relativePath: string,
   newTitle: string,
 ): Promise<void> {
-  return invokeTauri('update_magic_asset_title', { projectPath, relativePath, newTitle })
+  return invokeTauri('update_asset_file_title', { projectPath, relativePath, newTitle })
 }
 
-export async function updateMagicAssetFolderTitleClient(
+export async function updateAssetFolderTitleClient(
   projectPath: string,
   relativeDir: string,
   newTitle: string,
 ): Promise<void> {
-  return invokeTauri('update_magic_asset_folder_title', { projectPath, relativeDir, newTitle })
+  return invokeTauri('update_asset_folder_title', { projectPath, relativeDir, newTitle })
 }
 
-export async function deleteMagicAssetPathClient(projectPath: string, relativePath: string): Promise<void> {
-  return invokeTauri('delete_magic_asset_path', { projectPath, relativePath })
+export async function deleteAssetPathClient(projectPath: string, relativePath: string): Promise<void> {
+  return invokeTauri('delete_asset_path', { projectPath, relativePath })
 }
 
 export async function appendChapterHistoryEventClient(

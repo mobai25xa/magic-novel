@@ -57,6 +57,12 @@ pub struct AgentSessionRuntimeSnapshotV1 {
     pub session_id: String,
     pub updated_at: i64,
     pub runtime_state: SessionRuntimeState,
+    /// Canon revision in effect when this session started (for reminder drift warnings).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_canon_revision: Option<i64>,
+    /// Branch id in effect when this session started (for reminder drift warnings).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_branch_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hydration_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -94,6 +100,8 @@ pub struct RuntimeSnapshotUpsertInput {
     pub hydration_source: Option<String>,
     pub last_turn: Option<u32>,
     pub next_turn_id: Option<u32>,
+    pub session_canon_revision: Option<i64>,
+    pub session_branch_id: Option<String>,
     pub provider_name: Option<String>,
     pub model: Option<String>,
     pub base_url: Option<String>,
@@ -132,6 +140,8 @@ impl RuntimeSnapshotUpsertInput {
             hydration_source: None,
             last_turn,
             next_turn_id: Some(next_turn_id),
+            session_canon_revision: None,
+            session_branch_id: None,
             provider_name,
             model,
             base_url,
@@ -153,6 +163,8 @@ impl RuntimeSnapshotUpsertInput {
             hydration_source: None,
             last_turn: Some(0),
             next_turn_id: Some(1),
+            session_canon_revision: None,
+            session_branch_id: None,
             provider_name: None,
             model: None,
             base_url: None,
@@ -201,6 +213,8 @@ impl RuntimeSnapshotUpsertInput {
             hydration_source: None,
             last_turn,
             next_turn_id: Some(next_turn_id),
+            session_canon_revision: None,
+            session_branch_id: None,
             provider_name: Some(suspended.provider_name.clone()),
             model: Some(suspended.model.clone()),
             base_url: Some(suspended.base_url.clone()),
@@ -232,6 +246,8 @@ impl RuntimeSnapshotUpsertInput {
             hydration_source: Some("readonly_fallback".to_string()),
             last_turn,
             next_turn_id: Some(next_turn_id),
+            session_canon_revision: None,
+            session_branch_id: None,
             provider_name: None,
             model: None,
             base_url: None,
@@ -248,6 +264,18 @@ impl RuntimeSnapshotUpsertInput {
 
     pub fn with_active_skill(mut self, active_skill: Option<String>) -> Self {
         self.active_skill = normalize_active_skill(active_skill);
+        self
+    }
+
+    pub fn with_session_baseline(
+        mut self,
+        session_canon_revision: Option<i64>,
+        session_branch_id: Option<String>,
+    ) -> Self {
+        self.session_canon_revision = session_canon_revision;
+        self.session_branch_id = session_branch_id
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
         self
     }
 }
@@ -378,6 +406,8 @@ impl AgentSessionRuntimeSnapshotV1 {
             session_id: input.session_id,
             updated_at: chrono::Utc::now().timestamp_millis(),
             runtime_state: input.runtime_state,
+            session_canon_revision: input.session_canon_revision,
+            session_branch_id: input.session_branch_id,
             hydration_source: input.hydration_source,
             last_turn: input.last_turn,
             next_turn_id: Some(next_turn_id),
@@ -484,7 +514,27 @@ pub fn save_runtime_snapshot_from_input(
     project_path: &Path,
     input: RuntimeSnapshotUpsertInput,
 ) -> Result<AgentSessionRuntimeSnapshotV1, AppError> {
-    let snapshot = AgentSessionRuntimeSnapshotV1::from_upsert(input);
+    let existing = if input.session_canon_revision.is_some() && input.session_branch_id.is_some() {
+        None
+    } else {
+        load_runtime_snapshot(project_path, &input.session_id)
+            .ok()
+            .flatten()
+    };
+
+    let mut snapshot = AgentSessionRuntimeSnapshotV1::from_upsert(input);
+
+    if snapshot.session_canon_revision.is_none() {
+        snapshot.session_canon_revision = existing
+            .as_ref()
+            .and_then(|value| value.session_canon_revision);
+    }
+
+    if snapshot.session_branch_id.is_none() {
+        snapshot.session_branch_id = existing
+            .as_ref()
+            .and_then(|value| value.session_branch_id.clone());
+    }
     save_runtime_snapshot(project_path, &snapshot.session_id, &snapshot)?;
     Ok(snapshot)
 }
@@ -586,6 +636,8 @@ mod tests {
             session_id: session_id.to_string(),
             updated_at: chrono::Utc::now().timestamp_millis(),
             runtime_state: SessionRuntimeState::Completed,
+            session_canon_revision: None,
+            session_branch_id: None,
             hydration_source: Some("snapshot_loaded".to_string()),
             last_turn: Some(7),
             next_turn_id: None,

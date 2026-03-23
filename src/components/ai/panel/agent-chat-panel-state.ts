@@ -10,10 +10,9 @@ import type { AgentSessionMeta } from '@/lib/agent-chat/session'
 import { useStreamingTimer } from '@/hooks/use-streaming-timer'
 import { useTranslation } from '@/hooks/use-translation'
 import {
-  getMissionUiState,
-  subscribeMissionUiState,
-} from '@/lib/agent-chat/runtime-backend-events'
-import { missionGetStatusFeature, missionListFeature } from '@/features/agent-chat'
+  getMissionBackedSessionState,
+  subscribeMissionBackedSessionState,
+} from '@/lib/agent-chat/runtime-backend-events/mission-store'
 import { ensureBackendListenersStarted } from '@/lib/agent-chat/runtime'
 import type { ChatContext } from '../input/chat-context-types'
 import type { AgentPanelError } from '../agent-chat-panel-utils'
@@ -70,10 +69,15 @@ function mapReadonlyReasonToI18nKey(reason?: string):
 
 function resolveInputPlaceholder(input: {
   labels: AgentPanelLabels
+  running: boolean
   runtimeState: AgentChatPanelRuntimeState
   canContinue: boolean
   readonlyReason?: string
 }) {
+  if (input.running) {
+    return `${input.labels.panel.generating}...`
+  }
+
   if (input.canContinue) {
     return input.labels.panel.inputPlaceholder
   }
@@ -198,10 +202,17 @@ type AgentChatPanelStateOutputInput = {
   addContext: (context: ChatContext) => void
   removeContext: (contextId: string) => void
   clearContexts: () => void
+  streamingElapsedSeconds: number
   streamingElapsedTime: string
   showStreamingTimer: boolean
   projectPath: string
   missionId: string
+  missionBusy: boolean
+  missionLocked: boolean
+  missionDispatching: boolean
+  setMissionDispatching: Dispatch<SetStateAction<boolean>>
+  activeChapterPath?: string
+  activeSkill?: string
   labels: AgentPanelLabels
   chatLabels: AgentChatContextLabels
 }
@@ -220,7 +231,7 @@ export function useAgentChatPanelState() {
   const [input, setInput] = useState('')
   const [lastError, setLastError] = useState<AgentPanelError | null>(null)
   const [historyPageOpen, setHistoryPageOpen] = useState(false)
-  const [missionIdFallback, setMissionIdFallback] = useState('')
+  const [missionDispatching, setMissionDispatching] = useState(false)
 
   const approvalMode = useSettingsStore((state) => state.approvalMode)
   const capabilityMode = useSettingsStore((state) => state.capabilityMode)
@@ -228,17 +239,20 @@ export function useAgentChatPanelState() {
   const sessionId = useAgentChatSessionId()
   const turnIds = useAgentChatStore((state) => state.turnOrder)
   const stateStatus = useAgentChatStore((state) => state.stateStatus)
+  const activeChapterPath = useAgentChatStore((state) => state.active_chapter_path)
+  const activeSkill = useAgentChatStore((state) => state.activeSkill)
   const latestTurnSignature = useLatestTurnSignature()
   const projectPath = useProjectStore((state) => state.projectPath ?? '')
   const { translations } = useTranslation()
 
-  const running = stateStatus !== 'idle'
+  const chatRunning = stateStatus !== 'idle'
   const streamingActive = isStreamingStatus(stateStatus)
 
   const modelState = usePanelModelState()
   const sessionState = usePanelSessionState({ setLastError })
   const contextState = usePanelContexts()
   const {
+    elapsedSeconds: streamingElapsedSeconds,
     isRunning: streamingTimerRunning,
     start: startStreamingTimer,
     stop: stopStreamingTimer,
@@ -267,51 +281,27 @@ export function useAgentChatPanelState() {
     void ensureBackendListenersStarted()
   }, [])
 
-  const missionState = useSyncExternalStore(
-    subscribeMissionUiState,
-    getMissionUiState,
-    () => null,
+  const missionSessionState = useSyncExternalStore(
+    (listener) => subscribeMissionBackedSessionState(sessionId, listener),
+    () => getMissionBackedSessionState(sessionId),
+    () => getMissionBackedSessionState(sessionId),
   )
-
-  useEffect(() => {
-    if (!projectPath || missionState?.missionId) {
-      return
-    }
-
-    let active = true
-    void missionListFeature(projectPath)
-      .then(async (ids) => {
-        if (!active) return
-        if (ids.length === 0) {
-          setMissionIdFallback('')
-          return
-        }
-
-        const sorted = [...ids].sort().reverse()
-        for (const candidate of sorted) {
-          try {
-            const status = await missionGetStatusFeature(projectPath, candidate)
-            if (status.state.state !== 'completed') {
-              if (active) setMissionIdFallback(candidate)
-              return
-            }
-          } catch {
-            // ignore and continue fallback candidates
-          }
-        }
-
-        if (active) setMissionIdFallback(sorted[0] ?? '')
-      })
-      .catch(() => {
-        if (active) setMissionIdFallback('')
-      })
-
-    return () => {
-      active = false
-    }
-  }, [projectPath, missionState?.missionId])
-
-  const missionId = projectPath ? (missionState?.missionId ?? missionIdFallback) : ''
+  const missionStateValue = missionSessionState.activeMissionState ?? 'unknown'
+  const liveMissionBusy = Boolean(
+    missionSessionState.activeMissionId
+      && missionStateValue !== 'paused'
+      && missionStateValue !== 'awaiting_input'
+      && missionStateValue !== 'unknown'
+      && missionStateValue !== 'completed'
+      && missionStateValue !== 'failed'
+      && missionStateValue !== 'cancelled',
+  )
+  const missionLocked = missionDispatching || liveMissionBusy
+  const missionBusy = missionDispatching || liveMissionBusy
+  const running = chatRunning
+  const missionId = projectPath
+    ? (missionSessionState.latestMissionId ?? missionSessionState.activeMissionId ?? '')
+    : ''
 
   const runtimeCapability = sessionState.sessionRuntimeCapability
   const sessionRuntimeState = runtimeCapability.runtimeState
@@ -325,14 +315,22 @@ export function useAgentChatPanelState() {
     readonlyReason: runtimeCapability.readonlyReason,
   })
 
-  const sessionInputDisabled = running || !sessionCanContinue
+  const sessionInputDisabled =
+    chatRunning
+    || sessionRuntimeState === 'running'
+    || !sessionCanContinue
   const sessionInputPlaceholder = resolveInputPlaceholder({
     labels: translations.ai,
+    running: chatRunning || sessionRuntimeState === 'running',
     runtimeState: sessionRuntimeState,
     canContinue: sessionCanContinue,
     readonlyReason: sessionReadonlyReason,
   })
-  const canStartNewSession = !(running || sessionRuntimeState === 'running' || sessionState.isSessionLoading)
+  const canStartNewSession = !(
+    chatRunning
+    || sessionRuntimeState === 'running'
+    || sessionState.isSessionLoading
+  )
 
   const historyStateBySessionId = Object.fromEntries(
     sessionState.sessionList.map((item) => {
@@ -405,10 +403,17 @@ export function useAgentChatPanelState() {
     addContext: contextState.addContext,
     removeContext: contextState.removeContext,
     clearContexts: contextState.clearContexts,
+    streamingElapsedSeconds,
     streamingElapsedTime,
     showStreamingTimer: streamingActive,
     projectPath,
     missionId,
+    missionBusy,
+    missionLocked,
+    missionDispatching,
+    setMissionDispatching,
+    activeChapterPath,
+    activeSkill,
     labels: translations.ai,
     chatLabels: translations.aiChat,
   })

@@ -13,7 +13,7 @@ interface PatchOp {
 
 interface EditorState {
   editor: Editor | null
-  currentDocKind: 'chapter' | 'asset' | null
+  currentDocKind: 'chapter' | 'asset' | 'knowledge' | null
 
   currentChapterId: string | null
   currentChapterPath: string | null
@@ -27,6 +27,8 @@ interface EditorState {
   isSaving: boolean
   lastSavedAt: number | null
 
+  pendingExternalChapterRefresh: { projectPath: string; chapterPath: string; requestedAt: number } | null
+
   // === Beta: Last Opened State ===
   lastOpenedProjectPath: string | null
   lastOpenedChapterPath: string | null
@@ -36,10 +38,13 @@ interface EditorState {
   setEditor: (editor: Editor | null) => void
   setCurrentChapter: (id: string | null, path: string | null, title?: string | null) => void
   setCurrentAsset: (relativePath: string | null, title?: string | null) => void
+  setCurrentKnowledge: (virtualPath: string | null, title?: string | null) => void
   setContent: (content: unknown) => void
   setIsDirty: (dirty: boolean) => void
   setIsSaving: (saving: boolean) => void
   setLastSavedAt: (timestamp: number | null) => void
+  setPendingExternalChapterRefresh: (value: EditorState['pendingExternalChapterRefresh']) => void
+  clearPendingExternalChapterRefresh: () => void
   setLastOpened: (projectPath: string, chapterPath: string, chapterId: string, chapterTitle: string | null) => void
   applyPatch: (patch: PatchOp[]) => void
   reset: () => void
@@ -72,6 +77,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   isDirty: false,
   isSaving: false,
   lastSavedAt: null,
+  pendingExternalChapterRefresh: null,
 
   // === Beta: Last Opened State ===
   lastOpenedProjectPath: _lastOpened.projectPath,
@@ -101,10 +107,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       currentChapterTitle: null,
     }),
 
+  setCurrentKnowledge: (virtualPath, title = null) =>
+    set({
+      currentDocKind: virtualPath ? 'knowledge' : null,
+      currentAssetPath: virtualPath,
+      currentAssetTitle: title,
+      currentChapterId: null,
+      currentChapterPath: null,
+      currentChapterTitle: null,
+    }),
+
   setContent: (content) => set({ content, isDirty: true }),
   setIsDirty: (isDirty) => set({ isDirty }),
   setIsSaving: (isSaving) => set({ isSaving }),
   setLastSavedAt: (lastSavedAt) => set({ lastSavedAt }),
+  setPendingExternalChapterRefresh: (pendingExternalChapterRefresh) => set({ pendingExternalChapterRefresh }),
+  clearPendingExternalChapterRefresh: () => set({ pendingExternalChapterRefresh: null }),
   setLastOpened: (projectPath, chapterPath, chapterId, chapterTitle) => {
     const data = { projectPath, chapterPath, chapterId, chapterTitle }
     set({
@@ -155,6 +173,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       isDirty: false,
       isSaving: false,
       lastSavedAt: null,
+      pendingExternalChapterRefresh: null,
     }),
 }))
 

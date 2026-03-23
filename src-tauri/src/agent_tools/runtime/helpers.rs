@@ -2,46 +2,9 @@ use std::time::Instant;
 
 use serde_json::Value;
 
-use crate::agent_tools::contracts::{
-    EditInput, FaultDomain, ReadInput, ToolError, ToolMeta, ToolResult,
-};
+use crate::agent_tools::contracts::{FaultDomain, ToolError, ToolMeta, ToolResult};
 use crate::models::AppError;
 use crate::services::tool_audit::{emit_tool_audit, ToolAuditRecord};
-
-pub(super) fn tool_error(
-    tool: &str,
-    call_id: String,
-    started: Instant,
-    code: &str,
-    message: &str,
-    retryable: bool,
-    fault_domain: FaultDomain,
-) -> ToolResult<Value> {
-    let result = ToolResult {
-        ok: false,
-        data: None,
-        error: Some(ToolError {
-            code: code.to_string(),
-            message: message.to_string(),
-            retryable,
-            fault_domain,
-            details: None,
-        }),
-        meta: ToolMeta {
-            tool: tool.to_string(),
-            call_id,
-            duration_ms: started.elapsed().as_millis() as u64,
-            revision_before: None,
-            revision_after: None,
-            tx_id: None,
-            read_set: None,
-            write_set: None,
-        },
-    };
-
-    emit_from_result(&result, "policy");
-    result
-}
 
 pub(super) fn map_app_error(
     tool: &str,
@@ -113,37 +76,4 @@ pub(super) fn emit_from_result(result: &ToolResult<Value>, stage: &str) {
         error_message: result.error.as_ref().map(|e| e.message.clone()),
         stage: stage.to_string(),
     });
-}
-
-pub(super) fn extract_revision(v: &Value, field: &str) -> Option<u64> {
-    v.get(field).and_then(|it| {
-        it.as_u64()
-            .or_else(|| it.as_i64().and_then(|n| (n >= 0).then_some(n as u64)))
-    })
-}
-
-pub(super) fn extract_tx_id(v: &Value) -> Option<String> {
-    v.get("tx_id")
-        .and_then(|it| it.as_str())
-        .map(ToString::to_string)
-}
-
-pub(super) fn read_entity_ref(input: &ReadInput) -> String {
-    let kind = input
-        .kind
-        .as_ref()
-        .map(|k| match k {
-            crate::agent_tools::contracts::ReadKind::Volume => "volume",
-            crate::agent_tools::contracts::ReadKind::Chapter => "chapter",
-        })
-        .unwrap_or("chapter");
-    format!("{}:{}", kind, input.path)
-}
-
-pub(super) fn edit_entity_ref(input: &EditInput) -> String {
-    let kind = match input.target.as_ref() {
-        Some(crate::agent_tools::contracts::EditTarget::VolumeMeta) => "volume",
-        _ => "chapter",
-    };
-    format!("{}:{}", kind, input.path)
 }

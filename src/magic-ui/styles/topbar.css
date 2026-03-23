@@ -21,6 +21,15 @@
   scrollbar-width: none;
 }
 
+@media (min-width: 1280px) {
+  .main-scroll--workspace-mode {
+    display: flex;
+    min-height: 0;
+    overflow: hidden;
+    padding-bottom: 0;
+  }
+}
+
 .main-scroll::-webkit-scrollbar {
   display: none;
 }

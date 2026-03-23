@@ -219,14 +219,14 @@ fn map_event(
             session_event_types::TURN_STARTED,
             json!({
                 "timeline_type": event_types::PLAN_STARTED,
+                "policy_source": envelope.payload.get("policy_source"),
+                "policy_summary": envelope.payload.get("policy_summary"),
+                "capability_preset": envelope.payload.get("capability_preset"),
+                "exposure_reason": envelope.payload.get("exposure_reason"),
                 "tool_package": envelope.payload.get("tool_package"),
-                "route_reason": envelope.payload.get("route_reason"),
                 "fallback_from": envelope.payload.get("fallback_from"),
-                "fallback_reason": envelope.payload.get("fallback_reason"),
-                "rollout_mode": envelope.payload.get("rollout_mode"),
-                "rollout_in_canary": envelope.payload.get("rollout_in_canary"),
-                "canary_percent": envelope.payload.get("canary_percent"),
                 "exposed_tools": envelope.payload.get("exposed_tools"),
+                "hidden_tools": envelope.payload.get("hidden_tools"),
                 "skipped_tools": envelope.payload.get("skipped_tools"),
             }),
         )),
@@ -240,6 +240,34 @@ fn map_event(
         event_types::TURN_CANCELLED => Some((
             session_event_types::TURN_CANCELLED,
             envelope.payload.clone(),
+        )),
+
+        // ── Worker identity (UI-P3 phase timeline) ─────────────
+        event_types::WORKER_STARTED => Some((
+            session_event_types::TIMELINE_EVENT,
+            json!({
+                "timeline_type": event_types::WORKER_STARTED,
+                // Keep call_id at the top-level so runtime dedupe_key includes it.
+                "call_id": envelope.payload.get("call_id"),
+                "worker_type": envelope.payload.get("worker_type"),
+                "worker_session_id": envelope.payload.get("worker_session_id"),
+                "scope_ref": envelope.payload.get("scope_ref"),
+                "target_ref": envelope.payload.get("target_ref"),
+                "summary": envelope.payload.get("summary"),
+            }),
+        )),
+        event_types::WORKER_COMPLETED => Some((
+            session_event_types::TIMELINE_EVENT,
+            json!({
+                "timeline_type": event_types::WORKER_COMPLETED,
+                // Keep call_id at the top-level so runtime dedupe_key includes it.
+                "call_id": envelope.payload.get("call_id"),
+                "worker_type": envelope.payload.get("worker_type"),
+                "worker_session_id": envelope.payload.get("worker_session_id"),
+                "scope_ref": envelope.payload.get("scope_ref"),
+                "target_ref": envelope.payload.get("target_ref"),
+                "summary": envelope.payload.get("summary"),
+            }),
         )),
 
         // ── Tool events ────────────────────────────────────────
@@ -517,14 +545,14 @@ mod tests {
         let envelope = make_envelope(
             event_types::TOOL_CALL_STARTED,
             1,
-            json!({"call_id": "tool_1", "tool_name": "read", "args_preview": "{}"}),
+            json!({"call_id": "tool_1", "tool_name": "context_read", "args_preview": "{}"}),
         );
         assert!(sink.persist_event(&envelope).unwrap());
 
         let envelope = make_envelope(
             event_types::TOOL_CALL_FINISHED,
             1,
-            json!({"call_id": "tool_1", "tool_name": "read", "status": "ok"}),
+            json!({"call_id": "tool_1", "tool_name": "context_read", "status": "ok"}),
         );
         assert!(sink.persist_event(&envelope).unwrap());
 
@@ -603,7 +631,7 @@ mod tests {
         let envelope = make_envelope(
             event_types::WAITING_FOR_CONFIRMATION,
             1,
-            json!({"call_id": "tool_1", "tool_name": "edit", "reason": "sensitive_write"}),
+            json!({"call_id": "tool_1", "tool_name": "draft_write", "reason": "sensitive_write"}),
         );
         assert!(sink.persist_event(&envelope).unwrap());
 
@@ -729,7 +757,7 @@ mod tests {
         sink.persist_turn_state(
             1,
             "waiting_confirmation",
-            json!({"call_id": "tool_42", "tool_name": "edit"}),
+            json!({"call_id": "tool_42", "tool_name": "draft_write"}),
         )
         .unwrap();
 
@@ -741,7 +769,7 @@ mod tests {
         let payload = events[0].payload.as_ref().unwrap();
         assert_eq!(payload["state"], "waiting_confirmation");
         assert_eq!(payload["call_id"], "tool_42");
-        assert_eq!(payload["tool_name"], "edit");
+        assert_eq!(payload["tool_name"], "draft_write");
     }
 
     #[test]

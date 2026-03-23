@@ -13,7 +13,6 @@ use super::types::ToolCallInfo;
 mod askuser;
 mod common;
 mod context_tools;
-mod discovery_tools;
 mod writing_tools;
 
 pub(crate) use askuser::{
@@ -21,18 +20,18 @@ pub(crate) use askuser::{
 };
 
 use common::{build_result_data_preview, build_result_error, build_result_refs, truncate_to_chars};
-use context_tools::{
-    format_character_sheet_result, format_outline_result, format_search_knowledge_result,
-};
-use discovery_tools::{format_grep_result, format_ls_result};
 use writing_tools::{
-    format_create_result, format_delete_result, format_edit_result, format_move_result,
-    format_read_result,
+    format_draft_write_result, format_knowledge_write_result, format_structure_edit_result,
+};
+
+use context_tools::{
+    format_context_read_result, format_context_search_result, format_knowledge_read_result,
+    format_workspace_map_result,
 };
 
 /// Maximum characters in a single tool result sent to the LLM.
 /// Chosen at 16K (vs Droid's 4K) because novel content is naturally longer than code,
-/// but still prevents unbounded grep/outline/character_sheet output from blowing up context.
+/// but still prevents unbounded workspace_map/context_read output from blowing up context.
 const MAX_TOOL_OUTPUT_CHARS: usize = 16_000;
 
 pub(crate) fn build_tool_message(
@@ -93,16 +92,13 @@ pub(crate) fn build_tool_trace(tool_name: &str, result: &ToolResult<serde_json::
 
 fn format_success_content(tc: &ToolCallInfo, result: &ToolResult<serde_json::Value>) -> String {
     match tc.tool_name.as_str() {
-        "read" => format_read_result(result.data.as_ref()),
-        "edit" => format_edit_result(result.data.as_ref()),
-        "create" => format_create_result(result.data.as_ref()),
-        "delete" => format_delete_result(result.data.as_ref()),
-        "move" => format_move_result(result.data.as_ref()),
-        "ls" => format_ls_result(result.data.as_ref(), &tc.args),
-        "grep" => format_grep_result(result.data.as_ref(), &tc.args),
-        "outline" => format_outline_result(result.data.as_ref(), &tc.args),
-        "character_sheet" => format_character_sheet_result(result.data.as_ref(), &tc.args),
-        "search_knowledge" => format_search_knowledge_result(result.data.as_ref(), &tc.args),
+        "workspace_map" => format_workspace_map_result(result.data.as_ref(), &tc.args),
+        "context_read" => format_context_read_result(result.data.as_ref(), &tc.args),
+        "context_search" => format_context_search_result(result.data.as_ref(), &tc.args),
+        "knowledge_read" => format_knowledge_read_result(result.data.as_ref(), &tc.args),
+        "knowledge_write" => format_knowledge_write_result(result.data.as_ref(), &tc.args),
+        "draft_write" => format_draft_write_result(result.data.as_ref(), &tc.args),
+        "structure_edit" => format_structure_edit_result(result.data.as_ref(), &tc.args),
         _ => serde_json::to_string(&result.data).unwrap_or_else(|_| "null".to_string()),
     }
 }
@@ -114,17 +110,9 @@ fn format_error_content(_tc: &ToolCallInfo, result: &ToolResult<serde_json::Valu
     };
 
     let recovery = match err.code.as_str() {
-        "E_VC_CONFLICT_REVISION" => {
-            " Recovery: Re-read the chapter to get the latest revision, then retry."
-        }
-        "E_TOOL_NOT_FOUND" | "E_TOOL_PATH_NOT_FOUND" => {
-            " Recovery: Use ls() to check available paths."
-        }
-        "E_TOOL_AMBIGUOUS_MATCH" => {
-            " Recovery: Read the latest snapshot and retry with precise edit ops on block ids."
-        }
-        "E_TOOL_NO_MATCH" => {
-            " Recovery: The target blocks were not found. Re-read the chapter snapshot and retry."
+        "E_CONFLICT" | "E_VC_CONFLICT_REVISION" => " Recovery: Run context_read to fetch the latest target state, then retry with the same idempotency_key when applicable.",
+        "E_TOOL_NOT_FOUND" => {
+            " Recovery: Use only the exposed tool set for this turn, and verify tool names in the registry."
         }
         "E_TOOL_SCHEMA_INVALID" => {
             " Recovery: Check the parameter types and required fields in the tool schema."
@@ -135,6 +123,7 @@ fn format_error_content(_tc: &ToolCallInfo, result: &ToolResult<serde_json::Valu
         "E_TOOL_TIMEOUT" => {
             " Recovery: The tool call took too long. Retry with a simpler query or smaller scope."
         }
+        "E_REF_NOT_FOUND" => " Recovery: Use workspace_map to locate the correct ref, then retry.",
         _ => "",
     };
 
@@ -225,28 +214,23 @@ mod tests {
     }
 
     #[test]
-    fn test_build_tool_message_read_starts_with_revision_hint() {
+    fn test_build_tool_message_context_read_includes_content() {
         let tc = ToolCallInfo {
-            llm_call_id: "call_read_1".to_string(),
-            tool_name: "read".to_string(),
-            args: json!({
-                "path": "vol_1/ch_1.json",
-                "view": "markdown"
-            }),
+            llm_call_id: "call_ctx_1".to_string(),
+            tool_name: "context_read".to_string(),
+            args: json!({ "target_ref": "chapter:manuscripts/vol_1/ch_1.json" }),
         };
 
         let result = ToolResult {
             ok: true,
             data: Some(json!({
-                "path": "vol_1/ch_1.json",
-                "kind": "domain_object",
-                "revision": 3,
-                "hash": "abc",
-                "content": "# Chapter\nBody"
+                "ref": "chapter:manuscripts/vol_1/ch_1.json",
+                "kind": "chapter",
+                "content": "Chapter: T\\n\\nBody"
             })),
             error: None,
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "read".to_string(),
+                tool: "context_read".to_string(),
                 call_id: "tool_1".to_string(),
                 duration_ms: 1,
                 revision_before: None,
@@ -262,39 +246,35 @@ mod tests {
             crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
             _ => panic!("expected tool_result"),
         };
-        assert!(content.starts_with(
-            "[revision=3] Use this revision number as base_revision when calling edit."
-        ));
-        assert!(content.contains("[path=vol_1/ch_1.json hash=abc]"));
-        assert!(content.contains("# Chapter\nBody"));
+        assert!(
+            content.contains("[context_read ref=chapter:manuscripts/vol_1/ch_1.json kind=chapter]")
+        );
+        assert!(content.contains("Chapter: T"));
+        assert!(content.contains("Body"));
     }
 
     #[test]
-    fn test_build_tool_message_read_truncated_includes_pagination_hint() {
+    fn test_build_tool_message_workspace_map_truncated_includes_cursor_hint() {
         let tc = ToolCallInfo {
-            llm_call_id: "call_read_2".to_string(),
-            tool_name: "read".to_string(),
-            args: json!({ "path": "vol_1/ch_1.json", "view": "markdown" }),
+            llm_call_id: "call_map_1".to_string(),
+            tool_name: "workspace_map".to_string(),
+            args: json!({ "scope": "book", "depth": 2 }),
         };
 
         let result = ToolResult {
             ok: true,
             data: Some(json!({
-                "path": "vol_1/ch_1.json",
-                "kind": "domain_object",
-                "revision": 5,
-                "hash": "def",
-                "content": "First page...",
-                "truncated": {
-                    "total_chars": 50000,
-                    "returned_offset": 0,
-                    "returned_chars": 10000,
-                    "next_offset": 10000
-                }
+                "tree": [
+                    { "ref": "volume:manuscripts/vol_1", "kind": "volume", "title": "Vol 1" },
+                    { "ref": "chapter:manuscripts/vol_1/ch_1.json", "kind": "chapter", "title": "Ch 1" }
+                ],
+                "summary": "book: volumes=1, chapters=1, truncated=true",
+                "truncated": true,
+                "next_cursor": "2"
             })),
             error: None,
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "read".to_string(),
+                tool: "workspace_map".to_string(),
                 call_id: "tool_2".to_string(),
                 duration_ms: 1,
                 revision_before: None,
@@ -310,7 +290,9 @@ mod tests {
             crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
             _ => panic!("expected tool_result"),
         };
-        assert!(content.contains("[truncated: returned 10000 of 50000 chars. Continue with another read call from offset 10000 if needed.]"));
+        assert!(content.contains("summary: book: volumes=1"));
+        assert!(content.contains("next_cursor=2"));
+        assert!(content.contains("workspace_map(cursor=\"2\")"));
     }
 
     #[test]
@@ -372,20 +354,19 @@ mod tests {
     }
 
     #[test]
-    fn test_build_tool_trace_read_uses_compact_preview_without_content_body() {
+    fn test_build_tool_trace_context_read_uses_compact_preview_without_content_body() {
+        let content = "Chapter: T\\n\\nBody";
         let result = ToolResult {
             ok: true,
             data: Some(json!({
-                "path": "vol_1/ch_1.json",
-                "kind": "domain_object",
-                "revision": 9,
-                "hash": "h123",
-                "content": "# chapter\nvery long body"
+                "ref": "chapter:manuscripts/vol_1/ch_1.json",
+                "kind": "chapter",
+                "content": content
             })),
             error: None,
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "read".to_string(),
-                call_id: "tool_read".to_string(),
+                tool: "context_read".to_string(),
+                call_id: "tool_ctx".to_string(),
                 duration_ms: 3,
                 revision_before: None,
                 revision_after: None,
@@ -395,203 +376,146 @@ mod tests {
             },
         };
 
-        let trace = build_tool_trace("read", &result);
+        let trace = build_tool_trace("context_read", &result);
         let preview = trace
             .get("result")
             .and_then(|v| v.get("preview"))
             .expect("result.preview should exist");
 
         assert_eq!(
-            preview.get("path").and_then(|v| v.as_str()),
-            Some("vol_1/ch_1.json")
+            preview.get("ref").and_then(|v| v.as_str()),
+            Some("chapter:manuscripts/vol_1/ch_1.json")
         );
-        assert_eq!(preview.get("revision").and_then(|v| v.as_i64()), Some(9));
+        assert_eq!(
+            preview.get("kind").and_then(|v| v.as_str()),
+            Some("chapter")
+        );
         assert!(
             preview.get("content").is_none(),
             "trace should not include full content body"
         );
         assert_eq!(
             preview.get("content_chars").and_then(|v| v.as_u64()),
-            Some(24)
+            Some(content.chars().count() as u64)
         );
     }
 
     #[test]
-    fn test_format_edit_result_preview() {
+    fn test_format_draft_write_result_preview() {
         let data = json!({
-            "mode": "preview",
             "accepted": true,
-            "path": "vol_1/ch_1.json",
-            "revision_before": 3,
-            "revision_after": 3,
-            "diagnostics": [],
-            "diff_summary": [{"operation": "replace", "description": "paragraph 2"}],
-            "hash_after": "xyz"
-        });
-        let result = format_edit_result(Some(&data));
-        assert!(result.starts_with("[preview path=vol_1/ch_1.json revision=3→3]"));
-        assert!(result.contains("replace paragraph 2"));
-        assert!(result.contains(
-            "Preview only — call edit with dry_run=false if you want to commit this change."
-        ));
-    }
-
-    #[test]
-    fn test_format_edit_result_commit() {
-        let data = json!({
-            "mode": "commit",
-            "accepted": true,
-            "path": "vol_1/ch_1.json",
-            "revision_before": 3,
-            "revision_after": 4,
-            "diagnostics": [],
-            "diff_summary": [],
-            "tx_id": "tx_abc",
-            "hash_after": "xyz"
-        });
-        let result = format_edit_result(Some(&data));
-        assert!(result.starts_with("[committed path=vol_1/ch_1.json revision=3→4 tx=tx_abc]"));
-        assert!(result.contains("Edit applied successfully."));
-    }
-
-    #[test]
-    fn test_format_create_result() {
-        let data = json!({
-            "created_kind": "file",
-            "path": "vol_1/ch_013.json",
-            "id": "abc",
-            "revision_after": 1,
-            "created_at": 1234567890
-        });
-        let result = format_create_result(Some(&data));
-        assert!(result.starts_with("[created path=vol_1/ch_013.json revision=1]"));
-        assert!(result.contains("file created successfully."));
-    }
-
-    #[test]
-    fn test_format_delete_result_preview() {
-        let data = json!({
             "mode": "preview",
-            "kind": "volume",
-            "path": "vol_1",
-            "impact": { "chapter_count": 3 }
+            "diff_summary": ["write_mode: draft", "length_target: 1200"],
+            "snippet_after": "Chapter: T\\n\\nBody…"
         });
-        let result = format_delete_result(Some(&data));
-        assert!(result.starts_with("[delete preview kind=volume path=vol_1"));
-        assert!(result.contains("chapter_count:3"));
+        let args = json!({
+            "target_ref": "chapter:manuscripts/vol_1/ch_1.json",
+            "write_mode": "draft"
+        });
+        let result = format_draft_write_result(Some(&data), &args);
+        assert!(result.contains("[draft_write mode=preview accepted=true write_mode=draft target_ref=chapter:manuscripts/vol_1/ch_1.json]"));
+        assert!(result.contains("diff_summary:"));
+        assert!(result.contains("- write_mode: draft"));
+        assert!(result.contains("snippet_after:"));
     }
 
     #[test]
-    fn test_format_move_result_commit() {
+    fn test_format_structure_edit_result_commit() {
         let data = json!({
+            "accepted": true,
             "mode": "commit",
-            "chapter_path": "vol_1/ch_1.json",
-            "target_volume_path": "vol_2",
-            "target_index": 1,
-            "new_chapter_path": "vol_2/ch_1.json"
+            "impact_summary": ["created chapter:manuscripts/vol_1/ch_new.json"],
+            "refs": { "after": "chapter:manuscripts/vol_1/ch_new.json" },
+            "tx_id": "tx_1"
         });
-        let result = format_move_result(Some(&data));
-        assert!(result.starts_with("[move committed chapter=vol_1/ch_1.json"));
-        assert!(result.contains("new_path=vol_2/ch_1.json"));
-    }
-
-    #[test]
-    fn test_format_ls_result_with_items() {
-        let data = json!({
-            "cwd": ".",
-            "items": [
-                {"kind": "folder", "name": "Vol 1", "path": "vol_1", "child_count": 5, "revision": 0},
-                {"kind": "folder", "name": "Vol 2", "path": "vol_2", "child_count": 3, "revision": 0}
-            ]
+        let args = json!({
+            "op": "create",
+            "node_type": "chapter"
         });
-        let args = json!({"offset": 0, "limit": 30});
-        let result = format_ls_result(Some(&data), &args);
-        assert!(result.starts_with("[ls path=. total=2 showing=1-2]"));
-        assert!(result.contains("Vol 1/ (vol_1)"));
+        let result = format_structure_edit_result(Some(&data), &args);
+        assert!(result
+            .contains("[structure_edit mode=commit accepted=true op=create node_type=chapter]"));
+        assert!(result.contains("tx=tx_1"));
+        assert!(result.contains("impact_summary:"));
+        assert!(result.contains("created chapter:manuscripts/vol_1/ch_new.json"));
     }
 
     #[test]
-    fn test_format_ls_result_truncated_with_pagination_hint() {
-        let mut items = Vec::new();
-        for i in 0..35 {
-            items.push(json!({
-                "kind": "folder",
-                "name": format!("Vol {}", i + 1),
-                "path": format!("vol_{}", i + 1),
-                "child_count": i,
-                "revision": 0
-            }));
-        }
-
-        let data = json!({ "cwd": ".", "items": items });
-        let args = json!({"offset": 0, "limit": 30});
-        let result = format_ls_result(Some(&data), &args);
-
-        assert!(result.starts_with("[ls path=. total=35 showing=1-30]"));
-        assert!(result.contains("[truncated: 5 more items."));
-        assert!(result.contains("offset=30, limit=30"));
-    }
-
-    #[test]
-    fn test_format_grep_result() {
+    fn test_format_context_search_result_includes_hits() {
         let data = json!({
             "hits": [
-                {"path": "vol_1/ch_003.json", "score": 0.95, "snippet": "the dragon emerged"}
-            ]
+                { "ref": "chapter:manuscripts/vol_1/ch_003.json", "score": 0.95, "snippet": "the dragon emerged" }
+            ],
+            "mode": "keyword"
         });
-        let args = json!({"query": "dragon", "mode": "keyword"});
-        let result = format_grep_result(Some(&data), &args);
-        assert!(result.starts_with("[grep query=\"dragon\" mode=keyword hits=1]"));
-        assert!(result.contains("vol_1/ch_003.json (score=0.95)"));
+        let args = json!({"query": "dragon", "corpus": "draft", "mode": "keyword"});
+        let result = format_context_search_result(Some(&data), &args);
+        assert!(result
+            .starts_with("[context_search query=\"dragon\" corpus=draft mode=keyword hits=1]"));
+        assert!(result.contains("chapter:manuscripts/vol_1/ch_003.json"));
         assert!(result.contains("\"the dragon emerged\""));
     }
 
     #[test]
-    fn test_format_outline_result() {
-        let data = json!({"outline": "# Outline\n- A\n- B"});
-        let args = json!({"volume_path": "vol_1"});
-        let result = format_outline_result(Some(&data), &args);
-        assert!(result.starts_with("[outline scope=vol_1]"));
-        assert!(result.contains("# Outline"));
+    fn test_format_knowledge_read_result_full_view_includes_snippet() {
+        let data = json!({
+            "items": [
+                {
+                    "ref": "knowledge:.magic_novel/terms/foo.md",
+                    "title": "Foo",
+                    "summary": "foo summary",
+                    "snippet": "foo snippet"
+                }
+            ],
+            "truncated": true
+        });
+        let args = json!({
+            "view_mode": "full",
+            "knowledge_type": "term",
+            "query": "foo"
+        });
+        let result = format_knowledge_read_result(Some(&data), &args);
+        assert!(result.contains("[knowledge_read view_mode=full items=1]"));
+        assert!(result.contains("knowledge_type=term"));
+        assert!(result.contains("query=\"foo\""));
+        assert!(result.contains("knowledge:.magic_novel/terms/foo.md"));
+        assert!(result.contains("snippet: foo snippet"));
     }
 
     #[test]
-    fn test_format_character_sheet_result() {
-        let data = json!({"result": "Name: Li Wei"});
-        let args = json!({"name": "Li Wei"});
-        let result = format_character_sheet_result(Some(&data), &args);
-        assert!(result.starts_with("[character_sheet name=\"Li Wei\"]"));
-        assert!(result.contains("Name: Li Wei"));
-    }
-
-    #[test]
-    fn test_format_search_knowledge_result() {
-        let data = json!({"result": "Found in world.md"});
-        let args = json!({"query": "dragon", "top_k": 3});
-        let result = format_search_knowledge_result(Some(&data), &args);
-        assert!(result.starts_with("[search_knowledge query=\"dragon\" top_k=3]"));
-        assert!(result.contains("Found in world.md"));
+    fn test_format_knowledge_write_result_summary() {
+        let data = json!({
+            "delta_id": "kdelta_1",
+            "status": "proposed"
+        });
+        let args = json!({
+            "changes": [
+                { "target_ref": "knowledge:.magic_novel/terms/foo.json", "kind": "add", "fields": {} }
+            ]
+        });
+        let result = format_knowledge_write_result(Some(&data), &args);
+        assert!(result.contains("[knowledge_write status=proposed delta_id=kdelta_1 changes=1]"));
     }
 
     #[test]
     fn test_format_error_with_recovery_conflict() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "edit".to_string(),
+            tool_name: "draft_write".to_string(),
             args: json!({}),
         };
         let result = ToolResult {
             ok: false,
             data: None,
             error: Some(crate::agent_tools::contracts::ToolError {
-                code: "E_VC_CONFLICT_REVISION".to_string(),
+                code: "E_CONFLICT".to_string(),
                 message: "revision mismatch".to_string(),
                 retryable: true,
                 fault_domain: crate::agent_tools::contracts::FaultDomain::Vc,
                 details: None,
             }),
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "edit".to_string(),
+                tool: "draft_write".to_string(),
                 call_id: "tool_1".to_string(),
                 duration_ms: 1,
                 revision_before: None,
@@ -606,20 +530,21 @@ mod tests {
             crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
             _ => panic!("expected tool_result"),
         };
-        assert!(content.contains("[error code=E_VC_CONFLICT_REVISION]"));
+        assert!(content.contains("[error code=E_CONFLICT]"));
         assert!(content.contains("Recovery:"));
-        assert!(content.contains("Re-read the chapter"));
+        assert!(content.contains("context_read"));
     }
 
     #[test]
     fn test_format_error_timeout_has_recovery_hint() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "grep".to_string(),
+            tool_name: "context_search".to_string(),
             args: json!({}),
         };
         let timeout = std::time::Duration::from_millis(60_000);
-        let result = super::super::tool_errors::tool_timeout_error("grep", "call_1", timeout);
+        let result =
+            super::super::tool_errors::tool_timeout_error("context_search", "call_1", timeout);
         let msg = build_tool_message(&tc, &result);
         let content = match &msg.blocks[0] {
             crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
@@ -635,15 +560,19 @@ mod tests {
         let big_text = "a".repeat(20_000);
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "outline".to_string(),
-            args: json!({"volume_path": "vol_1"}),
+            tool_name: "context_read".to_string(),
+            args: json!({"target_ref": "chapter:manuscripts/vol_1/ch_1.json"}),
         };
         let result = ToolResult {
             ok: true,
-            data: Some(json!({"outline": big_text})),
+            data: Some(json!({
+                "ref": "chapter:manuscripts/vol_1/ch_1.json",
+                "kind": "chapter",
+                "content": big_text
+            })),
             error: None,
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "outline".to_string(),
+                tool: "context_read".to_string(),
                 call_id: "tool_1".to_string(),
                 duration_ms: 1,
                 revision_before: None,
@@ -666,15 +595,19 @@ mod tests {
     fn test_build_tool_message_preserves_normal_output() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "outline".to_string(),
-            args: json!({"volume_path": "vol_1"}),
+            tool_name: "context_read".to_string(),
+            args: json!({"target_ref": "chapter:manuscripts/vol_1/ch_1.json"}),
         };
         let result = ToolResult {
             ok: true,
-            data: Some(json!({"outline": "short outline"})),
+            data: Some(json!({
+                "ref": "chapter:manuscripts/vol_1/ch_1.json",
+                "kind": "chapter",
+                "content": "short content"
+            })),
             error: None,
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "outline".to_string(),
+                tool: "context_read".to_string(),
                 call_id: "tool_1".to_string(),
                 duration_ms: 1,
                 revision_before: None,
@@ -690,7 +623,7 @@ mod tests {
             _ => panic!("expected tool_result"),
         };
         assert!(!content.contains("[output truncated"));
-        assert!(content.contains("short outline"));
+        assert!(content.contains("short content"));
     }
 
     #[test]
@@ -711,14 +644,14 @@ mod tests {
     fn test_format_error_content_sanitizes_paths() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "read".to_string(),
+            tool_name: "context_read".to_string(),
             args: json!({}),
         };
         let result = ToolResult {
             ok: false,
             data: None,
             error: Some(crate::agent_tools::contracts::ToolError {
-                code: "E_TOOL_NOT_FOUND".to_string(),
+                code: "E_REF_NOT_FOUND".to_string(),
                 message: "file not found at D:\\Users\\admin\\project\\manuscripts\\ch1.json"
                     .to_string(),
                 retryable: false,
@@ -726,7 +659,7 @@ mod tests {
                 details: None,
             }),
             meta: crate::agent_tools::contracts::ToolMeta {
-                tool: "read".to_string(),
+                tool: "context_read".to_string(),
                 call_id: "tool_1".to_string(),
                 duration_ms: 1,
                 revision_before: None,

@@ -83,6 +83,10 @@ pub mod event_types {
     pub const TURN_FAILED: &str = "TURN_FAILED";
     pub const TURN_CANCELLED: &str = "TURN_CANCELLED";
 
+    // Worker identity (UI-P3 phase timeline)
+    pub const WORKER_STARTED: &str = "WORKER_STARTED";
+    pub const WORKER_COMPLETED: &str = "WORKER_COMPLETED";
+
     // Streaming
     pub const STREAMING_STARTED: &str = "STREAMING_STARTED";
     pub const ASSISTANT_TEXT_DELTA: &str = "ASSISTANT_TEXT_DELTA";

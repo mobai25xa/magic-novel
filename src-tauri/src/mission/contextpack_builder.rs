@@ -348,6 +348,10 @@ mod tests {
             success_criteria: vec!["Ends with hook".to_string()],
             status: ChapterCardStatus::Active,
             updated_at: 123,
+            rules_fingerprint: None,
+            rules_sources: vec![],
+            bound_validation_profile_id: None,
+            bound_style_template_id: None,
         };
         artifacts::write_layer1_chapter_card(&project, mission_id, &cc).unwrap();
 

@@ -13,7 +13,7 @@ function isExternalLink(href: string): boolean {
 }
 
 function isPathReference(href: string): boolean {
-  return href.startsWith('manuscripts/') || href.startsWith('magic_assets/')
+  return href.startsWith('manuscripts/') || href.startsWith('assets/')
 }
 
 function renderTextToken(token: Tokens.Text, index: number, renderTokens: (tokens: Token[]) => React.ReactNode) {

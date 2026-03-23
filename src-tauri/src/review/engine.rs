@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::mission::contextpack_types::ContextPack;
-use crate::mission::effective_rules_v0::{
-    load_effective_rules_v0, ChapterWordsConstraint, EffectiveRulesV0, RulesSource,
+use crate::writing_rules::types::{
+    ChapterWordsConstraint as WritingRuleChapterWordsConstraint, EffectiveRules,
 };
 
 use crate::models::{AppError, Chapter};
@@ -16,6 +16,8 @@ const MANUSCRIPTS_DIR: &str = "manuscripts";
 pub struct ReviewRuntimeOptions<'a> {
     pub contextpack: Option<&'a ContextPack>,
     pub llm_config: Option<&'a ReviewLlmConfig>,
+    /// Optional override for the resolved effective rules (e.g. chapter-card bound versions).
+    pub effective_rules_override: Option<EffectiveRules>,
 }
 
 impl<'a> Default for ReviewRuntimeOptions<'a> {
@@ -23,13 +25,15 @@ impl<'a> Default for ReviewRuntimeOptions<'a> {
         Self {
             contextpack: None,
             llm_config: None,
+            effective_rules_override: None,
         }
     }
 }
 
-pub fn run_review(
+fn run_review_with_effective_rules(
     project_path: &Path,
     mut input: ReviewRunInput,
+    effective_rules: EffectiveRules,
 ) -> Result<ReviewReport, AppError> {
     input.scope_ref = input.scope_ref.trim().to_string();
     if input.scope_ref.is_empty() {
@@ -54,8 +58,6 @@ pub fn run_review(
 
     let now = chrono::Utc::now().timestamp_millis();
 
-    let effective_rules = load_effective_rules_v0(project_path);
-
     let raw_threshold = input
         .severity_threshold
         .as_deref()
@@ -78,18 +80,22 @@ pub fn run_review(
 
     evidence_summary.push(format!(
         "rules_fingerprint={}",
-        effective_rules.version_fingerprint
+        effective_rules.rules_fingerprint
     ));
 
     if let Some(cw) = effective_rules.chapter_words.as_ref() {
         evidence_summary.push(format!(
             "chapter_words: min={} max={} target={} source={}",
-            cw.min,
-            cw.max,
+            cw.min
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
+            cw.max
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_string()),
             cw.target
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "-".to_string()),
-            cw.source.as_str()
+            "rulesets"
         ));
     } else {
         evidence_summary.push("chapter_words: (none)".to_string());
@@ -143,6 +149,19 @@ pub fn run_review(
     })
 }
 
+pub fn run_review(
+    project_path: &Path,
+    mut input: ReviewRunInput,
+) -> Result<ReviewReport, AppError> {
+    input.scope_ref = input.scope_ref.trim().to_string();
+    let effective_rules = resolve_review_effective_rules(project_path, &input.scope_ref);
+    run_review_with_effective_rules(project_path, input, effective_rules)
+}
+
+fn resolve_review_effective_rules(project_path: &Path, scope_ref: &str) -> EffectiveRules {
+    crate::writing_rules::resolver::resolve_effective_rules(project_path, scope_ref)
+}
+
 pub async fn run_review_with_runtime(
     project_path: &Path,
     input: ReviewRunInput,
@@ -156,7 +175,12 @@ pub async fn run_review_with_runtime(
             .filter(|v| !v.is_empty()),
     );
 
-    let mut report = run_review(project_path, input.clone())?;
+    let mut input = input;
+    input.scope_ref = input.scope_ref.trim().to_string();
+    let effective_rules = options
+        .effective_rules_override
+        .unwrap_or_else(|| resolve_review_effective_rules(project_path, &input.scope_ref));
+    let mut report = run_review_with_effective_rules(project_path, input.clone(), effective_rules)?;
     let semantic_review_types = input
         .review_types
         .iter()
@@ -224,7 +248,7 @@ pub async fn run_review_with_runtime(
 struct ReviewContext<'a> {
     project_path: &'a Path,
     input: &'a ReviewRunInput,
-    effective_rules: &'a EffectiveRulesV0,
+    effective_rules: &'a EffectiveRules,
     #[allow(dead_code)]
     now: i64,
     #[allow(dead_code)]
@@ -261,10 +285,7 @@ impl ReviewCheck for WordCountCheck {
                     let source = match c.source {
                         WordCountConstraintSource::EffectiveRules => format!(
                             "effective_rules({})",
-                            c.rules_source
-                                .as_ref()
-                                .map(|s| s.as_str())
-                                .unwrap_or("unknown")
+                            c.rules_source.as_ref().copied().unwrap_or("unknown")
                         ),
                         WordCountConstraintSource::ChapterMeta => "chapter_meta".to_string(),
                     };
@@ -280,7 +301,7 @@ impl ReviewCheck for WordCountCheck {
                             .map(|v| v.to_string())
                             .unwrap_or_else(|| "-".to_string()),
                         source,
-                        ctx.effective_rules.version_fingerprint
+                        ctx.effective_rules.rules_fingerprint
                     ));
 
                     if actual < c.min || actual > c.max {
@@ -298,7 +319,7 @@ impl ReviewCheck for WordCountCheck {
                 None => {
                     evidence_summary.push(format!(
                         "word_count: target_ref={} actual={} constraint_source=none rules_fp={}",
-                        target_ref, actual, ctx.effective_rules.version_fingerprint
+                        target_ref, actual, ctx.effective_rules.rules_fingerprint
                     ));
                 }
             }
@@ -408,21 +429,23 @@ struct ResolvedWordCountConstraint {
     max: i32,
     target: Option<i32>,
     source: WordCountConstraintSource,
-    rules_source: Option<RulesSource>,
+    rules_source: Option<&'static str>,
 }
 
 fn resolve_word_count_constraint(
-    effective_rules: Option<&ChapterWordsConstraint>,
+    effective_rules: Option<&WritingRuleChapterWordsConstraint>,
     chapter_target_words: Option<i32>,
 ) -> Option<ResolvedWordCountConstraint> {
     if let Some(cw) = effective_rules {
-        if cw.min > 0 && cw.max > 0 && cw.min <= cw.max {
+        let min = cw.min?;
+        let max = cw.max?;
+        if min > 0 && max > 0 && min <= max {
             return Some(ResolvedWordCountConstraint {
-                min: cw.min,
-                max: cw.max,
+                min,
+                max,
                 target: cw.target.filter(|v| *v > 0),
                 source: WordCountConstraintSource::EffectiveRules,
-                rules_source: Some(cw.source.clone()),
+                rules_source: Some("rulesets"),
             });
         }
     }
@@ -473,7 +496,7 @@ fn build_word_count_issue_block(
 
     if c.source == WordCountConstraintSource::EffectiveRules {
         if let Some(rs) = c.rules_source.as_ref() {
-            evidence_refs.push(format!("rule_source:{}", rs.as_str()));
+            evidence_refs.push(format!("rule_source:{rs}"));
         }
     }
 
@@ -513,7 +536,7 @@ fn build_word_count_issue_warn(
 
     if c.source == WordCountConstraintSource::EffectiveRules {
         if let Some(rs) = c.rules_source.as_ref() {
-            evidence_refs.push(format!("rule_source:{}", rs.as_str()));
+            evidence_refs.push(format!("rule_source:{rs}"));
         }
     }
 
@@ -702,10 +725,16 @@ mod tests {
         (0..n).map(|_| "w").collect::<Vec<_>>().join(" ")
     }
 
-    fn write_guidelines(project: &Path, content: &str) {
-        let dir = project.join(".magic_novel");
+    fn write_global_word_count_ruleset(project: &Path, min: i32, max: i32, target: Option<i32>) {
+        let dir = project.join(".magic_novel").join("rules").join("rulesets");
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("guidelines.md"), content).unwrap();
+        let target_line = target
+            .map(|value| format!("    target: {value}\n"))
+            .unwrap_or_default();
+        let yaml = format!(
+            "schema_version: 1\nruleset_id: wc\nversion: 1\nstatus: accepted\nscope: global\nscope_ref: project\nconstraints:\n  chapter_words:\n    min: {min}\n    max: {max}\n{target_line}"
+        );
+        fs::write(dir.join("global.v0001.yaml"), yaml).unwrap();
     }
 
     fn write_chapter(project: &Path, rel: &str, words: usize, target_words: Option<i32>) {
@@ -719,9 +748,9 @@ mod tests {
     }
 
     #[test]
-    fn effective_rules_word_count_blocks_outside_range() {
+    fn ruleset_word_count_blocks_outside_range() {
         let project = temp_project_dir();
-        write_guidelines(&project, "chapter_words: 10-20 (target 15)");
+        write_global_word_count_ruleset(&project, 10, 20, Some(15));
         write_chapter(&project, "vol1/ch1.json", 9, None);
 
         let input = ReviewRunInput {
@@ -748,9 +777,37 @@ mod tests {
     }
 
     #[test]
-    fn effective_rules_word_count_warns_on_deviation() {
+    fn writing_rules_word_count_blocks_outside_range() {
         let project = temp_project_dir();
-        write_guidelines(&project, "chapter_words: 10-20 (target 15)");
+        write_global_word_count_ruleset(&project, 10, 20, Some(15));
+
+        write_chapter(&project, "vol1/ch1.json", 9, None);
+
+        let input = ReviewRunInput {
+            scope_ref: "chapter:vol1/ch1.json".to_string(),
+            target_refs: vec!["vol1/ch1.json".to_string()],
+            branch_id: None,
+            review_types: vec![ReviewType::WordCount],
+            task_card_ref: None,
+            context_pack_ref: None,
+            effective_rules_fingerprint: None,
+            severity_threshold: None,
+        };
+
+        let report = run_review(&project, input).unwrap();
+        assert_eq!(report.overall_status, ReviewOverallStatus::Block);
+        assert!(report
+            .evidence_summary
+            .iter()
+            .any(|s| s.contains("source=rulesets")));
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn ruleset_word_count_warns_on_deviation() {
+        let project = temp_project_dir();
+        write_global_word_count_ruleset(&project, 10, 20, Some(15));
         write_chapter(&project, "vol1/ch1.json", 19, None);
 
         let input = ReviewRunInput {
@@ -775,7 +832,7 @@ mod tests {
     #[test]
     fn severity_threshold_block_filters_warns() {
         let project = temp_project_dir();
-        write_guidelines(&project, "chapter_words: 10-20 (target 15)");
+        write_global_word_count_ruleset(&project, 10, 20, Some(15));
         write_chapter(&project, "vol1/ch1.json", 19, None);
 
         let input = ReviewRunInput {

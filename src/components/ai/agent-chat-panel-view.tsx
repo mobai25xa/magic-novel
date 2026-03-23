@@ -8,7 +8,7 @@ import {
 
 import { AgentChatPanelBody } from './message/agent-chat-panel-body'
 import { AgentChatPanelInputShell } from './message/agent-chat-panel-input-shell'
-import { MissionPanel } from './MissionPanel'
+import { MissionPanel } from './mission-panel/MissionPanel'
 import { useDroppedFramesMetric } from './panel/agent-chat-panel-hooks'
 import {
   createInitialChatScrollState,
@@ -27,7 +27,6 @@ import { useAiTranslations } from './ai-hooks'
 export function AgentChatPanelView(input: AgentChatPanelViewProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const [scrollState, setScrollState] = useState(() => createInitialChatScrollState())
-  const [missionPanelOpen, setMissionPanelOpen] = useState(false)
   const [deleteDialogSessionId, setDeleteDialogSessionId] = useState<string | null>(null)
   const todoState = useAgentChatStore((state) => state.todoState)
   const ai = useAiTranslations()
@@ -68,6 +67,8 @@ export function AgentChatPanelView(input: AgentChatPanelViewProps) {
         historyPageOpen={input.historyPageOpen}
         historyEnabled={input.historyEnabled}
         sessionLoading={input.sessionLoading}
+        missionDisabled={!hasProject}
+        onOpenMissionPanel={input.onOpenMissionPanel}
       />
 
       <AgentChatPanelViewStatus
@@ -110,6 +111,7 @@ export function AgentChatPanelView(input: AgentChatPanelViewProps) {
         approvalMode={input.approvalMode}
         onCancel={input.onCancel}
         elapsedTime={input.elapsedTime}
+        elapsedSeconds={input.elapsedSeconds}
         showTimer={input.showTimer}
         todoState={todoState}
       />
@@ -129,23 +131,23 @@ export function AgentChatPanelView(input: AgentChatPanelViewProps) {
         onResumeSession={input.onResumeSession}
         onRenameSession={input.onRenameSession}
         onDeleteSession={input.onDeleteSession}
-        onOpenMissionPanel={() => setMissionPanelOpen(true)}
+        onOpenMissionPanel={input.onOpenMissionPanel}
       />
 
-      {missionPanelOpen && hasProject && (
+      {input.missionPanelOpen && hasProject && (
         <AiPanelOverlayShell className="p-3 overflow-auto">
           {input.missionId ? (
             <MissionPanel
               projectPath={input.projectPath}
               missionId={input.missionId}
-              onClose={() => setMissionPanelOpen(false)}
+              onClose={input.onCloseMissionPanel}
             />
           ) : (
             <AiPanelCardShell className="p-4 bg-card">
               <div className="flex items-center justify-between">
                 <span className="font-semibold text-foreground">{ai.panel.mission}</span>
                 <AiPanelIconButton
-                  onClick={() => setMissionPanelOpen(false)}
+                  onClick={input.onCloseMissionPanel}
                   title={ai.action.closeHistoryPage}
                 >
                   ✕

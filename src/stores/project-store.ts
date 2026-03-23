@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import type { ProjectBootstrapStatus } from '@/platform/tauri/clients/project-client'
+
 interface Project {
   projectId: string
   name: string
@@ -56,7 +58,9 @@ interface ProjectState {
   project: Project | null
   tree: FileNode[]
   selectedPath: string | null
-  
+  bootstrapStatus: ProjectBootstrapStatus | null
+  bootstrapStatusProjectPath: string | null
+
   // Project list (recent projects)
   projectList: ProjectListItem[]
   
@@ -68,6 +72,8 @@ interface ProjectState {
   setProject: (project: Project | null) => void
   setTree: (tree: FileNode[]) => void
   setSelectedPath: (path: string | null) => void
+  setBootstrapStatus: (projectPath: string, status: ProjectBootstrapStatus | null) => void
+  clearBootstrapStatus: (projectPath?: string | null) => void
   addToProjectList: (item: ProjectListItem) => void
   removeFromProjectList: (path: string) => void
   replaceRecycledProjects: (items: RecycledProject[]) => void
@@ -86,13 +92,37 @@ export const useProjectStore = create<ProjectState>()(
       project: null,
       tree: [],
       selectedPath: null,
+      bootstrapStatus: null,
+      bootstrapStatusProjectPath: null,
       projectList: [],
       recycledProjects: [],
       
-      setProjectPath: (projectPath) => set({ projectPath }),
+      setProjectPath: (projectPath) => set((state) => (
+        state.projectPath === projectPath
+          ? { projectPath }
+          : {
+              projectPath,
+              bootstrapStatus: null,
+              bootstrapStatusProjectPath: null,
+            }
+      )),
       setProject: (project) => set({ project }),
       setTree: (tree) => set({ tree }),
       setSelectedPath: (selectedPath) => set({ selectedPath }),
+      setBootstrapStatus: (projectPath, bootstrapStatus) => set({
+        bootstrapStatus,
+        bootstrapStatusProjectPath: bootstrapStatus ? projectPath : null,
+      }),
+      clearBootstrapStatus: (projectPath) => set((state) => {
+        if (projectPath && state.bootstrapStatusProjectPath && state.bootstrapStatusProjectPath !== projectPath) {
+          return state
+        }
+
+        return {
+          bootstrapStatus: null,
+          bootstrapStatusProjectPath: null,
+        }
+      }),
       
       addToProjectList: (item) => set((state) => {
         const filtered = state.projectList.filter(p => p.path !== item.path)
@@ -123,6 +153,8 @@ export const useProjectStore = create<ProjectState>()(
         project: null, 
         tree: [], 
         selectedPath: null,
+        bootstrapStatus: null,
+        bootstrapStatusProjectPath: null,
         projectList: [],
         recycledProjects: []
       }),
@@ -132,11 +164,20 @@ export const useProjectStore = create<ProjectState>()(
         project: null,
         tree: [],
         selectedPath: null,
+        bootstrapStatus: null,
+        bootstrapStatusProjectPath: null,
         projectList: items,
         recycledProjects: recycled,
       }),
       
-      reset: () => set({ projectPath: null, project: null, tree: [], selectedPath: null }),
+      reset: () => set({
+        projectPath: null,
+        project: null,
+        tree: [],
+        selectedPath: null,
+        bootstrapStatus: null,
+        bootstrapStatusProjectPath: null,
+      }),
     }),
     {
       name: 'magic-novel-projects',

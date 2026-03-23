@@ -3,7 +3,9 @@ import { useMemo, useState } from 'react'
 import { Badge, Button } from '@/magic-ui/components'
 import { cn } from '@/lib/utils'
 
+import { ActiveCastEditor, type ActiveCastDraft } from './active-cast-editor'
 import { ChapterCardEditor, type ChapterCardDraft } from './chapter-card-editor'
+import { RecentFactsEditor, type RecentFactsDraft } from './recent-facts-editor'
 import { AiStatusBadge } from './status-badge'
 
 export type ChapterCardV0 = {
@@ -46,6 +48,8 @@ export type Layer1ArtifactsCardProps = {
   active_cast?: ActiveCastV0 | null
   stale?: boolean
   onSaveChapterCard?: (draft: ChapterCardDraft) => void | Promise<void>
+  onSaveRecentFacts?: (draft: RecentFactsDraft) => void | Promise<void>
+  onSaveActiveCast?: (draft: ActiveCastDraft) => void | Promise<void>
   onCreateDefaultChapterCard?: () => void
   onInferScopeFromCurrentChapter?: () => void
   onBuildContextPack?: () => void
@@ -86,6 +90,8 @@ export function Layer1ArtifactsCard({
   active_cast,
   stale,
   onSaveChapterCard,
+  onSaveRecentFacts,
+  onSaveActiveCast,
   onCreateDefaultChapterCard,
   onInferScopeFromCurrentChapter,
   onBuildContextPack,
@@ -122,6 +128,8 @@ export function Layer1ArtifactsCard({
   const defaultOpen = missingAny || Boolean(stale) || empty
   const [open, setOpen] = useState(defaultOpen)
   const [editingChapterCard, setEditingChapterCard] = useState(false)
+  const [editingRecentFacts, setEditingRecentFacts] = useState(false)
+  const [editingActiveCast, setEditingActiveCast] = useState(false)
 
   return (
     <details
@@ -306,7 +314,19 @@ export function Layer1ArtifactsCard({
         ) : null}
 
         <div>
-          <div className="text-[11px] font-medium text-secondary-foreground">Recent facts</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[11px] font-medium text-secondary-foreground">Recent facts</div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => setEditingRecentFacts((prev) => !prev)}
+            >
+              {editingRecentFacts
+                ? 'Close editor'
+                : (recent_facts ? 'Edit' : 'Draft')}
+            </Button>
+          </div>
           {recent_facts ? (
             factsCount > 0 ? (
               <ul className="mt-1 space-y-1 text-muted-foreground">
@@ -332,8 +352,29 @@ export function Layer1ArtifactsCard({
           )}
         </div>
 
+        {editingRecentFacts ? (
+          <RecentFactsEditor
+            initial={recent_facts ?? undefined}
+            onCancel={() => setEditingRecentFacts(false)}
+            onSaved={() => setEditingRecentFacts(false)}
+            onSave={onSaveRecentFacts}
+          />
+        ) : null}
+
         <div>
-          <div className="text-[11px] font-medium text-secondary-foreground">Active cast</div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[11px] font-medium text-secondary-foreground">Active cast</div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs"
+              onClick={() => setEditingActiveCast((prev) => !prev)}
+            >
+              {editingActiveCast
+                ? 'Close editor'
+                : (active_cast ? 'Edit' : 'Draft')}
+            </Button>
+          </div>
           {active_cast ? (
             castCount > 0 ? (
               <ul className="mt-1 space-y-1 text-muted-foreground">
@@ -360,6 +401,15 @@ export function Layer1ArtifactsCard({
             <div className="mt-1 text-muted-foreground">Missing active_cast.json</div>
           )}
         </div>
+
+        {editingActiveCast ? (
+          <ActiveCastEditor
+            initial={active_cast ?? undefined}
+            onCancel={() => setEditingActiveCast(false)}
+            onSaved={() => setEditingActiveCast(false)}
+            onSave={onSaveActiveCast}
+          />
+        ) : null}
       </div>
     </details>
   )

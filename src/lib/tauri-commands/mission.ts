@@ -8,6 +8,14 @@ import { invoke } from '@tauri-apps/api/core'
 import { z } from 'zod'
 
 import type {
+  DelegateResult,
+  JobBlocker,
+  JobBlockerKind,
+  JobKind,
+  JobSnapshot,
+  JobStatus,
+} from '@/types/agent-job'
+import type {
   KnowledgeDecisionInput,
   KnowledgeDelta,
   KnowledgeLatest,
@@ -98,18 +106,491 @@ export interface HandoffEntry {
   issues: string[]
 }
 
+export type TaskResultStatus = 'completed' | 'failed' | 'cancelled' | 'blocked'
+
+export type TaskStopReason =
+  | 'success'
+  | 'error'
+  | 'cancelled'
+  | 'limit'
+  | 'waiting_confirmation'
+  | 'waiting_askuser'
+  | 'blocked'
+  | 'unknown'
+
+export interface ChangedPath {
+  path: string
+  change_kind: 'created' | 'modified' | 'deleted' | 'unknown'
+}
+
+export interface ArtifactRef {
+  kind: string
+  value: string
+  description?: string | null
+}
+
+export interface EvidenceItem {
+  kind: string
+  summary: string
+  value?: string | null
+}
+
+export interface OpenIssue {
+  code?: string | null
+  summary: string
+  blocking: boolean
+}
+
+export interface TaskUsage {
+  rounds_executed: number
+  total_tool_calls: number
+  latency_ms: number
+  llm_usage?: unknown | null
+}
+
+export interface AgentTaskResult {
+  task_id: string
+  actor_id: string
+  goal: string
+  status: TaskResultStatus
+  stop_reason: TaskStopReason
+  result_summary: string
+  changed_paths: ChangedPath[]
+  artifacts: ArtifactRef[]
+  evidence: EvidenceItem[]
+  open_issues: OpenIssue[]
+  next_actions: string[]
+  usage?: TaskUsage | null
+}
+
 export type MissionState =
   | 'awaiting_input'
   | 'initializing'
   | 'running'
+  | 'blocked'
+  | 'waiting_user'
+  | 'waiting_review'
+  | 'waiting_knowledge_decision'
   | 'paused'
   | 'orchestrator_turn'
+  | 'failed'
   | 'completed'
+  | 'cancelled'
+
+export interface WorkflowDoc {
+  mission_id: string
+  workflow_kind: string
+  creation_reason: string
+  summary_job_policy: string
+  status: string
+  created_at: number
+  updated_at: number
+}
+
+export interface WorkflowBlocker {
+  kind: string
+  title: string
+  summary: string
+  created_at?: number
+  updated_at?: number
+}
+
+export interface WorkflowBlockersDoc {
+  mission_id: string
+  blockers: WorkflowBlocker[]
+  updated_at?: number
+}
+
+export interface MissionRecoveryEntry {
+  ts: number
+  message: string
+}
+
+export interface MissionRecoveryLog {
+  mission_id?: string
+  entries: MissionRecoveryEntry[]
+}
 
 export interface MissionGetStatusOutput {
   state: StateDoc
   features: FeaturesDoc
+  task_results: AgentTaskResult[]
   handoffs: HandoffEntry[]
+  workflow: WorkflowDoc
+  blockers: WorkflowBlockersDoc
+  job_snapshot: JobSnapshot
+  recovery_log?: MissionRecoveryLog | MissionRecoveryEntry[] | null
+}
+
+export type MissionResultEntry = {
+  key: string
+  task_id: string
+  actor_id: string
+  status: TaskResultStatus
+  summary: string
+  issues: string[]
+  artifacts: string[]
+  evidence: string[]
+  next_actions: string[]
+  commands_run: string[]
+  source: 'task_result' | 'handoff'
+}
+
+const MISSION_STATE_TO_JOB_STATUS: Record<MissionState, JobStatus> = {
+  awaiting_input: 'ready',
+  initializing: 'running',
+  running: 'running',
+  blocked: 'blocked',
+  waiting_user: 'waiting_user',
+  waiting_review: 'waiting_review',
+  waiting_knowledge_decision: 'waiting_knowledge_decision',
+  paused: 'paused',
+  orchestrator_turn: 'running',
+  failed: 'failed',
+  completed: 'completed',
+  cancelled: 'cancelled',
+}
+
+function toJobStatusFromRawState(raw: unknown): JobStatus {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  switch (value) {
+    case 'draft':
+    case 'ready':
+    case 'running':
+    case 'blocked':
+    case 'waiting_user':
+    case 'waiting_review':
+    case 'waiting_knowledge_decision':
+    case 'paused':
+    case 'completed':
+    case 'failed':
+    case 'cancelled':
+      return value
+    case 'awaiting_input':
+    case 'initializing':
+    case 'orchestrator_turn':
+      return MISSION_STATE_TO_JOB_STATUS[value]
+    default:
+      return 'draft'
+  }
+}
+
+function toJobKindFromRawWorkflowKind(raw: unknown): JobKind {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  if (value === 'ad_hoc') return 'mission_ad_hoc'
+  if (value === 'macro') return 'macro_workflow'
+  return 'unknown'
+}
+
+function toJobBlockerKind(raw: unknown): JobBlockerKind {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  switch (value) {
+    case 'review_gate':
+      return 'review_gate'
+    case 'knowledge_decision':
+      return 'knowledge_decision'
+    case 'user_clarification':
+      return 'user_clarification'
+    default:
+      return 'external_dependency'
+  }
+}
+
+function toDelegateResult(
+  taskResult: AgentTaskResult,
+  missionId: string,
+): DelegateResult {
+  const actorId = typeof taskResult.actor_id === 'string' ? taskResult.actor_id.trim() : ''
+  const taskId = typeof taskResult.task_id === 'string' ? taskResult.task_id.trim() : ''
+
+  return {
+    delegate_id: actorId || taskId || `delegate_${missionId || 'mission'}`,
+    job_id: missionId,
+    parent_task_id: taskId,
+    goal: typeof taskResult.goal === 'string' ? taskResult.goal : '',
+    status: taskResult.status,
+    stop_reason: taskResult.stop_reason,
+    result_summary: taskResult.result_summary,
+    changed_paths: taskResult.changed_paths,
+    artifacts: taskResult.artifacts,
+    evidence: taskResult.evidence,
+    open_issues: taskResult.open_issues,
+    next_actions: taskResult.next_actions,
+    usage: taskResult.usage,
+    actor_id: actorId || null,
+  }
+}
+
+function normalizeDelegateResultJobId(
+  result: DelegateResult,
+  defaultJobId: string,
+): DelegateResult {
+  const normalizedJobId = typeof result.job_id === 'string' ? result.job_id.trim() : ''
+  return {
+    ...result,
+    job_id: normalizedJobId || defaultJobId,
+  }
+}
+
+export function missionStatusToJobSnapshot(status: MissionGetStatusOutput): JobSnapshot {
+  const missionId = typeof status?.state?.mission_id === 'string' ? status.state.mission_id.trim() : ''
+  const stateUpdatedAt = typeof status?.state?.updated_at === 'number' ? status.state.updated_at : 0
+  const workflowUpdatedAt = typeof status?.workflow?.updated_at === 'number' ? status.workflow.updated_at : 0
+  const blockersUpdatedAt = typeof status?.blockers?.updated_at === 'number' ? status.blockers.updated_at : 0
+  const fallbackUpdatedAt = Math.max(stateUpdatedAt, workflowUpdatedAt, blockersUpdatedAt)
+
+  if (status?.job_snapshot && typeof status.job_snapshot.job_id === 'string') {
+    const snapshot = status.job_snapshot
+    const normalizedJobId = snapshot.job_id.trim() || missionId
+
+    return {
+      ...snapshot,
+      job_id: normalizedJobId,
+      blockers: Array.isArray(snapshot.blockers) ? snapshot.blockers : [],
+      ready_tasks: Array.isArray(snapshot.ready_tasks) ? snapshot.ready_tasks : [],
+      running_tasks: Array.isArray(snapshot.running_tasks) ? snapshot.running_tasks : [],
+      completed_tasks: Array.isArray(snapshot.completed_tasks) ? snapshot.completed_tasks : [],
+      failed_tasks: Array.isArray(snapshot.failed_tasks) ? snapshot.failed_tasks : [],
+      task_results: (snapshot.task_results ?? []).map((result) => normalizeDelegateResultJobId(result, normalizedJobId)),
+      updated_at: Number.isFinite(snapshot.updated_at) ? snapshot.updated_at : fallbackUpdatedAt,
+    }
+  }
+
+  const schemaVersion = typeof status?.state?.schema_version === 'number' ? status.state.schema_version : 1
+  const workflowStatus = status?.workflow?.status
+  const stateStatus = status?.state?.state
+
+  const readyTasks: string[] = []
+  const runningTasks: string[] = []
+  const completedTasks: string[] = []
+  const failedTasks: string[] = []
+
+  for (const feature of status?.features?.features ?? []) {
+    const taskId = typeof feature?.id === 'string' ? feature.id.trim() : ''
+    if (!taskId) continue
+
+    if (feature.status === 'pending') {
+      readyTasks.push(taskId)
+      continue
+    }
+    if (feature.status === 'in_progress') {
+      runningTasks.push(taskId)
+      continue
+    }
+    if (feature.status === 'completed') {
+      completedTasks.push(taskId)
+      continue
+    }
+    if (feature.status === 'failed' || feature.status === 'cancelled') {
+      failedTasks.push(taskId)
+    }
+  }
+
+  const blockers: JobBlocker[] = (status?.blockers?.blockers ?? []).map((blocker, index) => {
+    const summary = typeof blocker?.summary === 'string' ? blocker.summary : ''
+    const kind = toJobBlockerKind(blocker?.kind)
+    const createdAt = typeof blocker?.created_at === 'number' ? blocker.created_at : 0
+    const updatedAt = typeof blocker?.updated_at === 'number' ? blocker.updated_at : createdAt
+
+    return {
+      blocker_id: `${kind}_${index}`,
+      kind,
+      summary,
+      blocking: true,
+      created_at: createdAt,
+      updated_at: updatedAt,
+    }
+  })
+  const updatedAt = fallbackUpdatedAt
+
+  return {
+    schema_version: schemaVersion,
+    job_id: missionId,
+    job_kind: toJobKindFromRawWorkflowKind(status?.workflow?.workflow_kind),
+    status: toJobStatusFromRawState(workflowStatus ?? stateStatus),
+    blockers,
+    ready_tasks: readyTasks,
+    running_tasks: runningTasks,
+    completed_tasks: completedTasks,
+    failed_tasks: failedTasks,
+    task_results: (status.task_results ?? []).map((result) => toDelegateResult(result, missionId)),
+    updated_at: updatedAt,
+  }
+}
+
+export function getMissionResultEntriesFromJobSnapshot(
+  snapshot: Pick<JobSnapshot, 'task_results'>,
+): MissionResultEntry[] {
+  return (snapshot.task_results ?? []).map((result, index) => {
+    const actorId = String(result.actor_id ?? result.delegate_id ?? '').trim()
+    const taskId = String(result.parent_task_id ?? '').trim()
+    const summary = result.result_summary.trim() || normalizeTaskResultSummary({
+      status: result.status,
+      result_summary: result.result_summary,
+    })
+
+    return {
+      key: `${actorId || 'worker'}-${taskId || 'task'}-${index}`,
+      task_id: taskId,
+      actor_id: actorId,
+      status: result.status,
+      summary,
+      issues: dedupeTrimmedStrings((result.open_issues ?? []).map((issue) => String(issue?.summary ?? ''))),
+      artifacts: dedupeTrimmedStrings(
+        result.artifacts?.length
+          ? result.artifacts.map((artifact) => String(artifact?.value ?? ''))
+          : result.changed_paths.map((changedPath) => String(changedPath?.path ?? '')),
+      ),
+      evidence: dedupeTrimmedStrings((result.evidence ?? []).map((item) => String(item?.summary ?? ''))),
+      next_actions: dedupeTrimmedStrings((result.next_actions ?? []).map((value) => String(value ?? ''))),
+      commands_run: [],
+      source: 'task_result',
+    }
+  })
+}
+
+function dedupeTrimmedStrings(values: string[]) {
+  const result: string[] = []
+  const seen = new Set<string>()
+
+  for (const value of values) {
+    const normalized = value.trim()
+    if (!normalized || seen.has(normalized)) {
+      continue
+    }
+    seen.add(normalized)
+    result.push(normalized)
+  }
+
+  return result
+}
+
+function toMissionRecoveryEntry(value: unknown): MissionRecoveryEntry | null {
+  if (typeof value === 'string') {
+    const message = value.trim()
+    return message ? { ts: 0, message } : null
+  }
+
+  if (!isRecord(value)) {
+    return null
+  }
+
+  const rawTs = value.ts
+  const ts = typeof rawTs === 'number'
+    ? rawTs
+    : Number(String(rawTs ?? ''))
+  const rawMessage = value.message
+  const message = typeof rawMessage === 'string'
+    ? rawMessage.trim()
+    : ''
+
+  if (!message) {
+    return null
+  }
+
+  return {
+    ts: Number.isFinite(ts) ? ts : 0,
+    message,
+  }
+}
+
+export function getMissionRecoveryEntries(
+  status: Pick<MissionGetStatusOutput, 'recovery_log'> | null | undefined,
+): MissionRecoveryEntry[] {
+  const raw = status?.recovery_log
+  const rawEntries = Array.isArray(raw)
+    ? raw
+    : isRecord(raw) && Array.isArray(raw.entries)
+      ? raw.entries
+      : []
+
+  return rawEntries
+    .map((entry) => toMissionRecoveryEntry(entry))
+    .filter((entry): entry is MissionRecoveryEntry => entry != null)
+    .sort((left, right) => right.ts - left.ts)
+}
+
+export function normalizeTaskResultSummary(
+  result: Pick<AgentTaskResult, 'status' | 'result_summary'>,
+) {
+  const summary = result.result_summary.trim()
+  if (summary) {
+    return summary
+  }
+
+  switch (result.status) {
+    case 'completed':
+      return 'task completed'
+    case 'failed':
+      return 'task failed'
+    case 'cancelled':
+      return 'task cancelled'
+    case 'blocked':
+      return 'task blocked'
+    default:
+      return 'task finished'
+  }
+}
+
+export function isTaskResultSuccessful(
+  result: Pick<AgentTaskResult, 'status'>,
+) {
+  return result.status === 'completed'
+}
+
+export function getMissionResultEntries(
+  status: Pick<MissionGetStatusOutput, 'task_results' | 'handoffs'>,
+): MissionResultEntry[] {
+  if (Array.isArray(status.task_results) && status.task_results.length > 0) {
+    return status.task_results.map((result, index) => ({
+      key: `${result.actor_id}-${result.task_id}-${index}`,
+      task_id: result.task_id,
+      actor_id: result.actor_id,
+      status: result.status,
+      summary: normalizeTaskResultSummary(result),
+      issues: dedupeTrimmedStrings(
+        (result.open_issues ?? []).map((issue) => String(issue?.summary ?? '')),
+      ),
+      artifacts: dedupeTrimmedStrings(
+        (result.artifacts?.length
+          ? result.artifacts.map((artifact) => String(artifact?.value ?? ''))
+          : result.changed_paths.map((changedPath) => String(changedPath?.path ?? ''))),
+      ),
+      evidence: dedupeTrimmedStrings(
+        (result.evidence ?? []).map((item) => String(item?.summary ?? '')),
+      ),
+      next_actions: dedupeTrimmedStrings(
+        (result.next_actions ?? []).map((value) => String(value ?? '')),
+      ),
+      commands_run: [],
+      source: 'task_result',
+    }))
+  }
+
+  return (status.handoffs ?? []).map((handoff, index) => ({
+    key: `${handoff.worker_id}-${handoff.feature_id}-${index}`,
+    task_id: handoff.feature_id,
+    actor_id: handoff.worker_id,
+    status: handoff.ok ? 'completed' : 'failed',
+    summary: handoff.summary?.trim() || (handoff.ok ? 'task completed' : 'task failed'),
+    issues: dedupeTrimmedStrings((handoff.issues ?? []).map((value) => String(value ?? ''))),
+    artifacts: dedupeTrimmedStrings((handoff.artifacts ?? []).map((value) => String(value ?? ''))),
+    evidence: [],
+    next_actions: [],
+    commands_run: dedupeTrimmedStrings(
+      (handoff.commands_run ?? []).map((value) => String(value ?? '')),
+    ),
+    source: 'handoff',
+  }))
+}
+
+export function getMissionResultEntriesPreferJobSnapshot(status: MissionGetStatusOutput): MissionResultEntry[] {
+  const fromSnapshot = getMissionResultEntriesFromJobSnapshot(missionStatusToJobSnapshot(status))
+  if (fromSnapshot.length > 0) {
+    return fromSnapshot
+  }
+
+  return getMissionResultEntries(status)
 }
 
 export interface MissionCreateInput {
@@ -119,6 +600,8 @@ export interface MissionCreateInput {
   features: Feature[]
 }
 
+export type MissionDelegateTransport = 'process' | 'in_process'
+
 export interface MissionStartInput {
   project_path: string
   mission_id: string
@@ -127,6 +610,9 @@ export interface MissionStartInput {
   provider?: string
   base_url?: string
   api_key?: string
+  parent_session_id?: string
+  parent_turn_id?: number
+  delegate_transport?: MissionDelegateTransport
 }
 
 export interface MissionCreateOutput {
@@ -913,7 +1399,12 @@ function parseChapterRunState(raw: unknown): ChapterRunState | null {
     latest_contextpack_ref: typeof r.latest_contextpack_ref === 'string' ? r.latest_contextpack_ref : undefined,
     latest_review_id: typeof r.latest_review_id === 'string' ? r.latest_review_id : undefined,
     latest_knowledge_delta_id: typeof r.latest_knowledge_delta_id === 'string' ? r.latest_knowledge_delta_id : undefined,
-    last_handoff_summary: typeof r.last_handoff_summary === 'string' ? r.last_handoff_summary : undefined,
+    last_result_summary:
+      typeof r.last_result_summary === 'string'
+        ? r.last_result_summary
+        : typeof r.last_handoff_summary === 'string'
+          ? r.last_handoff_summary
+          : undefined,
     updated_at: typeof r.updated_at === 'number' ? r.updated_at : 0,
   }
 }
@@ -922,11 +1413,14 @@ function parseMacroWorkflowConfig(raw: unknown): MacroWorkflowConfig | null {
   if (!isRecord(raw)) return null
   const r = raw as Record<string, unknown>
   if (typeof r.macro_id !== 'string' || typeof r.mission_id !== 'string') return null
+  const missionId = r.mission_id
+  const jobId = typeof r.job_id === 'string' ? r.job_id : missionId
   return {
     ...r,
     schema_version: typeof r.schema_version === 'number' ? r.schema_version : 1,
     macro_id: r.macro_id,
-    mission_id: r.mission_id,
+    mission_id: missionId,
+    job_id: jobId,
     workflow_kind: r.workflow_kind === 'volume' ? 'volume' : 'book',
     objective: typeof r.objective === 'string' ? r.objective : '',
     chapter_targets: Array.isArray(r.chapter_targets) ? r.chapter_targets : [],
@@ -941,6 +1435,8 @@ function parseMacroWorkflowState(raw: unknown): MacroWorkflowState | null {
   if (!isRecord(raw)) return null
   const r = raw as Record<string, unknown>
   if (typeof r.macro_id !== 'string' || typeof r.mission_id !== 'string') return null
+  const missionId = r.mission_id
+  const jobId = typeof r.job_id === 'string' ? r.job_id : missionId
   const chapters = Array.isArray(r.chapters)
     ? r.chapters.map(parseChapterRunState).filter((c): c is ChapterRunState => c !== null)
     : []
@@ -948,7 +1444,8 @@ function parseMacroWorkflowState(raw: unknown): MacroWorkflowState | null {
     ...r,
     schema_version: typeof r.schema_version === 'number' ? r.schema_version : 1,
     macro_id: r.macro_id,
-    mission_id: r.mission_id,
+    mission_id: missionId,
+    job_id: jobId,
     objective: typeof r.objective === 'string' ? r.objective : '',
     workflow_kind: r.workflow_kind === 'volume' ? 'volume' : 'book',
     current_index: typeof r.current_index === 'number' ? r.current_index : -1,

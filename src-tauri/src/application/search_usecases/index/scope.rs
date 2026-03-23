@@ -1,8 +1,6 @@
 use crate::agent_tools::contracts::GrepScope;
 
 const MANUSCRIPTS_PREFIX: &str = "manuscripts/";
-const MAGIC_ASSETS_PREFIX: &str = "magic_assets/";
-const MAGIC_NOVEL_PREFIX: &str = ".magic_novel/";
 
 pub fn normalize_scope_prefixes(scope: Option<&GrepScope>) -> Vec<String> {
     let Some(scope) = scope else {
@@ -43,13 +41,6 @@ pub fn normalize_scope_path(path: &str) -> String {
             .to_string();
     }
 
-    if normalized.starts_with(MAGIC_ASSETS_PREFIX) {
-        normalized = format!(
-            "{MAGIC_NOVEL_PREFIX}{}",
-            normalized.trim_start_matches(MAGIC_ASSETS_PREFIX)
-        );
-    }
-
     normalized.trim_end_matches('/').to_string()
 }
 
@@ -62,14 +53,6 @@ mod tests {
         assert_eq!(
             normalize_scope_path("manuscripts/vol1/chap.json"),
             "vol1/chap.json"
-        );
-    }
-
-    #[test]
-    fn normalizes_magic_assets_prefix() {
-        assert_eq!(
-            normalize_scope_path("magic_assets/characters"),
-            ".magic_novel/characters"
         );
     }
 }

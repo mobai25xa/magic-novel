@@ -37,9 +37,20 @@ export type HomeStats = {
 export type HomeCreateProjectInput = {
   name: string
   author: string
-  tags: string
+  description: string
   coverImage?: string
   projectType: string[]
+  targetTotalWords: number
+  plannedVolumes?: number
+  targetWordsPerChapter?: number
+  narrativePov?: string
+  tone?: string[]
+  audience?: string
+  protagonistSeed?: string
+  counterpartSeed?: string
+  worldSeed?: string
+  endingDirection?: string
+  aiAssist: boolean
 }
 
 export type HomeEditProjectInput = {

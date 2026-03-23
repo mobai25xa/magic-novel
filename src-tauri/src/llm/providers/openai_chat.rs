@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use futures::stream;
 use futures::Stream;
 use futures::StreamExt;
+use reqwest::header::CONTENT_TYPE;
 use serde_json::json;
 use std::pin::Pin;
 use std::time::Duration;
@@ -208,6 +209,28 @@ impl LlmProvider for OpenAiChatProvider {
             ));
         }
 
+        if !response_is_sse(&response) {
+            let body_text = response.text().await.map_err(|e| LlmError::Network {
+                message: format!("failed to read non-stream response: {e}"),
+                provider: self.name().to_string(),
+            })?;
+
+            if body_text.trim().is_empty() {
+                return Err(LlmError::EmptyBody {
+                    provider: self.name().to_string(),
+                });
+            }
+
+            let response_json: serde_json::Value =
+                serde_json::from_str(&body_text).map_err(|e| LlmError::ParseError {
+                    message: format!("failed to parse non-stream response: {e}"),
+                    provider: self.name().to_string(),
+                })?;
+
+            let events = parse_openai_completion_response(&response_json, self.name().to_string())?;
+            return Ok(Box::pin(stream::iter(events.into_iter().map(Ok))));
+        }
+
         // Get the byte stream
         let byte_stream = response.bytes_stream();
         let provider_name = self.name().to_string();
@@ -217,6 +240,15 @@ impl LlmProvider for OpenAiChatProvider {
 
         Ok(Box::pin(event_stream))
     }
+}
+
+fn response_is_sse(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.to_ascii_lowercase().contains("text/event-stream"))
+        .unwrap_or(false)
 }
 
 /// Parse an SSE byte stream into LlmStreamEvent items
@@ -230,8 +262,12 @@ fn openai_sse_stream(
         buffer: String,
         // Map from tool_call index to call_id for tracking
         tool_index_to_id: std::collections::HashMap<u32, String>,
+        // Some OpenAI-compatible providers omit `index` and only provide call id.
+        // Keep a stable synthetic index per id so calls do not collapse to index 0.
+        tool_id_to_index: std::collections::HashMap<String, u32>,
         // Pending tool-call fragments that may arrive before call_id is present
         tool_index_pending: std::collections::HashMap<u32, PendingToolState>,
+        next_synthetic_tool_index: u32,
         cancel: CancelToken,
         provider_name: String,
         done: bool,
@@ -240,7 +276,9 @@ fn openai_sse_stream(
     let state = ParseState {
         buffer: String::new(),
         tool_index_to_id: std::collections::HashMap::new(),
+        tool_id_to_index: std::collections::HashMap::new(),
         tool_index_pending: std::collections::HashMap::new(),
+        next_synthetic_tool_index: 0,
         cancel,
         provider_name,
         done: false,
@@ -306,7 +344,9 @@ fn openai_sse_stream(
                                     let events = parse_openai_chunk(
                                         &chunk_json,
                                         &mut state.tool_index_to_id,
+                                        &mut state.tool_id_to_index,
                                         &mut state.tool_index_pending,
+                                        &mut state.next_synthetic_tool_index,
                                     );
                                     // Reverse so we can pop from the back in order
                                     for evt in events.into_iter().rev() {
@@ -357,11 +397,138 @@ fn openai_sse_stream(
     )
 }
 
+fn parse_openai_completion_response(
+    response: &serde_json::Value,
+    provider_name: String,
+) -> Result<Vec<LlmStreamEvent>, LlmError> {
+    let choice = response
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .ok_or_else(|| LlmError::ParseError {
+            message: "non-stream response missing choices[0]".to_string(),
+            provider: provider_name.clone(),
+        })?;
+
+    let message = choice.get("message").ok_or_else(|| LlmError::ParseError {
+        message: "non-stream response missing choices[0].message".to_string(),
+        provider: provider_name.clone(),
+    })?;
+
+    let mut events = Vec::new();
+
+    let text = extract_non_stream_text(message);
+    if !text.is_empty() {
+        events.push(LlmStreamEvent::AssistantTextDelta { delta: text });
+    }
+
+    if let Some(tool_calls) = message.get("tool_calls").and_then(|value| value.as_array()) {
+        for tool_call in tool_calls {
+            let id = tool_call
+                .get("id")
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| LlmError::ParseError {
+                    message: "tool call missing id".to_string(),
+                    provider: provider_name.clone(),
+                })?
+                .to_string();
+            let name = tool_call
+                .get("function")
+                .and_then(|value| value.get("name"))
+                .and_then(|value| value.as_str())
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| LlmError::ParseError {
+                    message: "tool call missing function.name".to_string(),
+                    provider: provider_name.clone(),
+                })?;
+            let arguments = tool_call
+                .get("function")
+                .and_then(|value| value.get("arguments"))
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            events.push(LlmStreamEvent::ToolCallStart {
+                id: id.clone(),
+                name,
+            });
+            if !arguments.is_empty() {
+                events.push(LlmStreamEvent::ToolCallArgsDelta {
+                    id: id.clone(),
+                    delta: arguments,
+                });
+            }
+            events.push(LlmStreamEvent::ToolCallEnd { id });
+        }
+    }
+
+    if let Some(usage_event) = parse_usage_event(response) {
+        events.push(usage_event);
+    }
+
+    let finish_reason = choice
+        .get("finish_reason")
+        .and_then(|value| value.as_str())
+        .unwrap_or("stop");
+    events.push(LlmStreamEvent::Stop {
+        reason: LlmStopReason::from_openai(finish_reason),
+    });
+
+    Ok(events)
+}
+
+fn extract_non_stream_text(message: &serde_json::Value) -> String {
+    if let Some(content) = message.get("content").and_then(|value| value.as_str()) {
+        return content.to_string();
+    }
+
+    message
+        .get("content")
+        .and_then(|value| value.as_array())
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    part.get("text")
+                        .and_then(|value| value.as_str())
+                        .map(ToString::to_string)
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .unwrap_or_default()
+}
+
+fn parse_usage_event(response: &serde_json::Value) -> Option<LlmStreamEvent> {
+    let usage = response.get("usage")?;
+    let input = usage
+        .get("prompt_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let output = usage
+        .get("completion_tokens")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let cache = usage
+        .get("prompt_tokens_details")
+        .and_then(|value| value.get("cached_tokens"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+
+    Some(LlmStreamEvent::Usage {
+        input_tokens: input,
+        output_tokens: output,
+        cache_read: cache,
+    })
+}
+
 /// Parse a single OpenAI SSE chunk JSON into zero or more LlmStreamEvents
 fn parse_openai_chunk(
     chunk: &serde_json::Value,
     tool_index_to_id: &mut std::collections::HashMap<u32, String>,
+    tool_id_to_index: &mut std::collections::HashMap<String, u32>,
     tool_index_pending: &mut std::collections::HashMap<u32, PendingToolState>,
+    next_synthetic_tool_index: &mut u32,
 ) -> Vec<LlmStreamEvent> {
     let mut events = Vec::new();
 
@@ -411,7 +578,8 @@ fn parse_openai_chunk(
         // Tool calls delta
         if let Some(tool_calls) = delta.get("tool_calls").and_then(|v| v.as_array()) {
             for tc in tool_calls {
-                let index = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                let index =
+                    resolve_tool_call_index(tc, tool_id_to_index, next_synthetic_tool_index);
 
                 let function_name = tc
                     .get("function")
@@ -439,6 +607,7 @@ fn parse_openai_chunk(
                 if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
                     let id = id.to_string();
                     tool_index_to_id.insert(index, id.clone());
+                    tool_id_to_index.insert(id.clone(), index);
 
                     let pending = tool_index_pending.entry(index).or_default();
                     if !pending.start_emitted {
@@ -552,6 +721,46 @@ fn parse_openai_chunk(
     events
 }
 
+fn resolve_tool_call_index(
+    tool_call: &serde_json::Value,
+    tool_id_to_index: &mut std::collections::HashMap<String, u32>,
+    next_synthetic_tool_index: &mut u32,
+) -> u32 {
+    if let Some(index) = tool_call.get("index").and_then(|v| v.as_u64()) {
+        let index = index as u32;
+        if index >= *next_synthetic_tool_index {
+            *next_synthetic_tool_index = index.saturating_add(1);
+        }
+        if let Some(id) = tool_call
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            tool_id_to_index.insert(id.to_string(), index);
+        }
+        return index;
+    }
+
+    if let Some(id) = tool_call
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
+        if let Some(existing) = tool_id_to_index.get(id) {
+            return *existing;
+        }
+
+        let assigned = *next_synthetic_tool_index;
+        *next_synthetic_tool_index = next_synthetic_tool_index.saturating_add(1);
+        tool_id_to_index.insert(id.to_string(), assigned);
+        return assigned;
+    }
+
+    0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,8 +800,16 @@ mod tests {
         });
 
         let mut map = std::collections::HashMap::new();
+        let mut id_index = std::collections::HashMap::new();
         let mut pending = std::collections::HashMap::new();
-        let events = parse_openai_chunk(&chunk, &mut map, &mut pending);
+        let mut next_synthetic_index = 0;
+        let events = parse_openai_chunk(
+            &chunk,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert_eq!(events.len(), 1);
         match &events[0] {
             LlmStreamEvent::AssistantTextDelta { delta } => assert_eq!(delta, "Hello"),
@@ -603,6 +820,8 @@ mod tests {
     #[test]
     fn test_parse_tool_call_chunks() {
         let mut map = std::collections::HashMap::new();
+        let mut id_index = std::collections::HashMap::new();
+        let mut next_synthetic_index = 0;
 
         // First chunk: tool call start
         let chunk1 = json!({
@@ -614,7 +833,7 @@ mod tests {
                         "id": "call_abc",
                         "type": "function",
                         "function": {
-                            "name": "read",
+                            "name": "context_read",
                             "arguments": ""
                         }
                     }]
@@ -624,12 +843,18 @@ mod tests {
         });
 
         let mut pending = std::collections::HashMap::new();
-        let events = parse_openai_chunk(&chunk1, &mut map, &mut pending);
+        let events = parse_openai_chunk(
+            &chunk1,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert_eq!(events.len(), 1); // ToolCallStart (empty args delta is skipped)
         match &events[0] {
             LlmStreamEvent::ToolCallStart { id, name } => {
                 assert_eq!(id, "call_abc");
-                assert_eq!(name, "read");
+                assert_eq!(name, "context_read");
             }
             _ => panic!("expected ToolCallStart"),
         }
@@ -642,7 +867,7 @@ mod tests {
                     "tool_calls": [{
                         "index": 0,
                         "function": {
-                            "arguments": "{\"path\":"
+                            "arguments": "{\"target_ref\":"
                         }
                     }]
                 },
@@ -650,12 +875,18 @@ mod tests {
             }]
         });
 
-        let events = parse_openai_chunk(&chunk2, &mut map, &mut pending);
+        let events = parse_openai_chunk(
+            &chunk2,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert_eq!(events.len(), 1);
         match &events[0] {
             LlmStreamEvent::ToolCallArgsDelta { id, delta } => {
                 assert_eq!(id, "call_abc");
-                assert_eq!(delta, "{\"path\":");
+                assert_eq!(delta, "{\"target_ref\":");
             }
             _ => panic!("expected ToolCallArgsDelta"),
         }
@@ -669,7 +900,13 @@ mod tests {
             }]
         });
 
-        let events = parse_openai_chunk(&chunk3, &mut map, &mut pending);
+        let events = parse_openai_chunk(
+            &chunk3,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         // ToolCallEnd + Stop
         assert!(events.len() >= 2);
     }
@@ -688,8 +925,16 @@ mod tests {
         });
 
         let mut map = std::collections::HashMap::new();
+        let mut id_index = std::collections::HashMap::new();
         let mut pending = std::collections::HashMap::new();
-        let events = parse_openai_chunk(&chunk, &mut map, &mut pending);
+        let mut next_synthetic_index = 0;
+        let events = parse_openai_chunk(
+            &chunk,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert_eq!(events.len(), 1);
         match &events[0] {
             LlmStreamEvent::Usage {
@@ -708,7 +953,9 @@ mod tests {
     #[test]
     fn test_parse_tool_call_args_arrive_before_id_are_buffered_and_flushed() {
         let mut map = std::collections::HashMap::new();
+        let mut id_index = std::collections::HashMap::new();
         let mut pending = std::collections::HashMap::new();
+        let mut next_synthetic_index = 0;
 
         // Chunk 1: args arrive first (no id yet)
         let chunk1 = json!({
@@ -718,8 +965,8 @@ mod tests {
                     "tool_calls": [{
                         "index": 0,
                         "function": {
-                            "name": "edit",
-                            "arguments": "{\"path\":\"chapter.md\","
+                            "name": "draft_write",
+                            "arguments": "{\"target_ref\":\"chapter:manuscripts/vol_1/ch_1.json\","
                         }
                     }]
                 },
@@ -727,7 +974,13 @@ mod tests {
             }]
         });
 
-        let events1 = parse_openai_chunk(&chunk1, &mut map, &mut pending);
+        let events1 = parse_openai_chunk(
+            &chunk1,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert!(events1.is_empty());
 
         // Chunk 2: id arrives + trailing args
@@ -740,7 +993,7 @@ mod tests {
                         "id": "call_late",
                         "type": "function",
                         "function": {
-                            "arguments": "\"content\":\"hello\"}"
+                            "arguments": "\"write_mode\":\"rewrite\"}"
                         }
                     }]
                 },
@@ -748,13 +1001,19 @@ mod tests {
             }]
         });
 
-        let events2 = parse_openai_chunk(&chunk2, &mut map, &mut pending);
+        let events2 = parse_openai_chunk(
+            &chunk2,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
         assert_eq!(events2.len(), 2);
 
         match &events2[0] {
             LlmStreamEvent::ToolCallStart { id, name } => {
                 assert_eq!(id, "call_late");
-                assert_eq!(name, "edit");
+                assert_eq!(name, "draft_write");
             }
             _ => panic!("expected ToolCallStart"),
         }
@@ -762,11 +1021,89 @@ mod tests {
         match &events2[1] {
             LlmStreamEvent::ToolCallArgsDelta { id, delta } => {
                 assert_eq!(id, "call_late");
-                assert!(delta.contains("\"path\":\"chapter.md\""));
-                assert!(delta.contains("\"content\":\"hello\""));
+                assert!(delta.contains("\"target_ref\":\"chapter:manuscripts/vol_1/ch_1.json\""));
+                assert!(delta.contains("\"write_mode\":\"rewrite\""));
             }
             _ => panic!("expected ToolCallArgsDelta"),
         }
+    }
+
+    #[test]
+    fn test_parse_tool_calls_without_index_uses_distinct_ids() {
+        let mut map = std::collections::HashMap::new();
+        let mut id_index = std::collections::HashMap::new();
+        let mut pending = std::collections::HashMap::new();
+        let mut next_synthetic_index = 0;
+
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": null,
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "inspiration_consensus_patch",
+                                "arguments": "{\"operation\":\"set_text\"}"
+                            }
+                        },
+                        {
+                            "index": null,
+                            "id": "call_2",
+                            "type": "function",
+                            "function": {
+                                "name": "inspiration_consensus_patch",
+                                "arguments": "{\"operation\":\"set_items\"}"
+                            }
+                        },
+                        {
+                            "index": null,
+                            "id": "call_3",
+                            "type": "function",
+                            "function": {
+                                "name": "inspiration_open_questions_patch",
+                                "arguments": "{\"operation\":\"add\"}"
+                            }
+                        }
+                    ]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let events = parse_openai_chunk(
+            &chunk,
+            &mut map,
+            &mut id_index,
+            &mut pending,
+            &mut next_synthetic_index,
+        );
+
+        let start_ids = events
+            .iter()
+            .filter_map(|event| match event {
+                LlmStreamEvent::ToolCallStart { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(start_ids.len(), 3);
+        assert!(start_ids.contains("call_1"));
+        assert!(start_ids.contains("call_2"));
+        assert!(start_ids.contains("call_3"));
+
+        let args_ids = events
+            .iter()
+            .filter_map(|event| match event {
+                LlmStreamEvent::ToolCallArgsDelta { id, .. } => Some(id.as_str()),
+                _ => None,
+            })
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(args_ids.len(), 3);
+        assert!(args_ids.contains("call_1"));
+        assert!(args_ids.contains("call_2"));
+        assert!(args_ids.contains("call_3"));
     }
 
     #[test]
@@ -777,5 +1114,99 @@ mod tests {
         );
         let url = provider.completions_url();
         assert!(url.contains("/chat/completions"));
+    }
+
+    #[test]
+    fn test_parse_non_stream_completion_response_with_text_and_usage() {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "{\"assistant_reply\":\"你好\"}"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 7,
+                "prompt_tokens_details": {
+                    "cached_tokens": 3
+                }
+            }
+        });
+
+        let events = parse_openai_completion_response(&response, "openai-compatible".to_string())
+            .expect("non-stream response should parse");
+
+        assert_eq!(events.len(), 3);
+        match &events[0] {
+            LlmStreamEvent::AssistantTextDelta { delta } => {
+                assert_eq!(delta, "{\"assistant_reply\":\"你好\"}");
+            }
+            _ => panic!("expected AssistantTextDelta"),
+        }
+        match &events[1] {
+            LlmStreamEvent::Usage {
+                input_tokens,
+                output_tokens,
+                cache_read,
+            } => {
+                assert_eq!(*input_tokens, 12);
+                assert_eq!(*output_tokens, 7);
+                assert_eq!(*cache_read, 3);
+            }
+            _ => panic!("expected Usage"),
+        }
+        match &events[2] {
+            LlmStreamEvent::Stop { reason } => assert_eq!(*reason, LlmStopReason::EndTurn),
+            _ => panic!("expected Stop"),
+        }
+    }
+
+    #[test]
+    fn test_parse_non_stream_completion_response_with_tool_calls() {
+        let response = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {
+                            "name": "context_read",
+                            "arguments": "{\"target_ref\":\"chapter:1\"}"
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }]
+        });
+
+        let events = parse_openai_completion_response(&response, "openai-compatible".to_string())
+            .expect("tool-call response should parse");
+
+        assert_eq!(events.len(), 4);
+        match &events[0] {
+            LlmStreamEvent::ToolCallStart { id, name } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(name, "context_read");
+            }
+            _ => panic!("expected ToolCallStart"),
+        }
+        match &events[1] {
+            LlmStreamEvent::ToolCallArgsDelta { id, delta } => {
+                assert_eq!(id, "call_1");
+                assert_eq!(delta, "{\"target_ref\":\"chapter:1\"}");
+            }
+            _ => panic!("expected ToolCallArgsDelta"),
+        }
+        match &events[2] {
+            LlmStreamEvent::ToolCallEnd { id } => assert_eq!(id, "call_1"),
+            _ => panic!("expected ToolCallEnd"),
+        }
+        match &events[3] {
+            LlmStreamEvent::Stop { reason } => assert_eq!(*reason, LlmStopReason::ToolCalls),
+            _ => panic!("expected Stop"),
+        }
     }
 }

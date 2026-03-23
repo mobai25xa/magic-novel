@@ -24,10 +24,49 @@ fn apply_system_prompt_inserts_default_for_empty_state() {
 }
 
 #[test]
-fn default_system_prompt_contains_edit_workflow_section() {
+fn default_system_prompt_uses_new_tool_system() {
     let prompt = default_system_prompt();
-    assert!(prompt.contains("## Edit workflow (critical)"));
-    assert!(prompt.contains("base_revision"));
+    for tool in [
+        "workspace_map",
+        "context_read",
+        "context_search",
+        "knowledge_read",
+        "knowledge_write",
+        "draft_write",
+        "structure_edit",
+        "review_check",
+        "askuser",
+        "todowrite",
+    ] {
+        assert!(
+            prompt.contains(&format!("| {} |", tool)),
+            "missing tool '{}' in default prompt",
+            tool
+        );
+    }
+
+    for legacy in [
+        "| read |",
+        "| edit |",
+        "| create |",
+        "| delete |",
+        "| move |",
+        "| ls |",
+        "| grep |",
+        "| outline |",
+        "| character_sheet |",
+        "| search_knowledge |",
+        "## Edit workflow (critical)",
+        "snapshot_id",
+        "base_revision",
+        "replace_range",
+    ] {
+        assert!(
+            !prompt.contains(legacy),
+            "default system prompt must not include legacy content '{}'",
+            legacy
+        );
+    }
 }
 
 #[test]
@@ -42,16 +81,14 @@ fn default_system_prompt_contains_todowrite_milestone_policy() {
 fn default_system_prompt_contains_all_tools() {
     let prompt = default_system_prompt();
     for tool in [
-        "read",
-        "edit",
-        "create",
-        "delete",
-        "move",
-        "ls",
-        "grep",
-        "outline",
-        "character_sheet",
-        "search_knowledge",
+        "workspace_map",
+        "context_read",
+        "context_search",
+        "knowledge_read",
+        "knowledge_write",
+        "draft_write",
+        "structure_edit",
+        "review_check",
         "askuser",
         "todowrite",
     ] {
@@ -61,6 +98,33 @@ fn default_system_prompt_contains_all_tools() {
             tool
         );
     }
+}
+
+#[test]
+fn extract_pending_todo_count_detects_legacy_todowrite_without_tool_name() {
+    let mut state = ConversationState::new("s1".to_string());
+    let tool_result = serde_json::json!({
+        "updated": true,
+        "item_count": 3,
+        "todo_state": {
+            "items": [
+                { "status": "pending", "text": "t1" },
+                { "status": "in_progress", "text": "t2" },
+                { "status": "completed", "text": "t3" }
+            ],
+            "last_updated_at": 0i64,
+            "source_call_id": "call_1"
+        }
+    })
+    .to_string();
+    state.messages.push(AgentMessage::tool_result(
+        "call_1".to_string(),
+        None, // legacy snapshots may omit tool_name
+        tool_result,
+        false,
+    ));
+
+    assert_eq!(extract_pending_todo_count(&state), Some(2));
 }
 
 #[test]
@@ -105,6 +169,7 @@ fn resolve_turn_provider_config_uses_default_model_constant() {
         base_url: Some("https://example.com/v1".to_string()),
         api_key: Some("key".to_string()),
         system_prompt: None,
+        prompt_role: None,
         active_chapter_path: None,
         active_skill: None,
         capability_mode: None,
@@ -129,6 +194,7 @@ fn build_loop_config_defaults_match_fix_mode_contract() {
         base_url: Some("https://example.com/v1".to_string()),
         api_key: Some("key".to_string()),
         system_prompt: None,
+        prompt_role: None,
         active_chapter_path: None,
         active_skill: None,
         capability_mode: None,
@@ -162,6 +228,7 @@ fn build_loop_config_respects_explicit_modes() {
         base_url: Some("https://example.com/v1".to_string()),
         api_key: Some("key".to_string()),
         system_prompt: None,
+        prompt_role: None,
         active_chapter_path: None,
         active_skill: None,
         capability_mode: Some(AgentMode::Planning),
@@ -361,6 +428,8 @@ fn persist_runtime_after_loop_preserves_suspended_state_for_waiting_askuser() {
         active_chapter_path: None,
         active_skill: None,
         loop_config: LoopConfig::default(),
+        session_canon_revision: None,
+        session_branch_id: None,
     };
 
     persist_runtime_after_loop(

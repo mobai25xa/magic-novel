@@ -1,8 +1,9 @@
 import { SendHorizonal, Square } from 'lucide-react'
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/magic-ui/components'
 import type { AiChatViewMode } from '@/state/settings'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/magic-ui/components'
 
+import { StandardAiModelSelect } from '../shared/StandardAiModelSelect'
 import { useAiTranslations } from '../ai-hooks'
 
 type AgentChatPanelControlsProps = {
@@ -24,16 +25,12 @@ export function AgentChatPanelControls(input: AgentChatPanelControlsProps) {
     <div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 flex-1 min-w-0">
         <div className="w-40 min-w-[120px]">
-          <Select value={input.selectedModel} onValueChange={input.onSelectModel}>
-            <SelectTrigger size="sm">
-              <SelectValue placeholder={ai.panel.modelPlaceholder} />
-            </SelectTrigger>
-            <SelectContent>
-              {input.models.map((model) => (
-                <SelectItem key={model} value={model}>{model}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <StandardAiModelSelect
+            models={input.models}
+            selectedModel={input.selectedModel}
+            onSelectModel={input.onSelectModel}
+            size="sm"
+          />
         </div>
 
         <div className="w-24">

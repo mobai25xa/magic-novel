@@ -1,7 +1,9 @@
 use serde_json::json;
 
 use crate::agent_tools::contracts::{ConfirmationPolicy, IdempotencyPolicy, RiskLevel, ToolDomain};
-use crate::agent_tools::definition::{ToolDefinition, ToolManifest, ToolSchemaContext};
+use crate::agent_tools::definition::{
+    ToolCapability, ToolDefinition, ToolManifest, ToolSchemaContext, ToolVisibility,
+};
 
 pub(super) static ASKUSER_TOOL: AskuserTool = AskuserTool;
 pub(super) static SKILL_TOOL: SkillTool = SkillTool;
@@ -22,6 +24,8 @@ impl ToolDefinition for AskuserTool {
             idempotency: IdempotencyPolicy::None,
             parallel_safe: false,
             timeout_ms: 120_000,
+            capabilities: &[ToolCapability::AskUser],
+            visibility: ToolVisibility::user_interactive_only(),
         }
     }
     fn description(&self) -> &'static str {
@@ -85,6 +89,8 @@ impl ToolDefinition for SkillTool {
             idempotency: IdempotencyPolicy::Optional,
             parallel_safe: false,
             timeout_ms: 10_000,
+            capabilities: &[ToolCapability::SkillActivation],
+            visibility: ToolVisibility::main_session_only(),
         }
     }
     fn description(&self) -> &'static str {
@@ -134,6 +140,8 @@ impl ToolDefinition for TodowriteTool {
             idempotency: IdempotencyPolicy::Optional,
             parallel_safe: false,
             timeout_ms: 10_000,
+            capabilities: &[ToolCapability::Todo],
+            visibility: ToolVisibility::everywhere(),
         }
     }
     fn description(&self) -> &'static str {
@@ -144,8 +152,8 @@ impl ToolDefinition for TodowriteTool {
             "At most 50 items, text length <= 500, and at most one in_progress item."
         )
     }
-    fn schema(&self, context: &ToolSchemaContext) -> Option<serde_json::Value> {
-        let mut item_properties = json!({
+    fn schema(&self, _context: &ToolSchemaContext) -> Option<serde_json::Value> {
+        let item_properties = json!({
             "status": {
                 "type": "string",
                 "enum": ["pending", "in_progress", "completed"]
@@ -153,20 +161,8 @@ impl ToolDefinition for TodowriteTool {
             "text": {
                 "type": "string",
                 "maxLength": 500
-            },
-            "worker": {
-                "type": "string",
-                "description": "Optional worker routing target"
             }
         });
-
-        if !context.available_workers.is_empty() {
-            item_properties["worker"] = json!({
-                "type": "string",
-                "enum": context.available_workers,
-                "description": "Optional worker routing target"
-            });
-        }
 
         Some(json!({
             "type": "object",

@@ -1,7 +1,5 @@
-mod contract;
 pub mod card;
-pub mod migration;
-pub mod migration_engine;
+mod contract;
 pub mod paths;
 pub mod recovery;
 pub mod recovery_support;
@@ -14,8 +12,6 @@ pub mod types;
 mod tests;
 
 pub use card::*;
-pub use migration::*;
-pub use migration_engine::*;
 pub use paths::*;
 pub use recovery::*;
 pub use runtime_snapshot::*;

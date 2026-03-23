@@ -13,8 +13,8 @@ use crate::services::read_json;
 
 use crate::application::search_usecases::index::scope::in_scope;
 
-const MAGIC_ASSETS_DIR: &str = "magic_assets";
-const MAGIC_FOLDER_META: &str = ".magic_folder.json";
+const ASSETS_DIR: &str = "assets";
+const ASSET_FOLDER_META: &str = ".magic_folder.json";
 const MATCH_COUNT_CAP: u32 = 64;
 const SNIPPET_CONTEXT_CHARS: usize = 60;
 
@@ -98,7 +98,7 @@ pub fn grep_assets_keyword(
 }
 
 fn list_all_asset_files(project_path: &str) -> Result<Vec<AssetFileInfo>, AppError> {
-    let root = PathBuf::from(project_path).join(MAGIC_ASSETS_DIR);
+    let root = PathBuf::from(project_path).join(ASSETS_DIR);
     if !root.exists() {
         return Ok(vec![]);
     }
@@ -130,12 +130,12 @@ fn walk_asset_dir(
             continue;
         }
 
-        if !file_type.is_file() || name == MAGIC_FOLDER_META || !name.ends_with(".json") {
+        if !file_type.is_file() || name == ASSET_FOLDER_META || !name.ends_with(".json") {
             continue;
         }
 
         out.push(AssetFileInfo {
-            doc_path: format!(".magic_novel/{rel_path}"),
+            doc_path: format!("assets/{rel_path}"),
             rel_path,
             full_path: path.clone(),
             modified_ms: file_modified_millis(&path),

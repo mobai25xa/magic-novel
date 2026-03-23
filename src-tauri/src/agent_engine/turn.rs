@@ -342,8 +342,8 @@ mod tests {
                         "id": "call_123",
                         "type": "function",
                         "function": {
-                            "name": "read",
-                            "arguments": "{\"project_path\":\"/p\",\"path\":\"ch1\"}"
+                            "name": "context_read",
+                            "arguments": "{\"target_ref\":\"chapter:manuscripts/vol_1/ch_1.json\"}"
                         }
                     }]
                 },
@@ -353,7 +353,7 @@ mod tests {
 
         let out = parse_openai_response(&resp).unwrap();
         assert_eq!(out.tool_calls.len(), 1);
-        assert_eq!(out.tool_calls[0].tool_name, "read");
+        assert_eq!(out.tool_calls[0].tool_name, "context_read");
         assert_eq!(out.tool_calls[0].llm_call_id, "call_123");
     }
 

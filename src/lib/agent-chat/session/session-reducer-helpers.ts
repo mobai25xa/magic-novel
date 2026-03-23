@@ -289,6 +289,8 @@ function toTimelineType(value: unknown): AgentUiTimelineEvent['type'] | null {
   switch (type) {
     case 'TURN_STARTED':
     case 'PLAN_STARTED':
+    case 'WORKER_STARTED':
+    case 'WORKER_COMPLETED':
     case 'STREAMING_STARTED':
     case 'ASSISTANT_TEXT_DELTA':
     case 'THINKING_TEXT_DELTA':
@@ -406,13 +408,38 @@ function extractTimelineEventMeta(
   timelineType: AgentUiTimelineEvent['type'],
   payload: Record<string, unknown>,
 ) {
+  if (timelineType === 'WORKER_STARTED' || timelineType === 'WORKER_COMPLETED') {
+    const knownWorkerTypes = new Set([
+      'context',
+      'draft',
+      'review',
+      'knowledge',
+      'orchestrator',
+      'other',
+    ])
+
+    const rawWorkerType = typeof payload.worker_type === 'string'
+      ? payload.worker_type.trim().toLowerCase()
+      : ''
+    const workerType = rawWorkerType && knownWorkerTypes.has(rawWorkerType)
+      ? rawWorkerType
+      : 'other'
+
+    return {
+      worker_type: workerType,
+      worker_session_id: typeof payload.worker_session_id === 'string' ? payload.worker_session_id : undefined,
+      scope_ref: typeof payload.scope_ref === 'string' ? payload.scope_ref : undefined,
+      target_ref: typeof payload.target_ref === 'string' ? payload.target_ref : undefined,
+    }
+  }
+
   if (event.type === 'compaction_summary' || event.type === 'compaction_fallback') {
     return payload
   }
 
-  const hasToolExposure = typeof payload.tool_package === 'string'
-    || typeof payload.route_reason === 'string'
-    || typeof payload.fallback_from === 'string'
+  const hasToolExposure = typeof payload.policy_source === 'string'
+    || typeof payload.capability_preset === 'string'
+    || typeof payload.exposure_reason === 'string'
     || Array.isArray(payload.exposed_tools)
     || Array.isArray(payload.skipped_tools)
 

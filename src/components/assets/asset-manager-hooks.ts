@@ -1,10 +1,10 @@
 import { useEffect } from 'react'
 
 import {
-  getMagicAssetsTree,
-  readMagicAsset,
+  getAssetsTree,
+  readAssetFile,
   type AssetKind,
-  type MagicAssetNode,
+  type AssetLibraryNode,
 } from '@/features/assets-management'
 
 import { flattenAssetNodes, type AssetTree } from './asset-tree-utils'
@@ -61,28 +61,28 @@ function parentPathOf(path: string) {
   return parts.join('/')
 }
 
-function isDirNode(node: MagicAssetNode): node is Extract<MagicAssetNode, { kind: 'dir' }> {
+function isDirNode(node: AssetLibraryNode): node is Extract<AssetLibraryNode, { kind: 'dir' }> {
   return node.kind === 'dir'
 }
 
-function isFileNode(node: MagicAssetNode): node is Extract<MagicAssetNode, { kind: 'file' }> {
+function isFileNode(node: AssetLibraryNode): node is Extract<AssetLibraryNode, { kind: 'file' }> {
   return node.kind === 'file'
 }
 
-function findKindRoot(nodes: MagicAssetNode[], kind: AssetKind) {
+function findKindRoot(nodes: AssetLibraryNode[], kind: AssetKind) {
   return nodes.find(
-    (node): node is Extract<MagicAssetNode, { kind: 'dir' }> =>
+    (node): node is Extract<AssetLibraryNode, { kind: 'dir' }> =>
       isDirNode(node) && normalizePath(node.path) === kind,
   )
 }
 
-function collectKindFiles(nodes: MagicAssetNode[], kind: AssetKind): AssetFileSummary[] {
+function collectKindFiles(nodes: AssetLibraryNode[], kind: AssetKind): AssetFileSummary[] {
   const kindRoot = findKindRoot(nodes, kind)
   if (!kindRoot) return []
 
   const files: AssetFileSummary[] = []
 
-  const walk = (dir: Extract<MagicAssetNode, { kind: 'dir' }>) => {
+  const walk = (dir: Extract<AssetLibraryNode, { kind: 'dir' }>) => {
     for (const child of dir.children) {
       if (isDirNode(child)) {
         walk(child)
@@ -105,13 +105,13 @@ function collectKindFiles(nodes: MagicAssetNode[], kind: AssetKind): AssetFileSu
   return files
 }
 
-function collectKindFolders(nodes: MagicAssetNode[], kind: AssetKind): AssetFolderSummary[] {
+function collectKindFolders(nodes: AssetLibraryNode[], kind: AssetKind): AssetFolderSummary[] {
   const kindRoot = findKindRoot(nodes, kind)
   if (!kindRoot) return []
 
   const folders: AssetFolderSummary[] = []
 
-  const walk = (dir: Extract<MagicAssetNode, { kind: 'dir' }>, level: number) => {
+  const walk = (dir: Extract<AssetLibraryNode, { kind: 'dir' }>, level: number) => {
     for (const child of dir.children) {
       if (!isDirNode(child)) continue
 
@@ -149,7 +149,7 @@ export function useLoadAssetList({
 
       setIsLoading(true)
       try {
-        const tree = await getMagicAssetsTree(projectPath)
+        const tree = await getAssetsTree(projectPath)
         const files = collectKindFiles(tree, kind)
         setAssets(files)
 
@@ -187,7 +187,7 @@ export function useLoadAssetDetail({
 
       setIsLoading(true)
       try {
-        const asset = (await readMagicAsset(projectPath, selectedAssetPath)) as AssetTree
+        const asset = (await readAssetFile(projectPath, selectedAssetPath)) as AssetTree
         setAsset(asset)
 
         const firstNode = flattenAssetNodes(asset.root).find((node) => node.level > 0) || null
@@ -218,7 +218,7 @@ export function useLoadAssetFolders({
       }
 
       try {
-        const nodes = await getMagicAssetsTree(projectPath)
+        const nodes = await getAssetsTree(projectPath)
         setFolders(collectKindFolders(nodes, kind))
       } catch (error) {
         console.error('Failed to load asset folders:', error)

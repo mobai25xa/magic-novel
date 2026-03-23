@@ -9,7 +9,7 @@ use crate::services::read_json;
 use super::types::{ChunkParams, ChunkRecord, CorpusItem};
 
 const MANUSCRIPTS_PREFIX: &str = "manuscripts/";
-const MAGIC_ASSETS_PREFIX: &str = "magic_assets/";
+const ASSETS_PREFIX: &str = "assets/";
 
 pub fn chapter_source_path(path: &str) -> String {
     path.replace('\\', "/")
@@ -20,9 +20,9 @@ pub fn chapter_source_path(path: &str) -> String {
 pub fn asset_source_path(path: &str) -> String {
     let rel = path
         .replace('\\', "/")
-        .trim_start_matches(MAGIC_ASSETS_PREFIX)
+        .trim_start_matches(ASSETS_PREFIX)
         .to_string();
-    format!(".magic_novel/{rel}")
+    format!("assets/{rel}")
 }
 
 pub fn build_chunks(
@@ -112,10 +112,10 @@ mod tests {
     }
 
     #[test]
-    fn asset_source_path_maps_to_magic_novel_prefix() {
+    fn asset_source_path_preserves_assets_prefix() {
         assert_eq!(
-            asset_source_path("magic_assets/characters/a.json"),
-            ".magic_novel/characters/a.json"
+            asset_source_path("assets/characters/a.json"),
+            "assets/characters/a.json"
         );
     }
 }

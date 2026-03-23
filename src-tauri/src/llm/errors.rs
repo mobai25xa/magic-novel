@@ -556,7 +556,7 @@ mod tests {
     fn test_http_response_classifies_tool_schema_rejection() {
         let err = LlmError::from_http_response(
             400,
-            "Invalid schema for function 'edit': function.parameters.ops.items uses unsupported keyword 'oneOf'",
+            "Invalid schema for function 'draft_write': function.parameters.content.value uses unsupported keyword 'oneOf'",
             "openai-compatible",
         );
 
@@ -567,10 +567,10 @@ mod tests {
                 status,
                 ..
             } => {
-                assert_eq!(tool_name.as_deref(), Some("edit"));
+                assert_eq!(tool_name.as_deref(), Some("draft_write"));
                 assert_eq!(
                     schema_path.as_deref(),
-                    Some("function.parameters.ops.items")
+                    Some("function.parameters.content.value")
                 );
                 assert_eq!(status, Some(400));
             }

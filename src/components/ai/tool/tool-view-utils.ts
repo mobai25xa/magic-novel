@@ -20,6 +20,36 @@ export function resolveStepPath(step: AgentUiToolStep): string | null {
   return null
 }
 
+function resolvePreviewOpenRef(preview: unknown): string | null {
+  if (!isRecord(preview)) return null
+
+  const candidates = [
+    preview.open_ref,
+    preview.target_ref,
+    preview.path,
+    preview.chapter_path,
+    preview.new_chapter_path,
+    preview.ref,
+  ]
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim()
+    }
+  }
+
+  return null
+}
+
+export function resolveStepOpenRef(step: AgentUiToolStep): string | null {
+  const parsed = parseToolOutput(step.rawOutput)
+
+  return resolvePreviewOpenRef(step.outputPreview)
+    || resolvePreviewOpenRef(parsed)
+    || resolvePreviewOpenRef(step.inputPreview)
+    || resolveStepPath(step)
+}
+
 export function resolveStepArgsSummary(step: AgentUiToolStep): string {
   if (step.argsSummary) return step.argsSummary
 

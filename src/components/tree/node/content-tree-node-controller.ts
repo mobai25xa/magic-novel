@@ -1,6 +1,7 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { TreeNodeProps } from '../content-tree-types'
+import { useEditorUiStore } from '@/stores/editor-ui-store'
 
 import { createDragHandlers, getDropClassName } from './content-tree-node-dnd'
 
@@ -32,7 +33,6 @@ export type TreeNodeController = {
 }
 
 export function useContentTreeNodeController(props: TreeNodeProps): TreeNodeController {
-  const [isExpanded, setIsExpanded] = useState(true)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [exportFormatDialogOpen, setExportFormatDialogOpen] = useState(false)
@@ -43,8 +43,15 @@ export function useContentTreeNodeController(props: TreeNodeProps): TreeNodeCont
   const nodeRef = useRef<HTMLDivElement>(null)
   const isSelected = props.node.path === props.selectedPath
   const isDir = props.node.kind === 'dir' || props.node.kind === 'asset_dir' || props.node.kind === 'knowledge'
+  const isCollapsed = useEditorUiStore((state) => Boolean(state.sidebarTreeCollapsedDirPaths[props.node.path]))
+  const isExpanded = isDir ? !isCollapsed : false
   const isDragging = props.dragState.draggingNode?.path === props.node.path
   const isDropTarget = props.dragState.dropTarget?.node.path === props.node.path
+
+  useEffect(() => {
+    if (!isDir) return
+    useEditorUiStore.getState().registerSidebarTreeDirPath(props.node.path)
+  }, [isDir, props.node.path])
 
   const dragHandlers = useMemo(
     () =>
@@ -86,7 +93,10 @@ export function useContentTreeNodeController(props: TreeNodeProps): TreeNodeCont
     setImportDialog,
     setCreateDialog,
     setCreateFileTitleDialogOpen,
-    toggleExpanded: () => setIsExpanded((prev) => !prev),
+    toggleExpanded: () => {
+      if (!isDir) return
+      useEditorUiStore.getState().toggleSidebarTreeDirCollapsed(props.node.path)
+    },
     dragHandlers,
     nodeRef,
     canShowChildren: isDir && isExpanded && !!props.node.children,

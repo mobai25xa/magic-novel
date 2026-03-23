@@ -86,6 +86,26 @@ pub struct ChapterCard {
     pub status: ChapterCardStatus,
     #[serde(default)]
     pub updated_at: i64,
+    // Rule-P3: chapter binding — set at draft-write time, read at review time
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rules_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rules_sources: Vec<BoundRuleSource>,
+    // Optional redundant fields for debug / DevC reads
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bound_validation_profile_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bound_style_template_id: Option<String>,
+}
+
+/// A single ruleset version reference bound to a chapter.
+/// Mirrors `RuleSource` from writing_rules, kept here to avoid circular deps.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct BoundRuleSource {
+    pub scope: String,
+    pub scope_ref: String,
+    pub ruleset_id: String,
+    pub version: i32,
 }
 
 // ── recent_facts.json ───────────────────────────────────────────

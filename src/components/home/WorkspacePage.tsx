@@ -96,7 +96,6 @@ export function WorkspacePage({ onOpenProject, onOpenCreate, onOpenSettings }: W
         translations={translations}
         state={state}
         setters={setters}
-        onCreateProject={projectActions.handleCreateProject}
         onEditProjectConfirm={projectActions.handleEditConfirm}
         onConfirmPendingAction={handleConfirmPendingAction}
         onImportProject={projectActions.handleProjectImport}

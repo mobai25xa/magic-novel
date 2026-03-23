@@ -5,12 +5,22 @@
 //!
 //! Based on docs/magic_plan/plan_agent/13-mission-worker-protocol.md
 
+use std::io::{Error as IoError, ErrorKind};
+
 use serde::{Deserialize, Serialize};
 
-use super::types::{Feature, HandoffEntry};
-use super::worker_profile::WorkerProfile;
+use super::agent_profile::{AgentProfile, SessionSource};
+use super::result_types::AgentTaskResult;
+use super::types::Feature;
 
-pub const PROTOCOL_SCHEMA_VERSION: i32 = 2;
+pub const PROTOCOL_SCHEMA_VERSION: i32 = 6;
+
+pub fn protocol_schema_mismatch_message(actual: i32) -> String {
+    format!(
+        "protocol schema mismatch: expected {}, got {}",
+        PROTOCOL_SCHEMA_VERSION, actual
+    )
+}
 
 // ── Orchestrator → Worker (stdin instructions) ──────────────────
 
@@ -58,11 +68,17 @@ pub struct StartFeaturePayload {
     #[serde(default)]
     pub worker_id: String,
     #[serde(default)]
-    pub worker_profile: Option<WorkerProfile>,
+    pub agent_profile: Option<AgentProfile>,
+    #[serde(default = "default_workflow_job_session_source")]
+    pub session_source: SessionSource,
     #[serde(default)]
     pub parent_session_id: Option<String>,
     #[serde(default)]
     pub parent_turn_id: Option<u32>,
+}
+
+fn default_workflow_job_session_source() -> SessionSource {
+    SessionSource::WorkflowJob
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,10 +118,14 @@ pub struct AckPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureCompletedPayload {
     pub feature_id: String,
-    pub ok: bool,
-    #[serde(default)]
     pub session_id: String,
-    pub handoff: HandoffEntry,
+    pub result: AgentTaskResult,
+}
+
+impl FeatureCompletedPayload {
+    pub fn result_summary(&self) -> String {
+        self.result.normalized_summary()
+    }
 }
 
 // ── Builder helpers ─────────────────────────────────────────────
@@ -118,7 +138,14 @@ impl WorkerInstruction {
 
     /// Parse a single NDJSON line.
     pub fn from_ndjson_line(line: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(line)
+        let parsed: Self = serde_json::from_str(line)?;
+        if parsed.schema_version != PROTOCOL_SCHEMA_VERSION {
+            return Err(serde_json::Error::io(IoError::new(
+                ErrorKind::InvalidData,
+                protocol_schema_mismatch_message(parsed.schema_version),
+            )));
+        }
+        Ok(parsed)
     }
 
     pub fn initialize(id: &str, payload: InitializePayload) -> Self {
@@ -175,7 +202,14 @@ impl WorkerEvent {
 
     /// Parse a single NDJSON line.
     pub fn from_ndjson_line(line: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(line)
+        let parsed: Self = serde_json::from_str(line)?;
+        if parsed.schema_version != PROTOCOL_SCHEMA_VERSION {
+            return Err(serde_json::Error::io(IoError::new(
+                ErrorKind::InvalidData,
+                protocol_schema_mismatch_message(parsed.schema_version),
+            )));
+        }
+        Ok(parsed)
     }
 
     pub fn ack(request_id: &str, ok: bool, error: Option<String>) -> Self {
@@ -198,15 +232,13 @@ impl WorkerEvent {
 
     pub fn feature_completed(
         feature_id: &str,
-        ok: bool,
         session_id: String,
-        handoff: HandoffEntry,
+        result: AgentTaskResult,
     ) -> Self {
         let completed = FeatureCompletedPayload {
             feature_id: feature_id.to_string(),
-            ok,
             session_id,
-            handoff,
+            result,
         };
         Self {
             schema_version: PROTOCOL_SCHEMA_VERSION,
@@ -236,6 +268,9 @@ pub fn new_request_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_engine::types::{AgentMode, ApprovalMode, ClarificationMode};
+    use crate::mission::agent_profile::CapabilityPreset;
+    use crate::mission::result_types::{TaskResultStatus, TaskStopReason};
     use crate::mission::types::FeatureStatus;
 
     #[test]
@@ -283,17 +318,25 @@ mod tests {
                 api_key: "sk-test".to_string(),
                 mission_id: "mis_1".to_string(),
                 worker_id: "wk_1".to_string(),
-                worker_profile: Some(WorkerProfile {
-                    name: "general-worker".to_string(),
-                    display_name: "General Worker".to_string(),
-                    system_prompt: "sp".to_string(),
-                    tool_whitelist: vec!["read".to_string()],
+                agent_profile: Some(AgentProfile {
+                    name: "delegate".to_string(),
+                    display_name: "Delegate".to_string(),
+                    prompt_preset: "sp".to_string(),
+                    mode: AgentMode::Writing,
+                    approval_mode: ApprovalMode::Auto,
+                    clarification_mode: ClarificationMode::HeadlessDefer,
+                    capability_preset: CapabilityPreset::HeadlessWriter,
+                    allow_delegate: false,
+                    allow_skill_activation: false,
+                    hidden_tools: Vec::new(),
+                    forced_tools: Vec::new(),
                     max_rounds: 5,
                     max_tool_calls: 10,
                     model: None,
                 }),
-                parent_session_id: None,
-                parent_turn_id: None,
+                session_source: SessionSource::WorkflowJob,
+                parent_session_id: Some("sess_parent".to_string()),
+                parent_turn_id: Some(7),
             },
         );
 
@@ -302,6 +345,10 @@ mod tests {
 
         let parsed = WorkerInstruction::from_ndjson_line(&line).unwrap();
         assert_eq!(parsed.instruction_type, InstructionType::StartFeature);
+
+        let payload: StartFeaturePayload = serde_json::from_value(parsed.payload).unwrap();
+        assert_eq!(payload.parent_session_id.as_deref(), Some("sess_parent"));
+        assert_eq!(payload.parent_turn_id, Some(7));
     }
 
     #[test]
@@ -348,33 +395,26 @@ mod tests {
 
     #[test]
     fn test_event_feature_completed_roundtrip() {
-        use crate::mission::types::HandoffEntry;
-
-        let handoff = HandoffEntry {
-            feature_id: "f1".to_string(),
-            worker_id: "wk_1".to_string(),
-            ok: true,
-            summary: "done".to_string(),
-            commands_run: vec!["read".to_string()],
-            artifacts: Vec::new(),
-            issues: Vec::new(),
+        let result = AgentTaskResult {
+            task_id: "f1".to_string(),
+            actor_id: "wk_1".to_string(),
+            goal: "Write chapter".to_string(),
+            status: TaskResultStatus::Completed,
+            stop_reason: TaskStopReason::Success,
+            result_summary: "done".to_string(),
+            ..AgentTaskResult::default()
         };
 
-        let evt = WorkerEvent::feature_completed(
-            "f1",
-            true,
-            "worker_sess_test".to_string(),
-            handoff,
-        );
+        let evt = WorkerEvent::feature_completed("f1", "worker_sess_test".to_string(), result);
         let line = evt.to_ndjson_line().unwrap();
         let parsed = WorkerEvent::from_ndjson_line(&line).unwrap();
         assert_eq!(parsed.event_type, WorkerEventType::FeatureCompleted);
 
         let payload: FeatureCompletedPayload = serde_json::from_value(parsed.payload).unwrap();
         assert_eq!(payload.feature_id, "f1");
-        assert!(payload.ok);
         assert_eq!(payload.session_id, "worker_sess_test");
-        assert_eq!(payload.handoff.summary, "done");
+        assert!(payload.result.is_ok());
+        assert_eq!(payload.result.result_summary, "done");
     }
 
     #[test]
@@ -409,6 +449,23 @@ mod tests {
         assert!(
             !line.contains('\n'),
             "NDJSON line must not contain newlines"
+        );
+    }
+
+    #[test]
+    fn test_protocol_schema_mismatch_fails_parse() {
+        let line = serde_json::json!({
+            "schema_version": PROTOCOL_SCHEMA_VERSION + 1,
+            "id": "req_1",
+            "type": "ping",
+            "payload": {}
+        })
+        .to_string();
+
+        let err = WorkerInstruction::from_ndjson_line(&line).unwrap_err();
+        assert!(
+            err.to_string().contains("protocol schema mismatch"),
+            "unexpected error: {err}"
         );
     }
 }

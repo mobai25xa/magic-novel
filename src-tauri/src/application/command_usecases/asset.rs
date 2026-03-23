@@ -8,8 +8,8 @@ use crate::services::{ensure_dir, list_files, read_json};
 use crate::utils::atomic_write::atomic_write_json;
 
 use super::asset_support::{
-    asset_dir, build_magic_assets_tree, dir_modified_at, ensure_safe_relative_path,
-    write_folder_title, MagicAssetNode, MAGIC_ASSETS_DIR,
+    asset_dir, build_assets_tree, dir_modified_at, ensure_safe_relative_path, write_folder_title,
+    AssetLibraryNode, ASSETS_DIR,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -117,27 +117,27 @@ pub async fn copy_asset(
 }
 
 #[command]
-pub async fn get_magic_assets_tree(project_path: String) -> Result<Vec<MagicAssetNode>, AppError> {
+pub async fn get_assets_tree(project_path: String) -> Result<Vec<AssetLibraryNode>, AppError> {
     let project_path = PathBuf::from(&project_path);
-    let base_dir = project_path.join(MAGIC_ASSETS_DIR);
+    let base_dir = project_path.join(ASSETS_DIR);
 
-    build_magic_assets_tree(&base_dir, "")
+    build_assets_tree(&base_dir, "")
 }
 
 #[command]
-pub async fn read_magic_asset(
+pub async fn read_asset_file(
     project_path: String,
     relative_path: String,
 ) -> Result<AssetTree, AppError> {
     let project_path = PathBuf::from(&project_path);
     let rel = ensure_safe_relative_path(&relative_path)?;
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(rel);
+    let full_path = project_path.join(ASSETS_DIR).join(rel);
 
     read_json(&full_path)
 }
 
 #[command]
-pub async fn save_magic_asset(
+pub async fn save_asset_file(
     project_path: String,
     relative_path: String,
     asset: AssetTree,
@@ -145,7 +145,7 @@ pub async fn save_magic_asset(
     let project_path = PathBuf::from(&project_path);
     let rel = ensure_safe_relative_path(&relative_path)?;
 
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(rel);
+    let full_path = project_path.join(ASSETS_DIR).join(rel);
     if let Some(parent) = full_path.parent() {
         ensure_dir(parent)?;
     }
@@ -155,7 +155,7 @@ pub async fn save_magic_asset(
 }
 
 #[command]
-pub async fn create_magic_asset_folder(
+pub async fn create_asset_folder(
     project_path: String,
     parent_relative_dir: String,
     title: String,
@@ -166,7 +166,7 @@ pub async fn create_magic_asset_folder(
     let folder_id = uuid::Uuid::new_v4().to_string();
     let folder_rel = parent_rel.join(&folder_id);
 
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(&folder_rel);
+    let full_path = project_path.join(ASSETS_DIR).join(&folder_rel);
     ensure_dir(&full_path)?;
     write_folder_title(&full_path, &title)?;
 
@@ -174,7 +174,7 @@ pub async fn create_magic_asset_folder(
 }
 
 #[command]
-pub async fn create_magic_asset_file(
+pub async fn create_asset_file(
     project_path: String,
     parent_relative_dir: String,
     asset_kind: String,
@@ -219,7 +219,7 @@ pub async fn create_magic_asset_file(
         root: empty_root,
     };
 
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(&file_rel);
+    let full_path = project_path.join(ASSETS_DIR).join(&file_rel);
     if let Some(parent) = full_path.parent() {
         ensure_dir(parent)?;
     }
@@ -229,14 +229,14 @@ pub async fn create_magic_asset_file(
 }
 
 #[command]
-pub async fn update_magic_asset_title(
+pub async fn update_asset_file_title(
     project_path: String,
     relative_path: String,
     new_title: String,
 ) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
     let rel = ensure_safe_relative_path(&relative_path)?;
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(rel);
+    let full_path = project_path.join(ASSETS_DIR).join(rel);
 
     let mut asset: AssetTree = read_json(&full_path)?;
     asset.title = new_title;
@@ -246,27 +246,27 @@ pub async fn update_magic_asset_title(
 }
 
 #[command]
-pub async fn update_magic_asset_folder_title(
+pub async fn update_asset_folder_title(
     project_path: String,
     relative_dir: String,
     new_title: String,
 ) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
     let rel = ensure_safe_relative_path(&relative_dir)?;
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(rel);
+    let full_path = project_path.join(ASSETS_DIR).join(rel);
 
     write_folder_title(&full_path, &new_title)?;
     Ok(())
 }
 
 #[command]
-pub async fn delete_magic_asset_path(
+pub async fn delete_asset_path(
     project_path: String,
     relative_path: String,
 ) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
     let rel = ensure_safe_relative_path(&relative_path)?;
-    let full_path = project_path.join(MAGIC_ASSETS_DIR).join(rel);
+    let full_path = project_path.join(ASSETS_DIR).join(rel);
 
     if !full_path.exists() {
         return Ok(());

@@ -2,14 +2,16 @@
 //!
 //! Directory structure:
 //!   ~/.magic/skills/*.md    — user-defined skill prompt snippets
-//!   ~/.magic/workers/*.json — worker definitions (system_prompt + tool whitelist)
+//!   ~/.magic/workers/*.json — worker definitions (system_prompt + capability policy)
 //!   ~/.magic/rule.md        — global hard-constraint rules
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::json;
 
+use crate::agent_engine::types::{AgentMode, ApprovalMode, ClarificationMode};
+use crate::mission::agent_profile::{normalize_tool_names, CapabilityPreset};
 use crate::models::{AppError, ErrorCode};
 use crate::services::ensure_dir;
 
@@ -36,20 +38,108 @@ pub struct UserSkillDefinition {
     pub source: SkillSource,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct WorkerDefinition {
     pub name: String,
     pub display_name: String,
     pub system_prompt: String,
-    pub tool_whitelist: Vec<String>,
     #[serde(default)]
-    pub match_keywords: Vec<String>,
+    pub mode: AgentMode,
+    #[serde(default)]
+    pub approval_mode: ApprovalMode,
+    #[serde(default)]
+    pub clarification_mode: ClarificationMode,
+    #[serde(default)]
+    pub capability_preset: CapabilityPreset,
+    #[serde(default)]
+    pub allow_delegate: bool,
+    #[serde(default)]
+    pub allow_skill_activation: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hidden_tools: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub forced_tools: Vec<String>,
     #[serde(default)]
     pub max_rounds: Option<u32>,
     #[serde(default)]
     pub max_tool_calls: Option<u32>,
     #[serde(default)]
     pub model: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawWorkerDefinition {
+    pub name: String,
+    #[serde(default)]
+    pub display_name: String,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub mode: Option<AgentMode>,
+    #[serde(default)]
+    pub approval_mode: Option<ApprovalMode>,
+    #[serde(default)]
+    pub clarification_mode: Option<ClarificationMode>,
+    #[serde(default)]
+    pub capability_preset: Option<CapabilityPreset>,
+    #[serde(default)]
+    pub allow_delegate: bool,
+    #[serde(default)]
+    pub allow_skill_activation: bool,
+    #[serde(default)]
+    pub hidden_tools: Vec<String>,
+    #[serde(default)]
+    pub forced_tools: Vec<String>,
+    #[serde(default)]
+    pub max_rounds: Option<u32>,
+    #[serde(default)]
+    pub max_tool_calls: Option<u32>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for WorkerDefinition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        RawWorkerDefinition::deserialize(deserializer).map(Into::into)
+    }
+}
+
+impl From<RawWorkerDefinition> for WorkerDefinition {
+    fn from(raw: RawWorkerDefinition) -> Self {
+        let capability_preset = raw.capability_preset.unwrap_or_default();
+        let mode = raw
+            .mode
+            .unwrap_or_else(|| default_worker_mode(capability_preset));
+        let clarification_mode = raw
+            .clarification_mode
+            .unwrap_or(ClarificationMode::HeadlessDefer);
+        let approval_mode = raw.approval_mode.unwrap_or(ApprovalMode::Auto);
+
+        Self {
+            name: raw.name.trim().to_string(),
+            display_name: raw.display_name.trim().to_string(),
+            system_prompt: raw.system_prompt.trim().to_string(),
+            mode,
+            approval_mode,
+            clarification_mode,
+            capability_preset,
+            allow_delegate: raw.allow_delegate,
+            allow_skill_activation: raw.allow_skill_activation,
+            hidden_tools: normalize_tool_names(raw.hidden_tools),
+            forced_tools: normalize_tool_names(raw.forced_tools),
+            max_rounds: raw.max_rounds,
+            max_tool_calls: raw.max_tool_calls,
+            model: raw
+                .model
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_string()),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -314,8 +404,8 @@ pub fn load_worker_definitions() -> Vec<WorkerDefinition> {
             Ok(c) => c,
             Err(_) => continue,
         };
-        let def: WorkerDefinition = match serde_json::from_str(&content) {
-            Ok(d) => d,
+        let def = match serde_json::from_str::<WorkerDefinition>(&content) {
+            Ok(definition) => definition,
             Err(e) => {
                 tracing::warn!(
                     target: "global_config",
@@ -335,7 +425,6 @@ pub fn load_worker_definitions() -> Vec<WorkerDefinition> {
     workers.sort_by(|a, b| a.name.cmp(&b.name));
     workers
 }
-
 pub fn save_worker_definition(def: &WorkerDefinition) -> Result<(), AppError> {
     let dir = workers_dir()?;
     ensure_dir(&dir)?;
@@ -426,6 +515,15 @@ fn sanitize_filename(name: &str) -> String {
         .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "_")
 }
 
+fn default_worker_mode(capability_preset: CapabilityPreset) -> AgentMode {
+    match capability_preset {
+        CapabilityPreset::ReadOnlyReviewer | CapabilityPreset::SummaryOnly => AgentMode::Planning,
+        CapabilityPreset::MainInteractive
+        | CapabilityPreset::MainPlanning
+        | CapabilityPreset::HeadlessWriter => AgentMode::Writing,
+    }
+}
+
 // ── Tests ──
 
 #[cfg(test)]
@@ -478,8 +576,14 @@ mod tests {
             name: "test-worker".to_string(),
             display_name: "Test Worker".to_string(),
             system_prompt: "You are a test worker.".to_string(),
-            tool_whitelist: vec!["read".to_string(), "grep".to_string()],
-            match_keywords: vec!["test".to_string()],
+            mode: AgentMode::Writing,
+            approval_mode: ApprovalMode::Auto,
+            clarification_mode: ClarificationMode::HeadlessDefer,
+            capability_preset: CapabilityPreset::HeadlessWriter,
+            allow_delegate: false,
+            allow_skill_activation: true,
+            hidden_tools: Vec::new(),
+            forced_tools: vec!["todowrite".to_string()],
             max_rounds: Some(5),
             max_tool_calls: None,
             model: None,
@@ -487,19 +591,19 @@ mod tests {
         let json = serde_json::to_string(&def).unwrap();
         let parsed: WorkerDefinition = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.name, "test-worker");
-        assert_eq!(parsed.tool_whitelist.len(), 2);
+        assert_eq!(parsed.capability_preset, CapabilityPreset::HeadlessWriter);
+        assert!(parsed.allow_skill_activation);
+        assert_eq!(parsed.forced_tools, vec!["todowrite".to_string()]);
         assert_eq!(parsed.max_rounds, Some(5));
         assert!(parsed.max_tool_calls.is_none());
     }
 
     #[test]
-    fn test_worker_definition_serde_minimal() {
+    fn test_worker_definition_rejects_unknown_fields() {
         let json =
-            r#"{"name":"w","display_name":"W","system_prompt":"sp","tool_whitelist":["read"]}"#;
-        let parsed: WorkerDefinition = serde_json::from_str(json).unwrap();
-        assert_eq!(parsed.name, "w");
-        assert!(parsed.match_keywords.is_empty());
-        assert!(parsed.max_rounds.is_none());
+            r#"{"name":"w","display_name":"W","system_prompt":"sp","unexpected_field":["x"]}"#;
+        let err = serde_json::from_str::<WorkerDefinition>(json).unwrap_err();
+        assert!(err.to_string().contains("unexpected_field"));
     }
 
     #[test]

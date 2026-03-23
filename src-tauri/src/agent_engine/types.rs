@@ -33,7 +33,7 @@ pub struct UsageInfo {
 pub struct ToolCallInfo {
     /// The ID assigned by the LLM (used for tool_result pairing)
     pub llm_call_id: String,
-    /// Tool name (e.g. "read", "edit", "ls", "grep", "create")
+    /// Tool name (e.g. "context_read", "draft_write", "workspace_map")
     pub tool_name: String,
     /// Tool arguments as JSON
     pub args: serde_json::Value,
@@ -58,7 +58,7 @@ impl Default for AutonomyLevel {
 }
 
 /// Agent mode controlling which tools are visible to the LLM.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentMode {
     /// Full tool access — reading, writing, creating
@@ -74,7 +74,7 @@ impl Default for AgentMode {
 }
 
 /// User-facing approval policy for side-effecting tools.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalMode {
     ConfirmWrites,
@@ -97,7 +97,7 @@ impl Default for ApprovalMode {
 }
 
 /// Clarification policy for interactive vs headless execution surfaces.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ClarificationMode {
     Interactive,
@@ -148,8 +148,6 @@ pub struct LoopConfig {
     pub max_tool_calls: u32,
     /// Internal legacy confirmation mapping used by existing loop components
     pub autonomy_level: AutonomyLevel,
-    /// Whether this loop can dispatch worker sub-loops (false for workers to prevent recursion)
-    pub worker_dispatch_enabled: bool,
     /// Tool visibility mode for the current loop
     pub capability_mode: AgentMode,
     /// Approval policy for side-effecting tools
@@ -165,7 +163,6 @@ impl LoopConfig {
             max_rounds,
             max_tool_calls,
             autonomy_level: approval_mode.to_autonomy_level(),
-            worker_dispatch_enabled: false,
             capability_mode: AgentMode::Writing,
             approval_mode,
             clarification_mode: ClarificationMode::HeadlessDefer,
@@ -179,7 +176,6 @@ impl Default for LoopConfig {
             max_rounds: 25,
             max_tool_calls: 100,
             autonomy_level: AutonomyLevel::default(),
-            worker_dispatch_enabled: false,
             capability_mode: AgentMode::Writing,
             approval_mode: ApprovalMode::ConfirmWrites,
             clarification_mode: ClarificationMode::Interactive,
@@ -222,7 +218,6 @@ mod tests {
         assert_eq!(config.approval_mode, ApprovalMode::Auto);
         assert_eq!(config.clarification_mode, ClarificationMode::HeadlessDefer);
         assert_eq!(config.autonomy_level, AutonomyLevel::Autonomous);
-        assert!(!config.worker_dispatch_enabled);
     }
 
     #[test]

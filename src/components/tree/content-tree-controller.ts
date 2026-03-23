@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import {
-  loadMagicAssetsTree,
-  type MagicAssetNode,
+  loadKnowledgeTree,
+  type KnowledgeTreeNode,
 } from '@/features/content-tree-management'
 import { useToast } from '@/magic-ui/components'
 import { useLayoutStore } from '@/stores/layout-store'
@@ -15,7 +15,7 @@ import {
   createHandleSelect,
 } from './content-tree-controller-actions'
 import { createDeleteConfirm } from './content-tree-controller-delete'
-import { convertMagicAssetNode } from './content-tree-converters'
+import { convertKnowledgeTreeNode } from './content-tree-converters'
 import { sortTree } from './content-tree-sort'
 import type { DragState, FileNode } from './content-tree-types'
 
@@ -26,13 +26,13 @@ type ConfirmDialogState = {
   onConfirm: () => void
 }
 
-function makeKnowledgeRoot(nodes: MagicAssetNode[], label: string): FileNode {
+function makeKnowledgeRoot(nodes: KnowledgeTreeNode[], label: string): FileNode {
   return {
     kind: 'knowledge',
     name: label,
     title: label,
     path: 'knowledge',
-    children: nodes.map(convertMagicAssetNode),
+    children: nodes.map(convertKnowledgeTreeNode),
   }
 }
 
@@ -47,10 +47,10 @@ function useKnowledgeTree(projectPath: string | null, label: string, reloadKey: 
       }
 
       try {
-        const nodes = await loadMagicAssetsTree(projectPath)
+        const nodes = await loadKnowledgeTree(projectPath)
         setKnowledgeTree(makeKnowledgeRoot(nodes, label))
       } catch (error) {
-        console.error('Failed to load magic_assets tree:', error)
+        console.error('Failed to load knowledge tree:', error)
         setKnowledgeTree(makeKnowledgeRoot([], label))
       }
     }

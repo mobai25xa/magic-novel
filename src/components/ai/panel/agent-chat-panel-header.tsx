@@ -1,4 +1,4 @@
-import { Clock, Plus } from 'lucide-react'
+import { Clock, Flag, Plus } from 'lucide-react'
 
 import { useAiTranslations } from '../ai-hooks'
 
@@ -7,9 +7,11 @@ type AgentChatPanelHeaderProps = {
   canStartNewSession?: boolean
   onStartNewSession: () => Promise<void>
   onToggleHistoryPage: () => void
+  onOpenMissionPanel: () => void
   historyPageOpen: boolean
   historyEnabled: boolean
   sessionLoading: boolean
+  missionDisabled: boolean
 }
 
 export function AgentChatPanelHeader(input: AgentChatPanelHeaderProps) {
@@ -23,6 +25,16 @@ export function AgentChatPanelHeader(input: AgentChatPanelHeaderProps) {
       </div>
 
       <div className="editor-shell-ai-chat-header-right">
+        <button
+          type="button"
+          className="editor-shell-ai-chat-header-btn"
+          onClick={input.onOpenMissionPanel}
+          title={input.missionDisabled ? ai.panel.missionUnavailable : ai.panel.mission}
+          aria-label={ai.panel.mission}
+          disabled={input.missionDisabled}
+        >
+          <Flag size={13} />
+        </button>
         <button
           type="button"
           className="editor-shell-ai-chat-header-btn"

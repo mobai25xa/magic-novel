@@ -415,10 +415,9 @@ function testToolExposureMetaReplay() {
       turn: 3,
       payload: {
         timeline_type: 'PLAN_STARTED',
-        tool_package: 'writing',
-        route_reason: 'writing_signal',
-        fallback_from: 'light_chat',
-        fallback_reason: 'light_chat_to_writing',
+        policy_source: 'capability_policy',
+        capability_preset: 'headless_writer',
+        exposure_reason: 'capability_policy.headless_writer',
         exposed_tools: ['read', 'edit', 'askuser'],
       },
     },
@@ -430,8 +429,9 @@ function testToolExposureMetaReplay() {
       turn: 3,
       payload: {
         stop_reason: 'success',
-        tool_package: 'writing',
-        route_reason: 'writing_signal',
+        policy_source: 'capability_policy',
+        capability_preset: 'headless_writer',
+        exposure_reason: 'capability_policy.headless_writer',
         exposed_tools: ['read', 'edit', 'askuser'],
       },
     },
@@ -442,8 +442,58 @@ function testToolExposureMetaReplay() {
   const completedEvent = grouped[3]?.find((event) => event.type === 'TURN_COMPLETED')
 
   assert(planEvent !== undefined, 'plan_started timeline event restored')
-  assertEqual(planEvent?.meta?.tool_package as string | undefined, 'writing', 'plan_started tool_package preserved')
-  assertEqual(completedEvent?.meta?.route_reason as string | undefined, 'writing_signal', 'turn_completed route_reason preserved')
+  assertEqual(planEvent?.meta?.capability_preset as string | undefined, 'headless_writer', 'plan_started capability preset preserved')
+  assertEqual(completedEvent?.meta?.exposure_reason as string | undefined, 'capability_policy.headless_writer', 'turn_completed exposure reason preserved')
+}
+
+function testWorkerIdentityEventReplay() {
+  console.log('test: worker identity timeline meta is preserved on replay timeline')
+
+  const events: AgentSessionEvent[] = [
+    {
+      schema_version: 1,
+      type: 'timeline_event',
+      session_id: 'test_worker_identity',
+      ts: 1000,
+      event_seq: 1,
+      turn: 2,
+      payload: {
+        timeline_type: 'WORKER_STARTED',
+        call_id: 'worker_1',
+        worker_type: 'context',
+        worker_session_id: 'worker_1',
+        scope_ref: 'chapter:manuscripts/vol_1/ch_01.json',
+        target_ref: 'chapter:manuscripts/vol_1/ch_01.json',
+        summary: 'context',
+      },
+    },
+    {
+      schema_version: 1,
+      type: 'timeline_event',
+      session_id: 'test_worker_identity',
+      ts: 1100,
+      event_seq: 2,
+      turn: 2,
+      payload: {
+        timeline_type: 'WORKER_COMPLETED',
+        call_id: 'worker_1',
+        worker_type: 'context',
+        worker_session_id: 'worker_1',
+        scope_ref: 'chapter:manuscripts/vol_1/ch_01.json',
+        summary: 'context',
+      },
+    },
+  ]
+
+  const grouped = buildTimelineEventsByTurn(events)
+  const started = grouped[2]?.find((event) => event.type === 'WORKER_STARTED')
+  const completed = grouped[2]?.find((event) => event.type === 'WORKER_COMPLETED')
+
+  assert(started !== undefined, 'WORKER_STARTED restored')
+  assertEqual(started?.callId, 'worker_1', 'WORKER_STARTED callId restored')
+  assertEqual(started?.meta?.worker_type as string | undefined, 'context', 'WORKER_STARTED meta.worker_type preserved')
+  assertEqual(started?.meta?.scope_ref as string | undefined, 'chapter:manuscripts/vol_1/ch_01.json', 'WORKER_STARTED meta.scope_ref preserved')
+  assert(completed !== undefined, 'WORKER_COMPLETED restored')
 }
 
 // ── Test: sort ordering ─────────────────────────────────────────
@@ -848,6 +898,7 @@ function runAll() {
   testTodoStateReplayIgnoresInvalidToolResultTodoState()
   testCompactionFallbackReplay()
   testToolExposureMetaReplay()
+  testWorkerIdentityEventReplay()
   testSortOrdering()
   testReplayFallsBackToFileOrderWhenEventSeqRegresses()
   testMetaOverrides()

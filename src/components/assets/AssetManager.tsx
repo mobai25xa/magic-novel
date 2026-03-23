@@ -2,13 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { useProjectStore } from '@/stores/project-store'
 import {
-  createMagicAssetFile,
-  createMagicAssetFolder,
-  getMagicAssetsTree,
-  readMagicAsset,
-  saveMagicAsset,
+  createAssetFile,
+  createAssetFolder,
+  getAssetsTree,
+  readAssetFile,
+  saveAssetFile,
   type AssetKind,
-  type MagicAssetNode,
+  type AssetLibraryNode,
 } from '@/features/assets-management'
 import { useToast } from '@/magic-ui/components'
 
@@ -20,7 +20,7 @@ import {
 } from './asset-tree-utils'
 import { AssetManagerView, type AssetExplorerEntry } from './asset-manager-view'
 
-type DirNode = Extract<MagicAssetNode, { kind: 'dir' }>
+type DirNode = Extract<AssetLibraryNode, { kind: 'dir' }>
 
 const DEFAULT_KIND: AssetKind = 'worldview'
 
@@ -36,16 +36,16 @@ function normalizePath(value: string) {
   return String(value || '').replace(/\\/g, '/').replace(/\/+/g, '/')
 }
 
-function isDirNode(node: MagicAssetNode): node is DirNode {
+function isDirNode(node: AssetLibraryNode): node is DirNode {
   return node.kind === 'dir'
 }
 
-function getNodeTitle(node: MagicAssetNode) {
+function getNodeTitle(node: AssetLibraryNode) {
   if (node.kind === 'dir') return node.title || node.name
   return node.title || node.name
 }
 
-function findKindRoot(nodes: MagicAssetNode[], kind: AssetKind): DirNode | null {
+function findKindRoot(nodes: AssetLibraryNode[], kind: AssetKind): DirNode | null {
   const hit = nodes.find((node) => isDirNode(node) && normalizePath(node.path) === kind)
   return hit && isDirNode(hit) ? hit : null
 }
@@ -86,7 +86,7 @@ function parentPath(path: string) {
   return parts.join('/')
 }
 
-function mapChildrenToExplorerEntries(children: MagicAssetNode[]): AssetExplorerEntry[] {
+function mapChildrenToExplorerEntries(children: AssetLibraryNode[]): AssetExplorerEntry[] {
   const entries = children.map((node) => ({
     kind: node.kind,
     path: normalizePath(node.path),
@@ -135,7 +135,7 @@ export function AssetManager() {
 
       setIsLoadingTree(true)
       try {
-        const nodes = await getMagicAssetsTree(projectPath)
+        const nodes = await getAssetsTree(projectPath)
         const root = findKindRoot(nodes, kind)
         setKindRoot(root)
 
@@ -179,7 +179,7 @@ export function AssetManager() {
 
       setIsLoadingAsset(true)
       try {
-        const loaded = (await readMagicAsset(projectPath, selectedAssetPath)) as AssetTree
+        const loaded = (await readAssetFile(projectPath, selectedAssetPath)) as AssetTree
         setAsset(loaded)
 
         const firstNode = loaded.root?.children?.[0] || null
@@ -264,7 +264,7 @@ export function AssetManager() {
 
     try {
       const nextAsset = updateAssetNodeContent(asset, selectedNodeId, nodeContentDraft)
-      await saveMagicAsset(projectPath, selectedAssetPath, nextAsset)
+      await saveAssetFile(projectPath, selectedAssetPath, nextAsset)
       setAsset(nextAsset)
       addToast({ title: '保存成功', description: '知识库已更新', variant: 'success' })
     } catch (error) {
@@ -305,10 +305,10 @@ export function AssetManager() {
 
     try {
       if (createDraftKind === 'folder') {
-        await createMagicAssetFolder(projectPath, explorerPath, name)
+        await createAssetFolder(projectPath, explorerPath, name)
         addToast({ title: '创建成功', description: `已新建文件夹：${name}`, variant: 'success' })
       } else {
-        const path = await createMagicAssetFile(projectPath, explorerPath, kind, name)
+        const path = await createAssetFile(projectPath, explorerPath, kind, name)
         const normalized = normalizePath(path)
         setSelectedAssetPath(normalized)
         addToast({ title: '创建成功', description: `已新建${ASSET_KIND_LABELS[kind]}：${name}`, variant: 'success' })

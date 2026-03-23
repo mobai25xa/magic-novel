@@ -3,6 +3,7 @@ import type { Editor } from '@tiptap/react'
 import debounce from 'lodash.debounce'
 
 import { saveChapterContent } from '@/features/content-editing'
+import { saveKnowledgeDocumentContent } from '@/features/content-editing/save-knowledge-document-content'
 import { saveKnowledgeAssetContent } from '@/features/content-editing/save-knowledge-asset-content'
 import { eventBus, EVENTS } from '@/lib/events'
 import { useEditorStore } from '@/stores/editor-store'
@@ -13,7 +14,7 @@ type UseAutoSaveSaveInput = {
   editor: Editor | null
   projectPath: string | null
   activeDocPath: string | null
-  currentDocKind: 'chapter' | 'asset' | null
+  currentDocKind: 'chapter' | 'asset' | 'knowledge' | null
   isDirty: boolean
   setIsDirty: (value: boolean) => void
   setIsSaving: (value: boolean) => void
@@ -50,18 +51,29 @@ function usePerformSave({
             projectPath,
             assetRelativePath: activeDocPath,
           })
-        : await saveChapterContent(editor, projectPath, activeDocPath)
+        : currentDocKind === 'knowledge'
+          ? await saveKnowledgeDocumentContent({
+              editor,
+              projectPath,
+              knowledgePath: activeDocPath,
+            })
+          : await saveChapterContent(editor, projectPath, activeDocPath)
 
       setIsDirty(false)
       const now = Date.now()
       lastSaveTime.current = now
       useEditorStore.getState().setLastSavedAt(now)
 
-      setTree(newTree)
-      eventBus.emit(EVENTS.CHAPTER_SAVED, {
-        projectPath,
-        chapterPath: activeDocPath,
-      })
+      if (newTree) {
+        setTree(newTree)
+      }
+
+      if (currentDocKind === 'chapter') {
+        eventBus.emit(EVENTS.CHAPTER_SAVED, {
+          projectPath,
+          chapterPath: activeDocPath,
+        })
+      }
     } catch (error) {
       console.error('Auto-save failed:', error)
     } finally {

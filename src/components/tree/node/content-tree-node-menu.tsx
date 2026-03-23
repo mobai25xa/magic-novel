@@ -27,7 +27,7 @@ export function TreeNodeMenu(input: Input) {
       }}
       onOpenCreateFile={() => {
         input.controller.setContextMenu(null)
-        input.controller.setCreateDialog({ open: true, kind: 'file' })
+        input.controller.setCreateFileTitleDialogOpen(true)
       }}
       onOpenImportManuscript={() => {
         input.controller.setContextMenu(null)

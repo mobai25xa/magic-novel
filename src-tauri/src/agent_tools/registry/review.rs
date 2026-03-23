@@ -1,7 +1,9 @@
 use serde_json::json;
 
 use crate::agent_tools::contracts::{ConfirmationPolicy, IdempotencyPolicy, RiskLevel, ToolDomain};
-use crate::agent_tools::definition::{ToolDefinition, ToolManifest, ToolSchemaContext};
+use crate::agent_tools::definition::{
+    ToolCapability, ToolDefinition, ToolManifest, ToolSchemaContext, ToolVisibility,
+};
 
 pub(super) static REVIEW_CHECK_TOOL: ReviewCheckTool = ReviewCheckTool;
 
@@ -22,6 +24,8 @@ impl ToolDefinition for ReviewCheckTool {
             idempotency: IdempotencyPolicy::Required,
             parallel_safe: true,
             timeout_ms: 30_000,
+            capabilities: &[ToolCapability::Review],
+            visibility: ToolVisibility::everywhere(),
         }
     }
 

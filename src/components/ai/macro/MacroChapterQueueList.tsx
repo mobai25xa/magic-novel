@@ -75,7 +75,7 @@ export function MacroChapterQueueList({
                 <MacroChapterRunCard chapter={ch} />
                 {ch.status === 'blocked' ? (
                   <MacroBlockedBanner
-                    lastError={ch.last_handoff_summary}
+                    lastError={ch.last_result_summary}
                     onRetry={onRetry ? () => onRetry(ch.chapter_ref) : undefined}
                     onSkip={onSkip ? () => onSkip(ch.chapter_ref) : undefined}
                     onFix={onFix ? () => onFix(ch.chapter_ref) : undefined}

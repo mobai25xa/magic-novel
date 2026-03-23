@@ -20,6 +20,10 @@ type Input = {
   onDelete: () => Promise<void>
 }
 
+function isKnowledgeNode(node: TreeNodeProps['node']) {
+  return node.path.startsWith('knowledge:') || node.assetRelativePath?.startsWith('.magic_novel/') === true
+}
+
 function DirectoryMenu(input: Input) {
   const { translations } = useTranslation()
   const tr = translations.tree
@@ -87,7 +91,7 @@ export function TreeNodeContextMenu(input: Input) {
         </>
       ) : null}
 
-      {input.node.kind !== 'knowledge' ? (
+      {input.node.kind !== 'knowledge' && !isKnowledgeNode(input.node) ? (
         <ContextMenuItem onClick={input.onOpenRename}>
           <Edit className="mr-2 h-4 w-4" />
           {tr.rename}

@@ -1,8 +1,7 @@
 import {
-  createMagicAssetFileNode,
-  createMagicAssetFolderNode,
+  createKnowledgeDocumentNode,
+  createKnowledgeFolderNode,
   getProjectTree,
-  type AssetKind,
 } from '@/features/content-tree-management'
 import { convertFileNode } from './left-panel-types'
 
@@ -35,21 +34,10 @@ type KnowledgeDialog =
     }
   | {
       open: true
-      kind: 'file-type'
-      title: string
-      label: string
-      targetDir: string
-      options: { value: string; label: string }[]
-      defaultValue: string
-      onConfirm: (assetKind: AssetKind) => void
-    }
-  | {
-      open: true
-      kind: 'file-title'
+      kind: 'file'
       title: string
       placeholder: string
       targetDir: string
-      assetKind: AssetKind
       onConfirm: (name: string) => Promise<void>
     }
   | null
@@ -59,19 +47,11 @@ type Translations = {
     newFolderDialogTitle: string
     newFolderPlaceholder: string
     newFileDialogTitle: string
-    newFileTypeLabel: string
     newFileDialogPlaceholder: string
     createSuccess: string
     createFolderSuccess: string
     createFileSuccess: string
     createFailed: string
-  }
-  leftPanel: {
-    assetWorldview: string
-    assetOutline: string
-    assetCharacter: string
-    assetLore: string
-    assetPrompt: string
   }
 }
 
@@ -131,7 +111,7 @@ export function createHandleCreateKnowledgeFolder(input: {
       onConfirm: async (name: string) => {
         if (!input.projectPath) return
         try {
-          await createMagicAssetFolderNode(input.projectPath, targetDir, name)
+          await createKnowledgeFolderNode(input.projectPath, targetDir, name)
           await refreshProjectTree(input.projectPath, input.setProjectTree)
           input.addToast({
             title: input.translations.tree.createSuccess,
@@ -169,48 +149,30 @@ export function createHandleCreateKnowledgeFile(input: {
 
     input.setKnowledgeDialog({
       open: true,
-      kind: 'file-type',
+      kind: 'file',
       title: input.translations.tree.newFileDialogTitle,
-      label: input.translations.tree.newFileTypeLabel,
+      placeholder: input.translations.tree.newFileDialogPlaceholder,
       targetDir,
-      options: [
-        { value: 'worldview', label: input.translations.leftPanel.assetWorldview },
-        { value: 'outline', label: input.translations.leftPanel.assetOutline },
-        { value: 'character', label: input.translations.leftPanel.assetCharacter },
-        { value: 'lore', label: input.translations.leftPanel.assetLore },
-        { value: 'prompt', label: input.translations.leftPanel.assetPrompt },
-      ],
-      defaultValue: 'worldview',
-      onConfirm: (assetKind) => {
-        input.setKnowledgeDialog({
-          open: true,
-          kind: 'file-title',
-          title: input.translations.tree.newFileDialogTitle,
-          placeholder: input.translations.tree.newFileDialogPlaceholder,
-          targetDir,
-          assetKind,
-          onConfirm: async (name: string) => {
-            if (!input.projectPath) return
-            try {
-              const relativePath = await createMagicAssetFileNode(input.projectPath, targetDir, assetKind, name)
-              await refreshProjectTree(input.projectPath, input.setProjectTree)
-              await input.onCreated?.(relativePath, name)
-              input.addToast({
-                title: input.translations.tree.createSuccess,
-                description: input.translations.tree.createFileSuccess,
-                variant: 'success',
-              })
-              input.setKnowledgeDialog(null)
-            } catch (error) {
-              console.error('Failed to create knowledge file:', error)
-              input.addToast({
-                title: input.translations.tree.createFailed,
-                description: String(error),
-                variant: 'destructive',
-              })
-            }
-          },
-        })
+      onConfirm: async (name: string) => {
+        if (!input.projectPath) return
+        try {
+          const relativePath = await createKnowledgeDocumentNode(input.projectPath, targetDir, name)
+          await refreshProjectTree(input.projectPath, input.setProjectTree)
+          await input.onCreated?.(relativePath, name)
+          input.addToast({
+            title: input.translations.tree.createSuccess,
+            description: input.translations.tree.createFileSuccess,
+            variant: 'success',
+          })
+          input.setKnowledgeDialog(null)
+        } catch (error) {
+          console.error('Failed to create knowledge file:', error)
+          input.addToast({
+            title: input.translations.tree.createFailed,
+            description: String(error),
+            variant: 'destructive',
+          })
+        }
       },
     })
   }

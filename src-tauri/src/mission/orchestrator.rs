@@ -1,6 +1,6 @@
 //! Mission system - Orchestrator state machine and feature scheduling
 //!
-//! Core business logic: state transitions, feature dispatch, handoff recording.
+//! Core business logic: state transitions, feature dispatch, and task-result recording.
 //! Does NOT contain process management (see process_manager.rs).
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -9,7 +9,13 @@ use std::path::Path;
 use crate::models::AppError;
 
 use super::artifacts;
+use super::blockers::WorkflowBlockersDoc;
+use super::delegate_types::DelegateResult;
+use super::result_types::AgentTaskResult;
 use super::types::*;
+use super::workflow_types::{
+    MissionWorkflowKind, SummaryJobPolicy, WorkflowCreationReason, WorkflowDoc, WorkflowStatus,
+};
 
 /// The orchestrator manages mission lifecycle and feature scheduling.
 pub struct Orchestrator<'a> {
@@ -37,12 +43,23 @@ impl<'a> Orchestrator<'a> {
         title: &str,
         mission_text: &str,
         features: Vec<Feature>,
+        workflow_kind: MissionWorkflowKind,
+        creation_reason: WorkflowCreationReason,
+        summary_job_policy: SummaryJobPolicy,
     ) -> Result<String, AppError> {
         let mission_id = format!("mis_{}", uuid::Uuid::new_v4());
         let cwd = project_path.to_string_lossy().to_string();
 
         let features_doc = FeaturesDoc::new(mission_id.clone(), title.to_string(), features);
         let state_doc = StateDoc::new(mission_id.clone(), cwd);
+        let workflow_doc = WorkflowDoc::new(
+            mission_id.clone(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+            WorkflowStatus::Draft,
+        );
+        let blockers_doc = WorkflowBlockersDoc::empty(mission_id.clone());
 
         artifacts::init_mission_dir(
             project_path,
@@ -50,6 +67,8 @@ impl<'a> Orchestrator<'a> {
             mission_text,
             &features_doc,
             &state_doc,
+            &workflow_doc,
+            &blockers_doc,
         )?;
 
         tracing::info!(
@@ -182,21 +201,29 @@ impl<'a> Orchestrator<'a> {
         Ok(state)
     }
 
-    /// Record a handoff and advance mission state.
-    pub fn complete_feature(&self, handoff: &HandoffEntry) -> Result<MissionState, AppError> {
-        artifacts::append_handoff(self.project_path, &self.mission_id, handoff)?;
+    /// Record a structured task result, persist a derived handoff, and advance mission state.
+    pub fn complete_feature_result(
+        &self,
+        feature_id: &str,
+        worker_id: &str,
+        result: &AgentTaskResult,
+    ) -> Result<MissionState, AppError> {
+        let handoff = result.to_handoff_entry(feature_id, worker_id);
+        artifacts::append_task_result(self.project_path, &self.mission_id, result)?;
+        artifacts::append_handoff(self.project_path, &self.mission_id, &handoff)?;
 
-        let new_feature_status = if handoff.ok {
-            FeatureStatus::Completed
-        } else {
-            FeatureStatus::Failed
+        let new_feature_status = match result.status {
+            super::result_types::TaskResultStatus::Completed => FeatureStatus::Completed,
+            super::result_types::TaskResultStatus::Failed => FeatureStatus::Failed,
+            super::result_types::TaskResultStatus::Cancelled
+            | super::result_types::TaskResultStatus::Blocked => FeatureStatus::Pending,
         };
-        self.update_feature_status(&handoff.feature_id, new_feature_status)?;
+        self.update_feature_status(feature_id, new_feature_status)?;
 
         let mut state = artifacts::read_state(self.project_path, &self.mission_id)?;
-        state.assignments.remove(&handoff.worker_id);
+        state.assignments.remove(worker_id);
 
-        if state.current_worker_id.as_deref() == Some(handoff.worker_id.as_str()) {
+        if state.current_worker_id.as_deref() == Some(worker_id) {
             if let Some((worker_id, assignment)) = state
                 .assignments
                 .iter()
@@ -219,7 +246,18 @@ impl<'a> Orchestrator<'a> {
             .any(|f| f.status == FeatureStatus::Pending);
         let has_running = !state.assignments.is_empty();
 
-        state.state = if has_pending {
+        let has_failed = features_doc
+            .features
+            .iter()
+            .any(|f| f.status == FeatureStatus::Failed);
+
+        state.state = if matches!(
+            result.status,
+            super::result_types::TaskResultStatus::Cancelled
+                | super::result_types::TaskResultStatus::Blocked
+        ) {
+            MissionState::Paused
+        } else if has_pending {
             if has_running {
                 MissionState::Running
             } else {
@@ -227,6 +265,8 @@ impl<'a> Orchestrator<'a> {
             }
         } else if has_running {
             MissionState::Running
+        } else if has_failed {
+            MissionState::Failed
         } else {
             MissionState::Completed
         };
@@ -236,14 +276,26 @@ impl<'a> Orchestrator<'a> {
         tracing::info!(
             target: "mission",
             mission_id = %self.mission_id,
-            feature_id = %handoff.feature_id,
-            worker_id = %handoff.worker_id,
-            ok = handoff.ok,
+            feature_id = %feature_id,
+            worker_id = %worker_id,
+            ok = result.is_ok(),
             next_state = ?state.state,
             "feature completed"
         );
 
         Ok(state.state)
+    }
+
+    /// Record a structured delegate result while keeping the legacy task-result
+    /// artifact pipeline intact for compatibility with existing mission storage.
+    pub fn complete_feature_delegate_result(
+        &self,
+        feature_id: &str,
+        worker_id: &str,
+        result: &DelegateResult,
+    ) -> Result<MissionState, AppError> {
+        let task_result = result.clone().into_agent_task_result();
+        self.complete_feature_result(feature_id, worker_id, &task_result)
     }
 
     /// Check if all features are completed or failed/cancelled and no worker assignment remains.
@@ -273,24 +325,86 @@ impl<'a> Orchestrator<'a> {
 
 /// Legal state transitions:
 ///   awaiting_input    → initializing
-///   initializing      → running | paused
-///   running           → paused | orchestrator_turn | completed
-///   paused            → running | completed
-///   orchestrator_turn → running | completed | paused
+///   initializing      → running | paused | blocked
+///   running           → paused | orchestrator_turn | completed | blocked
+///   paused            → running | completed | blocked
+///   orchestrator_turn → running | completed | paused | blocked
 fn validate_transition(from: &MissionState, to: &MissionState) -> Result<(), AppError> {
     let valid = matches!(
         (from, to),
         (MissionState::AwaitingInput, MissionState::Initializing)
             | (MissionState::Initializing, MissionState::Running)
             | (MissionState::Initializing, MissionState::Paused)
+            | (MissionState::Initializing, MissionState::Blocked)
+            | (MissionState::Initializing, MissionState::WaitingUser)
+            | (MissionState::Initializing, MissionState::WaitingReview)
+            | (
+                MissionState::Initializing,
+                MissionState::WaitingKnowledgeDecision
+            )
+            | (MissionState::Initializing, MissionState::Failed)
+            | (MissionState::Initializing, MissionState::Cancelled)
             | (MissionState::Running, MissionState::Paused)
             | (MissionState::Running, MissionState::OrchestratorTurn)
             | (MissionState::Running, MissionState::Completed)
+            | (MissionState::Running, MissionState::Blocked)
+            | (MissionState::Running, MissionState::WaitingUser)
+            | (MissionState::Running, MissionState::WaitingReview)
+            | (
+                MissionState::Running,
+                MissionState::WaitingKnowledgeDecision
+            )
+            | (MissionState::Running, MissionState::Failed)
+            | (MissionState::Running, MissionState::Cancelled)
             | (MissionState::Paused, MissionState::Running)
             | (MissionState::Paused, MissionState::Completed)
+            | (MissionState::Paused, MissionState::Blocked)
+            | (MissionState::Paused, MissionState::WaitingUser)
+            | (MissionState::Paused, MissionState::WaitingReview)
+            | (MissionState::Paused, MissionState::WaitingKnowledgeDecision)
+            | (MissionState::Paused, MissionState::Failed)
+            | (MissionState::Paused, MissionState::Cancelled)
             | (MissionState::OrchestratorTurn, MissionState::Running)
             | (MissionState::OrchestratorTurn, MissionState::Completed)
             | (MissionState::OrchestratorTurn, MissionState::Paused)
+            | (MissionState::OrchestratorTurn, MissionState::Blocked)
+            | (MissionState::OrchestratorTurn, MissionState::WaitingUser)
+            | (MissionState::OrchestratorTurn, MissionState::WaitingReview)
+            | (
+                MissionState::OrchestratorTurn,
+                MissionState::WaitingKnowledgeDecision
+            )
+            | (MissionState::OrchestratorTurn, MissionState::Failed)
+            | (MissionState::OrchestratorTurn, MissionState::Cancelled)
+            | (MissionState::Blocked, MissionState::Paused)
+            | (MissionState::Blocked, MissionState::Running)
+            | (MissionState::Blocked, MissionState::Completed)
+            | (MissionState::Blocked, MissionState::Failed)
+            | (MissionState::Blocked, MissionState::Cancelled)
+            | (MissionState::WaitingUser, MissionState::Paused)
+            | (MissionState::WaitingUser, MissionState::Running)
+            | (MissionState::WaitingUser, MissionState::Completed)
+            | (MissionState::WaitingUser, MissionState::Failed)
+            | (MissionState::WaitingUser, MissionState::Cancelled)
+            | (MissionState::WaitingReview, MissionState::Paused)
+            | (MissionState::WaitingReview, MissionState::Running)
+            | (MissionState::WaitingReview, MissionState::Completed)
+            | (MissionState::WaitingReview, MissionState::Failed)
+            | (MissionState::WaitingReview, MissionState::Cancelled)
+            | (MissionState::WaitingKnowledgeDecision, MissionState::Paused)
+            | (
+                MissionState::WaitingKnowledgeDecision,
+                MissionState::Running
+            )
+            | (
+                MissionState::WaitingKnowledgeDecision,
+                MissionState::Completed
+            )
+            | (MissionState::WaitingKnowledgeDecision, MissionState::Failed)
+            | (
+                MissionState::WaitingKnowledgeDecision,
+                MissionState::Cancelled
+            )
     );
 
     if !valid {
@@ -463,8 +577,24 @@ fn schedule_feature_indices(features: &[Feature]) -> Result<Vec<usize>, AppError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mission::delegate_types::DelegateResult;
+    use crate::mission::result_types::{
+        AgentTaskResult, OpenIssue, TaskResultStatus, TaskStopReason,
+    };
     use std::fs;
     use std::path::PathBuf;
+
+    fn default_workflow_args() -> (
+        MissionWorkflowKind,
+        WorkflowCreationReason,
+        SummaryJobPolicy,
+    ) {
+        (
+            MissionWorkflowKind::AdHoc,
+            WorkflowCreationReason::ExplicitMissionRequest,
+            SummaryJobPolicy::ParentSessionSummary,
+        )
+    }
 
     fn temp_project_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("magic_orch_{}", uuid::Uuid::new_v4()));
@@ -499,11 +629,51 @@ mod tests {
         ]
     }
 
+    fn build_result(
+        feature_id: &str,
+        worker_id: &str,
+        status: TaskResultStatus,
+        summary: &str,
+        issues: Vec<&str>,
+    ) -> AgentTaskResult {
+        AgentTaskResult {
+            task_id: feature_id.to_string(),
+            actor_id: worker_id.to_string(),
+            goal: format!("feature {feature_id}"),
+            status,
+            stop_reason: match status {
+                TaskResultStatus::Completed => TaskStopReason::Success,
+                TaskResultStatus::Failed => TaskStopReason::Error,
+                TaskResultStatus::Cancelled => TaskStopReason::Cancelled,
+                TaskResultStatus::Blocked => TaskStopReason::Blocked,
+            },
+            result_summary: summary.to_string(),
+            open_issues: issues
+                .into_iter()
+                .map(|issue| OpenIssue {
+                    code: None,
+                    summary: issue.to_string(),
+                    blocking: true,
+                })
+                .collect(),
+            ..AgentTaskResult::default()
+        }
+    }
+
     #[test]
     fn test_create_mission() {
         let project = temp_project_dir();
-        let mission_id =
-            Orchestrator::create_mission(&project, "Test", "# Mission", sample_features()).unwrap();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "Test",
+            "# Mission",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
         assert!(mission_id.starts_with("mis_"));
 
         // Verify files
@@ -512,6 +682,8 @@ mod tests {
 
         let state = artifacts::read_state(&project, &mission_id).unwrap();
         assert_eq!(state.state, MissionState::AwaitingInput);
+        let workflow = artifacts::read_workflow(&project, &mission_id).unwrap();
+        assert_eq!(workflow.status, WorkflowStatus::Draft);
 
         let _ = fs::remove_dir_all(&project);
     }
@@ -551,9 +723,17 @@ mod tests {
     #[test]
     fn test_full_lifecycle() {
         let project = temp_project_dir();
-        let mission_id =
-            Orchestrator::create_mission(&project, "Life", "# Lifecycle", sample_features())
-                .unwrap();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "Life",
+            "# Lifecycle",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
         let orch = Orchestrator::new(&project, mission_id.clone());
 
         // awaiting_input → initializing
@@ -571,36 +751,45 @@ mod tests {
         assert_eq!(state.current_worker_id, Some("wk_001".to_string()));
 
         // Complete feature successfully → should go to OrchestratorTurn (f2 pending)
-        let handoff = HandoffEntry {
-            feature_id: "f1".to_string(),
-            worker_id: "wk_001".to_string(),
-            ok: true,
-            summary: "done".to_string(),
-            commands_run: Vec::new(),
-            artifacts: Vec::new(),
-            issues: Vec::new(),
-        };
-        let next_state = orch.complete_feature(&handoff).unwrap();
+        let next_state = orch
+            .complete_feature_result(
+                "f1",
+                "wk_001",
+                &build_result(
+                    "f1",
+                    "wk_001",
+                    TaskResultStatus::Completed,
+                    "done",
+                    Vec::new(),
+                ),
+            )
+            .unwrap();
         assert_eq!(next_state, MissionState::OrchestratorTurn);
         assert!(!orch.is_finished().unwrap());
 
         // Start and complete f2
         orch.transition(MissionState::Running).unwrap();
         orch.start_feature("f2", "wk_002", 0).unwrap();
-        let handoff2 = HandoffEntry {
-            feature_id: "f2".to_string(),
-            worker_id: "wk_002".to_string(),
-            ok: true,
-            summary: "done".to_string(),
-            commands_run: Vec::new(),
-            artifacts: Vec::new(),
-            issues: Vec::new(),
-        };
-        let final_state = orch.complete_feature(&handoff2).unwrap();
+        let final_state = orch
+            .complete_feature_result(
+                "f2",
+                "wk_002",
+                &build_result(
+                    "f2",
+                    "wk_002",
+                    TaskResultStatus::Completed,
+                    "done",
+                    Vec::new(),
+                ),
+            )
+            .unwrap();
         assert_eq!(final_state, MissionState::Completed);
         assert!(orch.is_finished().unwrap());
 
         // Verify handoffs
+        let task_results = artifacts::read_task_results(&project, &mission_id).unwrap();
+        assert_eq!(task_results.len(), 2);
+
         let handoffs = artifacts::read_handoffs(&project, &mission_id).unwrap();
         assert_eq!(handoffs.len(), 2);
 
@@ -610,8 +799,17 @@ mod tests {
     #[test]
     fn test_feature_not_found() {
         let project = temp_project_dir();
-        let mission_id =
-            Orchestrator::create_mission(&project, "T", "t", sample_features()).unwrap();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "T",
+            "t",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
         let orch = Orchestrator::new(&project, mission_id);
 
         let result = orch.update_feature_status("f_nonexistent", FeatureStatus::Completed);
@@ -623,23 +821,35 @@ mod tests {
     #[test]
     fn test_failed_feature_advances() {
         let project = temp_project_dir();
-        let mission_id =
-            Orchestrator::create_mission(&project, "T", "t", sample_features()).unwrap();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "T",
+            "t",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
         let orch = Orchestrator::new(&project, mission_id.clone());
 
         orch.transition(MissionState::Initializing).unwrap();
         orch.start_feature("f1", "wk_1", 0).unwrap();
 
-        let handoff = HandoffEntry {
-            feature_id: "f1".to_string(),
-            worker_id: "wk_1".to_string(),
-            ok: false,
-            summary: "crashed".to_string(),
-            commands_run: Vec::new(),
-            artifacts: Vec::new(),
-            issues: vec!["timeout".to_string()],
-        };
-        let next = orch.complete_feature(&handoff).unwrap();
+        let next = orch
+            .complete_feature_result(
+                "f1",
+                "wk_1",
+                &build_result(
+                    "f1",
+                    "wk_1",
+                    TaskResultStatus::Failed,
+                    "crashed",
+                    vec!["timeout"],
+                ),
+            )
+            .unwrap();
         assert_eq!(next, MissionState::OrchestratorTurn);
 
         // f1 should be Failed
@@ -652,6 +862,148 @@ mod tests {
 
         let ready = orch.ready_pending_features(5).unwrap();
         assert_eq!(ready.len(), 0);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn test_blocked_feature_pauses_and_keeps_feature_pending() {
+        let project = temp_project_dir();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "Blocked",
+            "blocked flow",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
+        let orch = Orchestrator::new(&project, mission_id.clone());
+
+        orch.transition(MissionState::Initializing).unwrap();
+        orch.start_feature("f1", "wk_1", 0).unwrap();
+
+        let next = orch
+            .complete_feature_result(
+                "f1",
+                "wk_1",
+                &build_result(
+                    "f1",
+                    "wk_1",
+                    TaskResultStatus::Blocked,
+                    "waiting for user clarification",
+                    vec!["clarification required"],
+                ),
+            )
+            .unwrap();
+        assert_eq!(next, MissionState::Paused);
+
+        let state = orch.get_state().unwrap();
+        assert_eq!(state.state, MissionState::Paused);
+        assert!(state.assignments.is_empty());
+        assert!(state.current_worker_id.is_none());
+
+        let features = orch.get_features().unwrap();
+        assert_eq!(features.features[0].status, FeatureStatus::Pending);
+
+        let task_results = artifacts::read_task_results(&project, &mission_id).unwrap();
+        assert_eq!(task_results.len(), 1);
+        assert_eq!(task_results[0].status, TaskResultStatus::Blocked);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn test_cancelled_feature_pauses_and_keeps_feature_pending() {
+        let project = temp_project_dir();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "Cancelled",
+            "cancelled flow",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
+        let orch = Orchestrator::new(&project, mission_id.clone());
+
+        orch.transition(MissionState::Initializing).unwrap();
+        orch.start_feature("f1", "wk_1", 0).unwrap();
+
+        let next = orch
+            .complete_feature_result(
+                "f1",
+                "wk_1",
+                &build_result(
+                    "f1",
+                    "wk_1",
+                    TaskResultStatus::Cancelled,
+                    "delegate cancelled",
+                    vec!["delegate cancelled"],
+                ),
+            )
+            .unwrap();
+        assert_eq!(next, MissionState::Paused);
+
+        let state = orch.get_state().unwrap();
+        assert_eq!(state.state, MissionState::Paused);
+
+        let features = orch.get_features().unwrap();
+        assert_eq!(features.features[0].status, FeatureStatus::Pending);
+
+        let task_results = artifacts::read_task_results(&project, &mission_id).unwrap();
+        assert_eq!(task_results.len(), 1);
+        assert_eq!(task_results[0].status, TaskResultStatus::Cancelled);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn test_delegate_result_completion_uses_structured_result() {
+        let project = temp_project_dir();
+        let (workflow_kind, creation_reason, summary_job_policy) = default_workflow_args();
+        let mission_id = Orchestrator::create_mission(
+            &project,
+            "Delegate",
+            "delegate flow",
+            sample_features(),
+            workflow_kind,
+            creation_reason,
+            summary_job_policy,
+        )
+        .unwrap();
+        let orch = Orchestrator::new(&project, mission_id.clone());
+
+        orch.transition(MissionState::Initializing).unwrap();
+        orch.start_feature("f1", "wk_delegate", 0).unwrap();
+
+        let delegate_result = DelegateResult::from_agent_task_result(
+            "del_1",
+            mission_id.clone(),
+            "f1",
+            build_result(
+                "f1",
+                "wk_delegate",
+                TaskResultStatus::Completed,
+                "delegate done",
+                Vec::new(),
+            ),
+        );
+
+        let next_state = orch
+            .complete_feature_delegate_result("f1", "wk_delegate", &delegate_result)
+            .unwrap();
+
+        assert_eq!(next_state, MissionState::OrchestratorTurn);
+
+        let task_results = artifacts::read_task_results(&project, &mission_id).unwrap();
+        assert_eq!(task_results.len(), 1);
+        assert_eq!(task_results[0].task_id, "f1");
+        assert_eq!(task_results[0].result_summary, "delegate done");
 
         let _ = fs::remove_dir_all(&project);
     }

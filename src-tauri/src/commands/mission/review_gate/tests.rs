@@ -11,6 +11,30 @@ use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+fn write_chapter_card_with_locator(
+    project: &Path,
+    mission_id: &str,
+    scope_ref: &str,
+    scope_locator: &str,
+) {
+    let card = ChapterCard {
+        schema_version: LAYER1_SCHEMA_VERSION,
+        scope_ref: scope_ref.to_string(),
+        scope_locator: Some(scope_locator.to_string()),
+        objective: "Test objective".to_string(),
+        workflow_kind: ChapterWorkflowKind::Chapter,
+        hard_constraints: Vec::new(),
+        success_criteria: Vec::new(),
+        status: ChapterCardStatus::Active,
+        updated_at: 10,
+        rules_fingerprint: None,
+        rules_sources: vec![],
+        bound_validation_profile_id: None,
+        bound_style_template_id: None,
+    };
+    artifacts::write_layer1_chapter_card(project, mission_id, &card).unwrap();
+}
+
 fn temp_project_dir() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("magic_test_{}", uuid::Uuid::new_v4()));
     fs::create_dir_all(&dir).unwrap();
@@ -38,6 +62,10 @@ fn write_chapter_card(
         success_criteria,
         status: ChapterCardStatus::Active,
         updated_at: 10,
+        rules_fingerprint: None,
+        rules_sources: vec![],
+        bound_validation_profile_id: None,
+        bound_style_template_id: None,
     };
     artifacts::write_layer1_chapter_card(project, mission_id, &card).unwrap();
 }
@@ -84,6 +112,138 @@ fn sample_issue(review_type: ReviewType, severity: ReviewSeverity, summary: &str
 }
 
 #[test]
+fn review_gate_uses_chapter_card_bound_rules_not_latest_accepted() {
+    use crate::writing_rules::types::{ChapterWordsConstraint, RuleConstraints, RuleScope};
+    use crate::writing_rules::versioning::{accept_ruleset, AcceptRuleSetParams};
+
+    let project = temp_project_dir();
+    let mission_id = "mis_rules_binding";
+    init_test_mission(&project, mission_id);
+    write_chapter_card_with_locator(&project, mission_id, "chapter:ch-0001", "vol1/ch-0001.json");
+    write_chapter(&project, "vol1/ch-0001.json");
+
+    // Global v1: 2000-3000, effective from ch-0001.
+    accept_ruleset(
+        &project,
+        AcceptRuleSetParams {
+            ruleset_id: "global_wc".to_string(),
+            scope: RuleScope::Global,
+            scope_ref: "project".to_string(),
+            constraints: RuleConstraints {
+                chapter_words: Some(ChapterWordsConstraint {
+                    min: Some(2000),
+                    max: Some(3000),
+                    target: None,
+                }),
+                style_template_id: None,
+                pov: None,
+                writing_notes: vec![],
+                forbidden: vec![],
+            },
+            validation_profile_id: None,
+            effective_from_chapter: Some("vol1/ch-0001.json".to_string()),
+            changelog: Some("v1".to_string()),
+        },
+    )
+    .unwrap();
+
+    let scope_ref = infer_review_scope_ref(&project, mission_id);
+    assert_eq!(scope_ref, "chapter:vol1/ch-0001.json");
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    // First review binds v1 and blocks (80 words < 2000 min).
+    let (report1, _meta1) = rt
+        .block_on(run_review_gate_with_p1_policies(
+            &project,
+            mission_id,
+            scope_ref.clone(),
+            vec!["vol1/ch-0001.json".to_string()],
+            ReviewGatePolicy {
+                review_types: vec![review_types::ReviewType::WordCount],
+                severity_threshold: None,
+                strict_warn: false,
+                auto_fix_on_block: true,
+                effective_rules_fingerprint: None,
+            },
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(report1.overall_status, ReviewOverallStatus::Block);
+
+    let cc1 = artifacts::read_layer1_chapter_card(&project, mission_id)
+        .unwrap()
+        .unwrap();
+    assert!(cc1
+        .rules_fingerprint
+        .as_deref()
+        .is_some_and(|fp| !fp.trim().is_empty()));
+    assert_eq!(cc1.rules_sources.len(), 1);
+    assert_eq!(cc1.rules_sources[0].version, 1);
+
+    // Global v2: 50-100 would allow the chapter to pass if latest were used.
+    accept_ruleset(
+        &project,
+        AcceptRuleSetParams {
+            ruleset_id: "global_wc".to_string(),
+            scope: RuleScope::Global,
+            scope_ref: "project".to_string(),
+            constraints: RuleConstraints {
+                chapter_words: Some(ChapterWordsConstraint {
+                    min: Some(50),
+                    max: Some(100),
+                    target: None,
+                }),
+                style_template_id: None,
+                pov: None,
+                writing_notes: vec![],
+                forbidden: vec![],
+            },
+            validation_profile_id: None,
+            effective_from_chapter: Some("vol1/ch-0002.json".to_string()),
+            changelog: Some("v2".to_string()),
+        },
+    )
+    .unwrap();
+
+    // Re-review ch-0001: must still use bound v1 (history not polluted) => still blocks.
+    let (report2, _meta2) = rt
+        .block_on(run_review_gate_with_p1_policies(
+            &project,
+            mission_id,
+            scope_ref.clone(),
+            vec!["vol1/ch-0001.json".to_string()],
+            ReviewGatePolicy {
+                review_types: vec![review_types::ReviewType::WordCount],
+                severity_threshold: None,
+                strict_warn: false,
+                auto_fix_on_block: true,
+                effective_rules_fingerprint: None,
+            },
+            None,
+            None,
+        ))
+        .unwrap();
+    assert_eq!(
+        report2.overall_status,
+        ReviewOverallStatus::Block,
+        "must use bound v1 rules; latest v2 would allow 80 words"
+    );
+
+    let cc2 = artifacts::read_layer1_chapter_card(&project, mission_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(cc2.rules_sources.len(), 1);
+    assert_eq!(
+        cc2.rules_sources[0].version, 1,
+        "binding must not be overwritten"
+    );
+
+    let _ = fs::remove_dir_all(&project);
+}
+
+#[test]
 fn filter_chapter_write_targets_only_keeps_valid_chapter_jsons() {
     let project = temp_project_dir();
     write_chapter(&project, "vol1/ch1.json");
@@ -93,7 +253,11 @@ fn filter_chapter_write_targets_only_keeps_valid_chapter_jsons() {
         "x",
     )
     .unwrap();
-    fs::write(project.join("manuscripts").join("vol1").join("broken.json"), "{}").unwrap();
+    fs::write(
+        project.join("manuscripts").join("vol1").join("broken.json"),
+        "{}",
+    )
+    .unwrap();
 
     let targets = filter_chapter_write_targets(
         &project,
@@ -131,7 +295,11 @@ fn default_review_types_enable_conditional_gates_from_risk_ledger() {
             {"review_type": "foreshadow", "summary": "伏笔需要回收"}
         ]
     });
-    atomic_write_json(&artifacts::layer1_risk_ledger_path(&project, mission_id), &ledger).unwrap();
+    atomic_write_json(
+        &artifacts::layer1_risk_ledger_path(&project, mission_id),
+        &ledger,
+    )
+    .unwrap();
 
     let types = default_chapter_review_types(&project, mission_id);
 
@@ -162,7 +330,14 @@ fn run_review_gate_with_p1_policies_rebuilds_contextpack_when_missing() {
             mission_id,
             "chapter:ch_1".to_string(),
             vec!["vol1/ch1.json".to_string()],
-            vec![review_types::ReviewType::WordCount],
+            ReviewGatePolicy {
+                review_types: vec![review_types::ReviewType::WordCount],
+                severity_threshold: None,
+                strict_warn: false,
+                auto_fix_on_block: true,
+                effective_rules_fingerprint: None,
+            },
+            None,
             None,
         ))
         .unwrap();
@@ -239,8 +414,14 @@ fn upsert_risk_ledger_resolves_missing_review_items() {
 
     let items = ledger.get("items").and_then(|v| v.as_array()).unwrap();
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].get("status").and_then(|v| v.as_str()), Some("resolved"));
-    assert!(items[0].get("resolved_at").and_then(|v| v.as_i64()).is_some());
+    assert_eq!(
+        items[0].get("status").and_then(|v| v.as_str()),
+        Some("resolved")
+    );
+    assert!(items[0]
+        .get("resolved_at")
+        .and_then(|v| v.as_i64())
+        .is_some());
 
     let _ = fs::remove_dir_all(&project);
 }

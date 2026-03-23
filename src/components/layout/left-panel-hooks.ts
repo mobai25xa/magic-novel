@@ -1,11 +1,12 @@
 import { useEffect } from 'react'
 
-import { listAssets, readMagicAsset, type AssetKind } from '@/features/assets-management'
+import { listAssets, readAssetFile, type AssetKind } from '@/features/assets-management'
 import {
   assetTreeToEditorDoc,
   type KnowledgeAssetTree,
 } from '@/features/assets-management/asset-editor-document'
 import { loadChapterWordGoal } from '@/features/editor-reading'
+import { readKnowledgeDocument } from '@/features/knowledge-documents'
 
 type ToastVariant = 'default' | 'success' | 'warning' | 'destructive' | 'info'
 
@@ -87,7 +88,17 @@ export async function handleLeftPanelAssetSelect(input: {
   setCurrentAssetDoc: SetCurrentAssetDoc
 }) {
   try {
-    const asset = (await readMagicAsset(input.projectPath, input.relativePath)) as KnowledgeAssetTree
+    if (input.relativePath.startsWith('.magic_novel/')) {
+      const document = await readKnowledgeDocument(input.projectPath, input.relativePath)
+      input.setCurrentAssetDoc({
+        relativePath: input.relativePath,
+        title: document.title || null,
+        content: document.content,
+      })
+      return
+    }
+
+    const asset = (await readAssetFile(input.projectPath, input.relativePath)) as KnowledgeAssetTree
     const title =
       asset && typeof asset === 'object' && 'title' in asset && typeof asset.title === 'string'
         ? asset.title
@@ -103,4 +114,3 @@ export async function handleLeftPanelAssetSelect(input: {
     console.error('Failed to open asset:', error)
   }
 }
-

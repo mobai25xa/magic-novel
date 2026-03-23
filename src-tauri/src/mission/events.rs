@@ -7,10 +7,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
 
+use crate::knowledge::types::{KnowledgeAcceptPolicy, KnowledgeDelta, KnowledgeProposalBundle};
 use crate::models::AppError;
-use crate::knowledge::types::{
-    KnowledgeAcceptPolicy, KnowledgeDelta, KnowledgeProposalBundle,
-};
 use crate::review::types::{ReviewDecisionRequest, ReviewReport};
 
 pub const MISSION_EVENT_CHANNEL: &str = "magic:mission_event";
@@ -336,10 +334,7 @@ impl MissionEventEmitter {
 
     pub fn knowledge_applied(&self, delta: &KnowledgeDelta) -> Result<(), AppError> {
         use mission_event_types::MISSION_KNOWLEDGE_APPLIED;
-        let token = delta
-            .rollback
-            .as_ref()
-            .and_then(|rb| rb.token.clone());
+        let token = delta.rollback.as_ref().and_then(|rb| rb.token.clone());
 
         self.emit(
             MISSION_KNOWLEDGE_APPLIED,

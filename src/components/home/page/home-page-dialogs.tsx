@@ -41,19 +41,10 @@ type DialogSetters = Pick<
   | 'setExportDialogOpen'
 >
 
-type CreateProjectDialogInput = {
-  name: string
-  author: string
-  tags: string
-  coverImage?: string
-  projectType: string[]
-}
-
 type Input = {
   translations: Translations
   state: DialogState
   setters: DialogSetters
-  onCreateProject: (data: CreateProjectDialogInput) => void
   onEditProjectConfirm: (data: HomeEditProjectInput) => void
   onConfirmPendingAction: () => void | Promise<void>
   onImportProject: (projectPath: string, kind: HomeImportKind) => void
@@ -205,7 +196,6 @@ export function HomePageDialogs(input: Input) {
       <CreateProjectDialog
         open={input.state.dialogOpen}
         onClose={() => input.setters.setDialogOpen(false)}
-        onConfirm={input.onCreateProject}
       />
       {renderEditProjectDialog(input)}
       {renderConfirmDialog(input)}

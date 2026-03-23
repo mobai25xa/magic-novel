@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 use crate::agent_tools::contracts::ConfirmationPolicy;
+use crate::agent_tools::contracts::ToolResult;
 use crate::agent_tools::registry::get_manifest;
 use crate::models::{AppError, ErrorCode};
 use crate::review::{engine as review_engine, types as review_types};
@@ -24,6 +25,7 @@ use crate::review::{engine as review_engine, types as review_types};
 use super::emitter::EventSink;
 use super::events::event_types;
 use super::messages::AgentMessage;
+use super::recovery::ToolExecutionDiagnostic;
 use super::tool_dispatch::execute_tool_call;
 use super::tool_errors::{
     get_tool_timeout, tool_join_error, tool_lock_error, tool_timeout_error, write_resource_key,
@@ -33,12 +35,17 @@ use super::tool_formatters::{
     is_askuser_call, validate_askuser_args,
 };
 use super::types::{ApprovalMode, ClarificationMode, StopReason, ToolCallInfo};
+use super::worker_identity::{
+    extract_worker_refs, worker_type_for_tool_batch, worker_type_for_tool_name, WorkerType,
+};
 
 /// Result of executing a batch of tool calls
 #[derive(Debug)]
 pub struct BatchResult {
     /// Tool result messages to append to conversation
     pub tool_messages: Vec<AgentMessage>,
+    /// Structured diagnostics for recovery-aware next-round planning
+    pub(crate) diagnostics: Vec<ToolExecutionDiagnostic>,
     /// If set, the loop should suspend
     pub suspend_reason: Option<SuspendInfo>,
     /// Number of tool calls executed
@@ -65,6 +72,11 @@ enum ExecGroup {
     Parallel(Vec<ToolCallInfo>),
     /// A single tool that must run sequentially (not parallel_safe)
     Sequential(ToolCallInfo),
+}
+
+struct ToolExecutionOutput {
+    message: AgentMessage,
+    diagnostic: Option<ToolExecutionDiagnostic>,
 }
 
 #[derive(Clone)]
@@ -112,6 +124,30 @@ impl ResourceLockManager {
 
         run().await
     }
+}
+
+fn build_execution_output(
+    tc: &ToolCallInfo,
+    result: &ToolResult<serde_json::Value>,
+) -> ToolExecutionOutput {
+    ToolExecutionOutput {
+        message: build_tool_message(tc, result),
+        diagnostic: build_execution_diagnostic(tc, result),
+    }
+}
+
+fn build_execution_diagnostic(
+    tc: &ToolCallInfo,
+    result: &ToolResult<serde_json::Value>,
+) -> Option<ToolExecutionDiagnostic> {
+    let error = result.error.as_ref()?;
+    Some(ToolExecutionDiagnostic {
+        tool_name: tc.tool_name.clone(),
+        error_code: Some(error.code.clone()),
+        retryable: error.retryable,
+        details: error.details.clone(),
+        args: tc.args.clone(),
+    })
 }
 
 pub struct ToolScheduler<S: EventSink> {
@@ -186,6 +222,7 @@ impl<S: EventSink> ToolScheduler<S> {
 
         let groups = group_calls(&tool_calls);
         let mut tool_messages = Vec::new();
+        let mut diagnostics = Vec::new();
         let mut executed_count = 0_u32;
         let mut consumed_calls = 0_usize;
 
@@ -196,17 +233,63 @@ impl<S: EventSink> ToolScheduler<S> {
             match group {
                 ExecGroup::Parallel(calls) => {
                     let call_count = calls.len();
-                    let results = self.execute_parallel(calls).await?;
+
+                    let worker_session_id = format!("worker_batch_{}", uuid::Uuid::new_v4());
+                    let worker_type = worker_type_for_tool_batch(&calls);
+                    let representative = calls
+                        .iter()
+                        .find(|tc| worker_type_for_tool_name(&tc.tool_name) == worker_type)
+                        .unwrap_or_else(|| calls.first().expect("parallel calls is non-empty"));
+                    let refs = extract_worker_refs(representative);
+                    let scope_ref = refs.scope_ref.clone().or_else(|| {
+                        scope_ref_from_active_chapter_path(self.active_chapter_path.as_deref())
+                    });
+
+                    emit_worker_event(
+                        &self.emitter,
+                        event_types::WORKER_STARTED,
+                        build_worker_identity_payload(
+                            worker_type,
+                            &worker_session_id,
+                            scope_ref.clone(),
+                            refs.target_ref.clone(),
+                            Some("tool_batch"),
+                        ),
+                    );
+
+                    let results = self.execute_parallel(calls).await;
+
+                    emit_worker_event(
+                        &self.emitter,
+                        event_types::WORKER_COMPLETED,
+                        build_worker_identity_payload(
+                            worker_type,
+                            &worker_session_id,
+                            scope_ref,
+                            refs.target_ref,
+                            Some("tool_batch"),
+                        ),
+                    );
+
+                    let results = results?;
                     consumed_calls += call_count;
                     executed_count += results.len() as u32;
-                    tool_messages.extend(results);
+                    diagnostics.extend(
+                        results
+                            .iter()
+                            .filter_map(|output| output.diagnostic.clone()),
+                    );
+                    tool_messages.extend(results.into_iter().map(|output| output.message));
                 }
                 ExecGroup::Sequential(tc) => {
                     if !self.is_tool_allowed(&tc.tool_name) {
-                        let msg = self.execute_disallowed(&tc).await?;
+                        let output = self.execute_disallowed(&tc).await?;
                         consumed_calls += 1;
                         executed_count += 1;
-                        tool_messages.push(msg);
+                        if let Some(diagnostic) = output.diagnostic {
+                            diagnostics.push(diagnostic);
+                        }
+                        tool_messages.push(output.message);
                         continue;
                     }
 
@@ -220,6 +303,7 @@ impl<S: EventSink> ToolScheduler<S> {
                         suspend.completed_messages = tool_messages.clone();
                         return Ok(BatchResult {
                             tool_messages: tool_messages.clone(),
+                            diagnostics: diagnostics.clone(),
                             suspend_reason: Some(suspend),
                             executed_count,
                         });
@@ -228,8 +312,36 @@ impl<S: EventSink> ToolScheduler<S> {
                     // Check if confirmation is needed
                     if self.needs_confirmation(&tc) {
                         let call_id = format!("tool_{}", uuid::Uuid::new_v4());
+                        let worker_type = worker_type_for_tool_name(&tc.tool_name);
+                        let refs = extract_worker_refs(&tc);
+                        let scope_ref = refs.scope_ref.clone().or_else(|| {
+                            scope_ref_from_active_chapter_path(self.active_chapter_path.as_deref())
+                        });
+
+                        emit_worker_event(
+                            &self.emitter,
+                            event_types::WORKER_STARTED,
+                            build_worker_identity_payload(
+                                worker_type,
+                                &call_id,
+                                scope_ref.clone(),
+                                refs.target_ref.clone(),
+                                Some("waiting_confirmation"),
+                            ),
+                        );
                         self.emitter
                             .waiting_for_confirmation(&tc, &call_id, "sensitive_write")?;
+                        emit_worker_event(
+                            &self.emitter,
+                            event_types::WORKER_COMPLETED,
+                            build_worker_identity_payload(
+                                worker_type,
+                                &call_id,
+                                scope_ref,
+                                refs.target_ref,
+                                Some("waiting_confirmation"),
+                            ),
+                        );
 
                         let remaining_tool_calls = tool_calls
                             .iter()
@@ -239,6 +351,7 @@ impl<S: EventSink> ToolScheduler<S> {
 
                         return Ok(BatchResult {
                             tool_messages: tool_messages.clone(),
+                            diagnostics: diagnostics.clone(),
                             suspend_reason: Some(SuspendInfo {
                                 reason: StopReason::WaitingConfirmation,
                                 pending_tool_call: tc,
@@ -250,16 +363,20 @@ impl<S: EventSink> ToolScheduler<S> {
                         });
                     }
 
-                    let result = self.execute_single(&tc).await?;
+                    let output = self.execute_single(&tc).await?;
                     consumed_calls += 1;
                     executed_count += 1;
-                    tool_messages.push(result);
+                    if let Some(diagnostic) = output.diagnostic {
+                        diagnostics.push(diagnostic);
+                    }
+                    tool_messages.push(output.message);
                 }
             }
         }
 
         Ok(BatchResult {
             tool_messages,
+            diagnostics,
             suspend_reason: None,
             executed_count,
         })
@@ -269,7 +386,7 @@ impl<S: EventSink> ToolScheduler<S> {
     async fn execute_parallel(
         &self,
         calls: Vec<ToolCallInfo>,
-    ) -> Result<Vec<AgentMessage>, AppError> {
+    ) -> Result<Vec<ToolExecutionOutput>, AppError> {
         if self.cancel_token.is_cancelled() {
             return Err(cancelled_error(None));
         }
@@ -298,7 +415,7 @@ impl<S: EventSink> ToolScheduler<S> {
                         emitter
                             .tool_call_finished(&tc, &call_id, "error", trace)
                             .ok();
-                        return build_tool_message(&tc, &result);
+                        return build_execution_output(&tc, &result);
                     }
 
                     if !tool_is_allowed(allowed_tools.as_deref(), &tc.tool_name) {
@@ -312,7 +429,7 @@ impl<S: EventSink> ToolScheduler<S> {
                         emitter
                             .tool_call_finished(&tc, &call_id, "error", trace)
                             .ok();
-                        return build_tool_message(&tc, &result);
+                        return build_execution_output(&tc, &result);
                     }
 
                     let timeout_dur = get_tool_timeout(&tc.tool_name);
@@ -380,7 +497,7 @@ impl<S: EventSink> ToolScheduler<S> {
                     )
                     .await;
 
-                    build_tool_message(&tc, &result)
+                    build_execution_output(&tc, &result)
                 }
             })
             .collect();
@@ -397,12 +514,30 @@ impl<S: EventSink> ToolScheduler<S> {
     }
 
     /// Execute a single tool call.
-    async fn execute_single(&self, tc: &ToolCallInfo) -> Result<AgentMessage, AppError> {
+    async fn execute_single(&self, tc: &ToolCallInfo) -> Result<ToolExecutionOutput, AppError> {
         if self.cancel_token.is_cancelled() {
             return Err(cancelled_error(None));
         }
 
         let call_id = format!("tool_{}", uuid::Uuid::new_v4());
+        let worker_type = worker_type_for_tool_name(&tc.tool_name);
+        let refs = extract_worker_refs(tc);
+        let scope_ref = refs
+            .scope_ref
+            .clone()
+            .or_else(|| scope_ref_from_active_chapter_path(self.active_chapter_path.as_deref()));
+
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_STARTED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref.clone(),
+                refs.target_ref.clone(),
+                Some("tool_execute"),
+            ),
+        );
         self.emitter.tool_call_started(tc, &call_id)?;
 
         if !self.is_tool_allowed(&tc.tool_name) {
@@ -412,7 +547,18 @@ impl<S: EventSink> ToolScheduler<S> {
             let trace = Some(build_tool_trace(&tc.tool_name, &result));
             self.emitter
                 .tool_call_finished(tc, &call_id, "error", trace)?;
-            return Ok(build_tool_message(tc, &result));
+            emit_worker_event(
+                &self.emitter,
+                event_types::WORKER_COMPLETED,
+                build_worker_identity_payload(
+                    worker_type,
+                    &call_id,
+                    scope_ref,
+                    refs.target_ref,
+                    Some("tool_execute"),
+                ),
+            );
+            return Ok(build_execution_output(tc, &result));
         }
 
         let tc_clone = tc.clone();
@@ -477,11 +623,41 @@ impl<S: EventSink> ToolScheduler<S> {
         )
         .await;
 
-        Ok(build_tool_message(tc, &result))
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_COMPLETED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref,
+                refs.target_ref,
+                Some("tool_execute"),
+            ),
+        );
+
+        Ok(build_execution_output(tc, &result))
     }
 
-    async fn execute_disallowed(&self, tc: &ToolCallInfo) -> Result<AgentMessage, AppError> {
+    async fn execute_disallowed(&self, tc: &ToolCallInfo) -> Result<ToolExecutionOutput, AppError> {
         let call_id = format!("tool_{}", uuid::Uuid::new_v4());
+        let worker_type = worker_type_for_tool_name(&tc.tool_name);
+        let refs = extract_worker_refs(tc);
+        let scope_ref = refs
+            .scope_ref
+            .clone()
+            .or_else(|| scope_ref_from_active_chapter_path(self.active_chapter_path.as_deref()));
+
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_STARTED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref.clone(),
+                refs.target_ref.clone(),
+                Some("tool_disallowed"),
+            ),
+        );
         self.emitter.tool_call_started(tc, &call_id)?;
         let result =
             tool_not_allowed_result(&tc.tool_name, &call_id, self.allowed_tools.as_deref());
@@ -489,7 +665,18 @@ impl<S: EventSink> ToolScheduler<S> {
         let trace = Some(build_tool_trace(&tc.tool_name, &result));
         self.emitter
             .tool_call_finished(tc, &call_id, "error", trace)?;
-        Ok(build_tool_message(tc, &result))
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_COMPLETED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref,
+                refs.target_ref,
+                Some("tool_disallowed"),
+            ),
+        );
+        Ok(build_execution_output(tc, &result))
     }
 
     fn is_tool_allowed(&self, tool_name: &str) -> bool {
@@ -542,12 +729,41 @@ impl<S: EventSink> ToolScheduler<S> {
             }
         }
 
+        let worker_type = worker_type_for_tool_name(&pending_tool_call.tool_name);
+        let refs = extract_worker_refs(&pending_tool_call);
+        let scope_ref = refs
+            .scope_ref
+            .clone()
+            .or_else(|| scope_ref_from_active_chapter_path(self.active_chapter_path.as_deref()));
+
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_STARTED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref.clone(),
+                refs.target_ref.clone(),
+                Some("askuser_requested"),
+            ),
+        );
         self.emitter.askuser_requested(
             &pending_tool_call,
             &call_id,
             structured_questions.as_ref(),
             questionnaire.as_deref(),
         )?;
+        emit_worker_event(
+            &self.emitter,
+            event_types::WORKER_COMPLETED,
+            build_worker_identity_payload(
+                worker_type,
+                &call_id,
+                scope_ref,
+                refs.target_ref,
+                Some("askuser_requested"),
+            ),
+        );
 
         let remaining_tool_calls = tool_calls
             .iter()
@@ -575,11 +791,57 @@ impl<S: EventSink> ToolScheduler<S> {
     }
 }
 
+fn scope_ref_from_active_chapter_path(active_chapter_path: Option<&str>) -> Option<String> {
+    active_chapter_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|path| {
+            if path.contains(':') {
+                path.to_string()
+            } else {
+                format!("chapter:{path}")
+            }
+        })
+}
+
+fn build_worker_identity_payload(
+    worker_type: WorkerType,
+    worker_session_id: &str,
+    scope_ref: Option<String>,
+    target_ref: Option<String>,
+    summary: Option<&str>,
+) -> serde_json::Value {
+    let mut payload = json!({
+        "worker_type": worker_type.as_str(),
+        "worker_session_id": worker_session_id,
+        // Persist dedupe key includes call_id; use worker_session_id as the stable discriminator.
+        "call_id": worker_session_id,
+    });
+
+    if let Some(scope_ref) = scope_ref {
+        payload["scope_ref"] = json!(scope_ref);
+    }
+
+    if let Some(target_ref) = target_ref {
+        payload["target_ref"] = json!(target_ref);
+    }
+
+    if let Some(summary) = summary {
+        payload["summary"] = json!(summary);
+    }
+
+    payload
+}
+
+fn emit_worker_event<S: EventSink>(emitter: &S, event_type: &str, payload: serde_json::Value) {
+    let _ = emitter.emit_raw(event_type, payload);
+}
+
 fn extract_post_write_review_target_ref(
     tc: &ToolCallInfo,
     result: &crate::agent_tools::contracts::ToolResult<serde_json::Value>,
 ) -> Option<String> {
-    if tc.tool_name != "edit" {
+    if tc.tool_name != "draft_write" {
         return None;
     }
     if !result.ok {
@@ -591,10 +853,6 @@ fn extract_post_write_review_target_ref(
     if mode != "commit" {
         return None;
     }
-    let target = data.get("target").and_then(|v| v.as_str()).unwrap_or("");
-    if target != "chapter_content" {
-        return None;
-    }
     let accepted = data
         .get("accepted")
         .and_then(|v| v.as_bool())
@@ -603,7 +861,13 @@ fn extract_post_write_review_target_ref(
         return None;
     }
 
-    let path = data.get("path").and_then(|v| v.as_str()).unwrap_or("");
+    let target_ref = tc
+        .args
+        .get("target_ref")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())?;
+    let (_kind, path) = target_ref.split_once(':')?;
     let path = path.trim();
     if path.is_empty() || !path.ends_with(".json") {
         return None;
@@ -854,17 +1118,17 @@ mod tests {
         let calls = vec![
             ToolCallInfo {
                 llm_call_id: "c1".to_string(),
-                tool_name: "read".to_string(),
+                tool_name: "workspace_map".to_string(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c2".to_string(),
-                tool_name: "grep".to_string(),
+                tool_name: "context_read".to_string(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c3".to_string(),
-                tool_name: "ls".to_string(),
+                tool_name: "context_search".to_string(),
                 args: json!({}),
             },
         ];
@@ -882,32 +1146,32 @@ mod tests {
         let calls = vec![
             ToolCallInfo {
                 llm_call_id: "c1".into(),
-                tool_name: "read".into(),
+                tool_name: "workspace_map".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c2".into(),
-                tool_name: "outline".into(),
+                tool_name: "context_read".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c3".into(),
-                tool_name: "character_sheet".into(),
+                tool_name: "context_search".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c4".into(),
-                tool_name: "search_knowledge".into(),
+                tool_name: "knowledge_read".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c5".into(),
-                tool_name: "ls".into(),
+                tool_name: "review_check".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c6".into(),
-                tool_name: "grep".into(),
+                tool_name: "context_read".into(),
                 args: json!({}),
             },
         ];
@@ -925,33 +1189,38 @@ mod tests {
         let calls = vec![
             ToolCallInfo {
                 llm_call_id: "c1".into(),
-                tool_name: "edit".into(),
+                tool_name: "structure_edit".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c2".into(),
-                tool_name: "create".into(),
+                tool_name: "draft_write".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c3".into(),
-                tool_name: "todowrite".into(),
+                tool_name: "knowledge_write".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c4".into(),
-                tool_name: "askuser".into(),
+                tool_name: "todowrite".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c5".into(),
+                tool_name: "askuser".into(),
+                args: json!({}),
+            },
+            ToolCallInfo {
+                llm_call_id: "c6".into(),
                 tool_name: "skill".into(),
                 args: json!({}),
             },
         ];
 
         let groups = group_calls(&calls);
-        assert_eq!(groups.len(), 5);
+        assert_eq!(groups.len(), 6);
         for group in groups {
             match group {
                 ExecGroup::Sequential(_) => {}
@@ -965,22 +1234,22 @@ mod tests {
         let calls = vec![
             ToolCallInfo {
                 llm_call_id: "c1".into(),
-                tool_name: "read".into(),
+                tool_name: "context_read".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c2".into(),
-                tool_name: "edit".into(),
+                tool_name: "draft_write".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c3".into(),
-                tool_name: "grep".into(),
+                tool_name: "context_search".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c4".into(),
-                tool_name: "edit".into(),
+                tool_name: "structure_edit".into(),
                 args: json!({}),
             },
         ];
@@ -992,7 +1261,7 @@ mod tests {
             _ => panic!("expected parallel group"),
         }
         match &groups[1] {
-            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "edit"),
+            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "draft_write"),
             _ => panic!("expected sequential"),
         }
         match &groups[2] {
@@ -1000,7 +1269,7 @@ mod tests {
             _ => panic!("expected parallel group"),
         }
         match &groups[3] {
-            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "edit"),
+            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "structure_edit"),
             _ => panic!("expected sequential"),
         }
     }
@@ -1010,12 +1279,12 @@ mod tests {
         let calls = vec![
             ToolCallInfo {
                 llm_call_id: "c1".into(),
-                tool_name: "edit".into(),
+                tool_name: "draft_write".into(),
                 args: json!({}),
             },
             ToolCallInfo {
                 llm_call_id: "c2".into(),
-                tool_name: "create".into(),
+                tool_name: "structure_edit".into(),
                 args: json!({}),
             },
         ];
@@ -1023,11 +1292,11 @@ mod tests {
         let groups = group_calls(&calls);
         assert_eq!(groups.len(), 2);
         match &groups[0] {
-            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "edit"),
+            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "draft_write"),
             _ => panic!("expected sequential"),
         }
         match &groups[1] {
-            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "create"),
+            ExecGroup::Sequential(tc) => assert_eq!(tc.tool_name, "structure_edit"),
             _ => panic!("expected sequential"),
         }
     }
@@ -1051,18 +1320,18 @@ mod tests {
 
         let read_call = ToolCallInfo {
             llm_call_id: "c0".to_string(),
-            tool_name: "read".to_string(),
+            tool_name: "context_read".to_string(),
             args: json!({}),
         };
-        let edit_call = ToolCallInfo {
+        let write_call = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "edit".to_string(),
+            tool_name: "draft_write".to_string(),
             args: json!({}),
         };
 
         assert!(!confirm_scheduler.needs_confirmation(&read_call));
-        assert!(confirm_scheduler.needs_confirmation(&edit_call));
-        assert!(!auto_scheduler.needs_confirmation(&edit_call));
+        assert!(confirm_scheduler.needs_confirmation(&write_call));
+        assert!(!auto_scheduler.needs_confirmation(&write_call));
     }
 
     #[test]
@@ -1139,5 +1408,43 @@ mod tests {
             Some("vol_1/ch_1.json")
         );
         assert!(suspend.pending_tool_call.args.get("chapter_path").is_none());
+    }
+
+    #[test]
+    fn test_build_execution_output_captures_ref_error_diagnostic() {
+        let tc = ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "draft_write".to_string(),
+            args: json!({ "target_ref": "chapter:manuscripts/vol_1/ch_9.json" }),
+        };
+        let result = crate::agent_tools::contracts::ToolResult {
+            ok: false,
+            data: None,
+            error: Some(crate::agent_tools::contracts::ToolError {
+                code: "E_REF_NOT_FOUND".to_string(),
+                message: "missing".to_string(),
+                retryable: false,
+                fault_domain: crate::agent_tools::contracts::FaultDomain::Io,
+                details: Some(json!({ "target_ref": "chapter:manuscripts/vol_1/ch_9.json" })),
+            }),
+            meta: crate::agent_tools::contracts::ToolMeta {
+                tool: "draft_write".to_string(),
+                call_id: "tool_1".to_string(),
+                duration_ms: 0,
+                revision_before: None,
+                revision_after: None,
+                tx_id: None,
+                read_set: None,
+                write_set: None,
+            },
+        };
+
+        let output = build_execution_output(&tc, &result);
+        let diagnostic = output.diagnostic.expect("diagnostic");
+        assert_eq!(diagnostic.error_code.as_deref(), Some("E_REF_NOT_FOUND"));
+        assert_eq!(
+            diagnostic.args["target_ref"],
+            "chapter:manuscripts/vol_1/ch_9.json"
+        );
     }
 }

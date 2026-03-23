@@ -625,7 +625,7 @@ mod tests {
             "content_block": {
                 "type": "tool_use",
                 "id": "toolu_123",
-                "name": "read"
+                "name": "context_read"
             }
         });
         let events = parse_anthropic_event(&start, &mut block_type, &mut tool_id);
@@ -633,7 +633,7 @@ mod tests {
         match &events[0] {
             LlmStreamEvent::ToolCallStart { id, name } => {
                 assert_eq!(id, "toolu_123");
-                assert_eq!(name, "read");
+                assert_eq!(name, "context_read");
             }
             _ => panic!("expected ToolCallStart"),
         }
@@ -643,7 +643,7 @@ mod tests {
             "type": "content_block_delta",
             "delta": {
                 "type": "input_json_delta",
-                "partial_json": "{\"path\":"
+                "partial_json": "{\"target_ref\":"
             }
         });
         let events = parse_anthropic_event(&delta, &mut block_type, &mut tool_id);
@@ -651,7 +651,7 @@ mod tests {
         match &events[0] {
             LlmStreamEvent::ToolCallArgsDelta { id, delta } => {
                 assert_eq!(id, "toolu_123");
-                assert_eq!(delta, "{\"path\":");
+                assert_eq!(delta, "{\"target_ref\":");
             }
             _ => panic!("expected ToolCallArgsDelta"),
         }

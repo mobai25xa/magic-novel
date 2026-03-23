@@ -35,12 +35,6 @@ export type SearchIndexFeatureStatus = SearchIndexStatus
 function normalizeScopePath(path: string) {
   const normalized = String(path || '').trim().replace(/\\/g, '/').replace(/^\.\//, '').replace(/^\//, '')
   if (!normalized || normalized === '.') return ''
-  if (normalized.startsWith('magic_assets/')) {
-    return `.magic_novel/${normalized.slice('magic_assets/'.length)}`
-  }
-  if (normalized === 'magic_assets') {
-    return '.magic_novel'
-  }
   return normalized.replace(/\/+$/, '')
 }
 

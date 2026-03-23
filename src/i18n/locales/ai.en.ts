@@ -21,6 +21,7 @@ export const aiEn = {
     sessionReadOnlyReasonMissingRuntime: 'Missing runtime snapshot. Continue is unavailable.',
     sessionReadOnlyReasonLegacySession: 'Legacy session does not support runtime resume.',
     sessionReadOnlyReasonConfigMissing: 'Required provider configuration is missing for resume.',
+    missionInputDisabledActive: 'A mission is already active. Open the Mission panel to inspect, pause, or complete it first.',
     sessionInputDisabledReadOnly: 'Read-only session. Sending is disabled',
     sessionInputDisabledSuspended: 'Session is suspended. Finish resume actions first',
     historyStateInteractive: 'Interactive',
@@ -42,6 +43,7 @@ export const aiEn = {
     taskRunning: 'Running',
     taskDone: 'Completed',
     generating: 'Generating',
+    workingOn: 'Working on ',
   },
   turn: {
     label: 'Turn',
@@ -52,6 +54,14 @@ export const aiEn = {
     thinking: 'Reasoning',
     thinkingPlaceholder: '...',
     assistantPlaceholder: 'Assistant is composing the response...',
+    executionPhaseLabel: {
+      orchestrator: 'Planning',
+      context: 'Loading context',
+      draft: 'Drafting',
+      review: 'Reviewing',
+      knowledge: 'Updating knowledge',
+      other: 'Other',
+    },
     phaseLabel: {
       queued: 'queued',
       planning: 'planning',

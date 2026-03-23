@@ -3,6 +3,7 @@
  *
  * Aligned with worktrees/docs/M5/guide.md §2.2 / §2.3.
  * Compatibility policy: add-only fields, never delete.
+ * Canonical field names may accept legacy aliases at the parser boundary.
  */
 
 // ── MacroStage ──────────────────────────────────────────────────
@@ -36,7 +37,7 @@ export type ChapterRunState = {
   latest_review_id?: string
   latest_knowledge_delta_id?: string
 
-  last_handoff_summary?: string
+  last_result_summary?: string
   updated_at: number
 } & Record<string, unknown>
 
@@ -56,6 +57,7 @@ export type MacroWorkflowConfig = {
   schema_version: number
   macro_id: string
   mission_id: string
+  job_id?: string
   workflow_kind: MacroWorkflowKind
   objective: string
 
@@ -81,6 +83,7 @@ export type MacroWorkflowState = {
   schema_version: number
   macro_id: string
   mission_id: string
+  job_id?: string
 
   objective: string
   workflow_kind: MacroWorkflowKind
@@ -108,6 +111,7 @@ export type MacroCreateInput = {
 
 export type MacroCreateOutput = {
   mission_id: string
+  job_id?: string
   macro_id: string
 }
 

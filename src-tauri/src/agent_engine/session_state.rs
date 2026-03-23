@@ -517,7 +517,7 @@ mod tests {
             conversation_state: ConversationState::new("s1".to_string()),
             pending_tool_call: ToolCallInfo {
                 llm_call_id: "call_1".to_string(),
-                tool_name: "edit".to_string(),
+                tool_name: "draft_write".to_string(),
                 args: serde_json::json!({}),
             },
             pending_call_id: "pending_1".to_string(),
@@ -587,7 +587,7 @@ mod tests {
                 conversation_state: conversation,
                 pending_tool_call: ToolCallInfo {
                     llm_call_id: "call_1".to_string(),
-                    tool_name: "edit".to_string(),
+                    tool_name: "draft_write".to_string(),
                     args: serde_json::json!({}),
                 },
                 pending_call_id: "pending_1".to_string(),

@@ -125,49 +125,6 @@ pub fn update_index_for_events(
     save_index(&index_path, &index)
 }
 
-pub fn rebuild_index_for_session(
-    project_path: &Path,
-    session_id: &str,
-    events: &[AgentSessionEvent],
-) -> Result<(), AppError> {
-    let now = Utc::now().timestamp_millis();
-    let index_path = super::session_index_path(project_path);
-    let mut index = load_index(&index_path)?;
-
-    let existing = find_meta(&index, session_id);
-    let created_at = existing.as_ref().map(|meta| meta.created_at).unwrap_or(now);
-    let title = existing.as_ref().and_then(|meta| meta.title.clone());
-
-    let mut meta = AgentSessionMeta {
-        schema_version: AGENT_SESSION_SCHEMA_VERSION,
-        session_id: session_id.to_string(),
-        created_at,
-        updated_at: now,
-        title,
-        last_turn: None,
-        last_stop_reason: None,
-        active_chapter_path: None,
-        compaction_count: Some(0),
-    };
-
-    let mut last_turn = None;
-    let mut last_stop_reason = None;
-    let mut compaction_count = 0_i64;
-    apply_events_to_meta(
-        &mut meta,
-        events,
-        &mut last_turn,
-        &mut last_stop_reason,
-        &mut compaction_count,
-    );
-    meta.last_turn = last_turn;
-    meta.last_stop_reason = last_stop_reason;
-    meta.compaction_count = Some(compaction_count);
-
-    upsert_meta(&mut index, meta);
-    save_index(&index_path, &index)
-}
-
 fn apply_events_to_meta(
     meta: &mut AgentSessionMeta,
     events: &[AgentSessionEvent],

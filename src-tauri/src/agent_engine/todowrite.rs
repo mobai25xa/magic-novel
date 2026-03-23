@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const TODOWRITE_FIELDS: &[&str] = &["todos"];
-const TODOWRITE_ITEM_FIELDS: &[&str] = &["status", "text", "worker"];
+const TODOWRITE_ITEM_FIELDS: &[&str] = &["status", "text"];
 
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn parser_contract_fields() -> &'static [&'static str] {
@@ -20,8 +20,6 @@ pub(crate) fn parser_contract_item_fields() -> &'static [&'static str] {
 pub struct TodoItem {
     pub status: String,
     pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub worker: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,17 +87,7 @@ pub fn parse_todo_input(args: &Value, call_id: &str) -> Result<TodoState, String
             in_progress_count += 1;
         }
 
-        let worker = item
-            .get("worker")
-            .and_then(|v| v.as_str())
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-
-        items.push(TodoItem {
-            status,
-            text,
-            worker,
-        });
+        items.push(TodoItem { status, text });
     }
 
     if in_progress_count > 1 {
@@ -173,25 +161,16 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_with_worker_field() {
+    fn test_parse_rejects_unknown_worker_field() {
         let args = json!({
             "todos": [
                 { "status": "pending", "text": "Plan outline", "worker": "plot-architect" },
                 { "status": "pending", "text": "Write prose" },
             ]
         });
-        let state = parse_todo_input(&args, "call_1").unwrap();
-        assert_eq!(state.items[0].worker.as_deref(), Some("plot-architect"));
-        assert!(state.items[1].worker.is_none());
-    }
-
-    #[test]
-    fn test_parse_with_empty_worker_field() {
-        let args = json!({
-            "todos": [{ "status": "pending", "text": "task", "worker": "  " }]
-        });
-        let state = parse_todo_input(&args, "call_1").unwrap();
-        assert!(state.items[0].worker.is_none());
+        let err = parse_todo_input(&args, "call_1").expect_err("should fail");
+        assert!(err.contains("unknown field"));
+        assert!(err.contains("worker"));
     }
 
     #[test]
@@ -247,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn todowrite_parser_allowlists_match_registered_schema_properties() {
+    fn todowrite_parser_matches_live_schema_contract() {
         let context = crate::agent_tools::definition::ToolSchemaContext::default();
         let schema = crate::agent_tools::registry::get_schema("todowrite", &context)
             .expect("todowrite schema should exist");

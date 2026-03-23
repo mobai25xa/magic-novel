@@ -29,11 +29,11 @@ pub async fn import_asset(
     let asset_tree = parse_to_asset_tree(&content, &filename, &kind, &extension)?;
 
     let asset_dir = match kind.as_str() {
-        "lore" => project_path.join("magic_assets").join("lore"),
-        "prompt" => project_path.join("magic_assets").join("prompt"),
-        "worldview" => project_path.join("magic_assets").join("worldview"),
-        "outline" => project_path.join("magic_assets").join("outline"),
-        "character" => project_path.join("magic_assets").join("character"),
+        "lore" => project_path.join("assets").join("lore"),
+        "prompt" => project_path.join("assets").join("prompt"),
+        "worldview" => project_path.join("assets").join("worldview"),
+        "outline" => project_path.join("assets").join("outline"),
+        "character" => project_path.join("assets").join("character"),
         _ => return Err(AppError::invalid_argument("无效的资产类型")),
     };
 

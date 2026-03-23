@@ -368,9 +368,33 @@ pub fn trash_volume_usecase(project_path: &str, volume_path: &str) -> Result<(),
     save_recycle_index(&index_path, &index)
 }
 
+pub fn find_recycle_item_id_by_original_rel_path_usecase(
+    project_path: &str,
+    original_rel_path: &str,
+) -> Result<Option<String>, AppError> {
+    let project_path = PathBuf::from(project_path);
+    let index_path = recycle_index_path(&project_path);
+    let mut index = load_recycle_index(&index_path)?;
+
+    if purge_expired_recycle_items(&project_path, &mut index)? {
+        save_recycle_index(&index_path, &index)?;
+    }
+
+    let needle = normalize_rel(original_rel_path);
+    Ok(index
+        .items
+        .iter()
+        .find(|entry| normalize_rel(&entry.original_rel_path) == needle)
+        .map(|entry| entry.id.clone()))
+}
+
 #[command]
 pub async fn restore_recycle_item(project_path: String, item_id: String) -> Result<(), AppError> {
-    let project_path = PathBuf::from(&project_path);
+    restore_recycle_item_usecase(&project_path, &item_id)
+}
+
+pub fn restore_recycle_item_usecase(project_path: &str, item_id: &str) -> Result<(), AppError> {
+    let project_path = PathBuf::from(project_path);
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 

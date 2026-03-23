@@ -14,11 +14,10 @@ mod tests {
     use crate::application::command_usecases::agent_session_support::save_session_meta;
     use crate::services::agent_session::types::session_event_types;
     use crate::services::agent_session::{
-        append_events_jsonl, append_session_events, find_meta, load_index, read_and_migrate,
-        read_events_jsonl, recover_stream_file, runtime_snapshot_path,
-        save_runtime_snapshot_from_input, session_index_path, session_stream_path,
-        AgentSessionEvent, AgentSessionMeta, RuntimeSnapshotUpsertInput, SessionRuntimeState,
-        AGENT_SESSION_SCHEMA_VERSION,
+        append_events_jsonl, append_session_events, find_meta, load_index, read_events_jsonl,
+        recover_stream_file, runtime_snapshot_path, save_runtime_snapshot_from_input,
+        session_index_path, session_stream_path, AgentSessionEvent, AgentSessionMeta,
+        RuntimeSnapshotUpsertInput, SessionRuntimeState, AGENT_SESSION_SCHEMA_VERSION,
     };
 
     fn setup_temp_project() -> PathBuf {
@@ -368,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_and_migrate_upgrades_legacy_schema() {
+    fn test_read_events_jsonl_rejects_legacy_schema() {
         let project = setup_temp_project();
         let session_id = "test_migrate";
         let stream_path = session_stream_path(&project, session_id);
@@ -377,9 +376,18 @@ mod tests {
         legacy.schema_version = 0;
         append_events_jsonl(&stream_path, &[legacy]).unwrap();
 
-        let migrated = read_and_migrate(&stream_path).unwrap();
-        assert_eq!(migrated.len(), 1);
-        assert_eq!(migrated[0].schema_version, AGENT_SESSION_SCHEMA_VERSION);
+        let err = read_events_jsonl(&stream_path).unwrap_err();
+        assert!(matches!(
+            err.code,
+            crate::models::ErrorCode::SchemaValidationError
+        ));
+        assert_eq!(
+            err.details
+                .as_ref()
+                .and_then(|details| details.get("code"))
+                .and_then(|value| value.as_str()),
+            Some("E_AGENT_SESSION_LOAD_UNSUPPORTED_SCHEMA")
+        );
     }
 
     #[test]

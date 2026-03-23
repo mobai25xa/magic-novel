@@ -17,6 +17,7 @@
     "test:agent-chat": "node scripts/validate-agent-chat.mjs",
     "test:session-regression": "node scripts/test-session-regression.mjs",
     "test:dev-a-runtime-state-machine": "node scripts/test-dev-a-runtime-state-machine.mjs",
+    "test:mission-layer1-repair": "node scripts/test-mission-layer1-repair.mjs",
     "test:agent-prompt-memory-model": "node scripts/test-agent-prompt-memory-model.mjs",
     "test:dev-c-observability": "node scripts/test-dev-c-observability.mjs",
     "test:session-canary-rollout": "node scripts/test-session-canary-rollout.mjs",

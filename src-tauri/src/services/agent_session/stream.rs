@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::models::{AppError, ErrorCode};
 
 use super::contract::{prepare_events_for_append, EventContractState};
-use super::{read_and_migrate, session_stream_path, update_index_for_events, AgentSessionEvent};
+use super::{session_stream_path, update_index_for_events, AgentSessionEvent};
 
 #[derive(Debug, Clone)]
 pub struct AppendSessionEventsResult {
@@ -63,56 +63,6 @@ pub fn append_events_jsonl(path: &Path, events: &[AgentSessionEvent]) -> Result<
     Ok(())
 }
 
-pub fn write_events_jsonl(path: &Path, events: &[AgentSessionEvent]) -> Result<(), AppError> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(path)
-        .map_err(|err| AppError {
-            code: ErrorCode::IoError,
-            message: format!("failed to open session stream for rewrite: {err}"),
-            details: Some(serde_json::json!({
-                "code": "E_AGENT_SESSION_REWRITE_OPEN_FAILED",
-                "path": path.to_string_lossy(),
-            })),
-            recoverable: Some(true),
-        })?;
-
-    for event in events {
-        let line = serde_json::to_string(event).map_err(|err| AppError {
-            code: ErrorCode::JsonParseError,
-            message: format!("failed to serialize session event during rewrite: {err}"),
-            details: Some(serde_json::json!({
-                "code": "E_AGENT_SESSION_REWRITE_SERIALIZE_FAILED",
-            })),
-            recoverable: Some(false),
-        })?;
-
-        file.write_all(line.as_bytes()).map_err(|err| AppError {
-            code: ErrorCode::IoError,
-            message: format!("failed to write session event during rewrite: {err}"),
-            details: Some(serde_json::json!({
-                "code": "E_AGENT_SESSION_REWRITE_WRITE_FAILED",
-                "path": path.to_string_lossy(),
-            })),
-            recoverable: Some(true),
-        })?;
-
-        file.write_all(b"\n").map_err(|err| AppError {
-            code: ErrorCode::IoError,
-            message: format!("failed to write session newline during rewrite: {err}"),
-            details: Some(serde_json::json!({
-                "code": "E_AGENT_SESSION_REWRITE_WRITE_FAILED",
-                "path": path.to_string_lossy(),
-            })),
-            recoverable: Some(true),
-        })?;
-    }
-
-    Ok(())
-}
-
 pub fn append_session_events(
     project_path: &Path,
     session_id: &str,
@@ -120,7 +70,7 @@ pub fn append_session_events(
 ) -> Result<AppendSessionEventsResult, AppError> {
     if events.is_empty() {
         let stream_path = session_stream_path(project_path, session_id);
-        let existing = read_and_migrate(&stream_path)?;
+        let existing = read_events_jsonl(&stream_path)?;
         let contract_state = EventContractState::from_existing(&existing);
         return Ok(AppendSessionEventsResult {
             appended_count: 0,
@@ -130,7 +80,7 @@ pub fn append_session_events(
     }
 
     let stream_path = session_stream_path(project_path, session_id);
-    let existing = read_and_migrate(&stream_path)?;
+    let existing = read_events_jsonl(&stream_path)?;
     let contract_state = EventContractState::from_existing(&existing);
     let prepared = prepare_events_for_append(session_id, events, contract_state)?;
 
@@ -205,7 +155,23 @@ pub fn read_events_jsonl(path: &Path) -> Result<Vec<AgentSessionEvent>, AppError
         }
 
         match serde_json::from_str::<AgentSessionEvent>(&line) {
-            Ok(event) => events.push(event),
+            Ok(event) => {
+                if !event.validate_v1() {
+                    return Err(AppError {
+                        code: ErrorCode::SchemaValidationError,
+                        message: "failed to load session event with unsupported schema".to_string(),
+                        details: Some(serde_json::json!({
+                            "code": "E_AGENT_SESSION_LOAD_UNSUPPORTED_SCHEMA",
+                            "path": path.to_string_lossy(),
+                            "line": line,
+                            "schema_version": event.schema_version,
+                        })),
+                        recoverable: Some(true),
+                    });
+                }
+
+                events.push(event);
+            }
             Err(err) => {
                 let line_trimmed = line.trim_end();
                 let looks_like_trailing_partial = !line_trimmed.ends_with('}');

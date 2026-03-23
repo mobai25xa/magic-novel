@@ -2,6 +2,7 @@ import {
   createProject as createProjectCommand,
   emptyRecycledProjects as emptyRecycledProjectsCommand,
   exportTreeMulti as exportTreeMultiCommand,
+  getProjectBootstrapStatus as getProjectBootstrapStatusCommand,
   getProjectTree as getProjectTreeCommand,
   importAsset as importAssetCommand,
   importManuscript as importManuscriptCommand,
@@ -9,25 +10,24 @@ import {
   openProject as openProjectCommand,
   permanentlyDeleteRecycledProject as permanentlyDeleteRecycledProjectCommand,
   restoreRecycledProject as restoreRecycledProjectCommand,
+  resumeProjectBootstrap as resumeProjectBootstrapCommand,
   scanProjectsDirectory as scanProjectsDirectoryCommand,
+  startProjectBootstrap as startProjectBootstrapCommand,
   trashProject as trashProjectCommand,
   updateProjectMetadata as updateProjectMetadataCommand,
+  type CreateProjectInput,
   type FileNode,
   type ProjectMetadata,
+  type ProjectBootstrapStatus,
   type ProjectSnapshot,
   type RecycleItem,
+  type StartProjectBootstrapInput,
 } from '@/lib/tauri-commands'
 
 export type { FileNode, ProjectSnapshot }
 
-export async function createProjectEntry(
-  projectPath: string,
-  name: string,
-  author: string,
-  projectType?: string[],
-  coverImage?: string,
-): Promise<ProjectSnapshot> {
-  return createProjectCommand(projectPath, name, author, projectType, coverImage)
+export async function createProjectEntry(input: CreateProjectInput): Promise<ProjectSnapshot> {
+  return createProjectCommand(input)
 }
 
 export async function openProjectEntry(projectPath: string): Promise<ProjectSnapshot> {
@@ -89,6 +89,20 @@ export async function scanProjects(rootDir: string): Promise<ProjectSnapshot[]> 
   return scanProjectsDirectoryCommand(rootDir)
 }
 
+export async function startProjectBootstrapEntry(
+  input: StartProjectBootstrapInput,
+): Promise<ProjectBootstrapStatus> {
+  return startProjectBootstrapCommand(input)
+}
+
+export async function getProjectBootstrapStatusEntry(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return getProjectBootstrapStatusCommand(projectPath)
+}
+
+export async function resumeProjectBootstrapEntry(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return resumeProjectBootstrapCommand(projectPath)
+}
+
 export {
   createProjectCommand as createProject,
   openProjectCommand as openProject,
@@ -103,4 +117,13 @@ export {
   permanentlyDeleteRecycledProjectCommand as permanentlyDeleteRecycledProject,
   emptyRecycledProjectsCommand as emptyRecycledProjects,
   scanProjectsDirectoryCommand as scanProjectsDirectory,
+  startProjectBootstrapCommand as startProjectBootstrap,
+  getProjectBootstrapStatusCommand as getProjectBootstrapStatus,
+  resumeProjectBootstrapCommand as resumeProjectBootstrap,
+}
+
+export type {
+  CreateProjectInput,
+  ProjectBootstrapStatus,
+  StartProjectBootstrapInput,
 }

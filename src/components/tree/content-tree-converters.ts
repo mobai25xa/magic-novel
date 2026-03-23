@@ -1,16 +1,16 @@
-import type { MagicAssetNode } from '@/features/content-tree-management'
+import type { AssetLibraryNode, KnowledgeTreeNode } from '@/features/content-tree-management'
 
 import type { BackendFileNode, FileNode } from './content-tree-types'
 
-export function convertMagicAssetNode(node: MagicAssetNode): FileNode {
+export function convertAssetLibraryNode(node: AssetLibraryNode): FileNode {
   if (node.kind === 'dir') {
     return {
       kind: 'asset_dir',
       name: node.name,
       title: node.title || node.name,
-      path: `magic_assets/${node.path}`,
+      path: `assets/${node.path}`,
       assetRelativePath: node.path,
-      children: node.children.map(convertMagicAssetNode),
+      children: node.children.map(convertAssetLibraryNode),
       updatedAt: undefined,
     }
   }
@@ -20,7 +20,31 @@ export function convertMagicAssetNode(node: MagicAssetNode): FileNode {
     kind: 'asset_file',
     name: node.name,
     title,
-    path: `magic_assets/${node.path}`,
+    path: `assets/${node.path}`,
+    assetRelativePath: node.path,
+    updatedAt: node.modified_at,
+  }
+}
+
+export function convertKnowledgeTreeNode(node: KnowledgeTreeNode): FileNode {
+  if (node.kind === 'dir') {
+    return {
+      kind: 'asset_dir',
+      name: node.name,
+      title: node.title || node.name,
+      path: `knowledge:${node.path}`,
+      assetRelativePath: node.path,
+      children: node.children.map(convertKnowledgeTreeNode),
+      updatedAt: undefined,
+    }
+  }
+
+  const title = node.title || node.name
+  return {
+    kind: 'asset_file',
+    name: node.name,
+    title,
+    path: `knowledge:${node.path}`,
     assetRelativePath: node.path,
     updatedAt: node.modified_at,
   }

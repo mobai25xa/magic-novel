@@ -1,4 +1,5 @@
 import { invokeTauri } from './core'
+import type { ApprovalMode, CapabilityMode, ClarificationMode } from './agent-engine-client'
 
 // ── Types (mirror Rust DTOs) ─────────────────────────────────────
 
@@ -13,12 +14,25 @@ export interface SkillDefinition {
   source: SkillSource
 }
 
+export type CapabilityPreset =
+  | 'main_interactive'
+  | 'main_planning'
+  | 'headless_writer'
+  | 'read_only_reviewer'
+  | 'summary_only'
+
 export interface WorkerDefinition {
   name: string
   display_name: string
   system_prompt: string
-  tool_whitelist: string[]
-  match_keywords: string[]
+  mode: CapabilityMode
+  approval_mode: ApprovalMode
+  clarification_mode: ClarificationMode
+  capability_preset: CapabilityPreset
+  allow_delegate: boolean
+  allow_skill_activation: boolean
+  hidden_tools: string[]
+  forced_tools: string[]
   max_rounds?: number
   max_tool_calls?: number
   model?: string

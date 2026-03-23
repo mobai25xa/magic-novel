@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { saveMagicAsset } from '@/features/assets-management'
+import { saveAssetFile } from '@/features/assets-management'
 import { useProjectStore } from '@/stores/project-store'
 import { useEditorStore } from '@/stores/editor-store'
 import { useToast } from '@/magic-ui/components'
@@ -48,7 +48,7 @@ export function AssetEditor() {
 
     try {
       const nextAsset = updateAssetNodeContent(asset, selectedNodeId, nodeContentDraft)
-      await saveMagicAsset(projectPath, currentAssetPath, nextAsset)
+      await saveAssetFile(projectPath, currentAssetPath, nextAsset)
       setAsset(nextAsset)
       addToast({ title: '保存成功', description: '知识库已更新', variant: 'success' })
     } catch (e) {

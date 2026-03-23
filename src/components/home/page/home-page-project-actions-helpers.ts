@@ -1,6 +1,10 @@
 import { open } from '@tauri-apps/plugin-dialog'
 
 import {
+  buildCreateProjectCommandInput,
+  buildStartProjectBootstrapInput,
+} from '@/components/create/workflow-helpers'
+import {
   createProjectEntry,
   exportProjectTree,
   importProjectAsset,
@@ -8,7 +12,9 @@ import {
   moveProjectToRecycle,
   openProjectEntry,
   removeRecycledProject,
+  resumeProjectBootstrapEntry,
   restoreProjectFromRecycle,
+  startProjectBootstrapEntry,
   updateProjectEntryMetadata,
 } from '@/features/project-home'
 
@@ -20,6 +26,10 @@ import type {
   HomeEditProjectInput,
   HomeImportKind,
 } from './home-page-types'
+import type {
+  ProjectBootstrapStatus,
+  ProjectSnapshot,
+} from '@/features/project-home'
 
 type ProjectStoreState = ReturnType<
   typeof import('@/stores/project-store').useProjectStore.getState
@@ -98,6 +108,29 @@ export function syncCurrentProject(
 
 type AddToast = ReturnType<typeof import('@/magic-ui/components').useToast>['addToast']
 
+export type CreateProjectFlowResult = {
+  snapshot: ProjectSnapshot
+  bootstrapStatus: ProjectBootstrapStatus | null
+  bootstrapError: string | null
+  bootstrapUnsupported: boolean
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return String(error)
+}
+
+function isBootstrapUnsupportedError(error: unknown) {
+  const message = getErrorMessage(error).toLowerCase()
+  return (
+    message.includes('start_project_bootstrap')
+    && (message.includes('not found') || message.includes('unknown') || message.includes('missing'))
+  )
+}
+
 export async function createProjectFlow(input: {
   onOpenSettings: () => void
   projectsRootDir: string | null
@@ -105,7 +138,9 @@ export async function createProjectFlow(input: {
   addToast: AddToast
   translations: { common: { error: string }; home: { configureRootDir: string; createSuccess: string; projectCreatedMsg: string } }
   data: HomeCreateProjectInput
-}) {
+  onBootstrapStatus?: (status: ProjectBootstrapStatus) => void
+  suppressSuccessToast?: boolean
+}): Promise<CreateProjectFlowResult> {
   if (!input.projectsRootDir) {
     input.addToast({
       title: input.translations.common.error,
@@ -113,17 +148,11 @@ export async function createProjectFlow(input: {
       variant: 'destructive',
     })
     input.onOpenSettings()
-    return
+    throw new Error(input.translations.home.configureRootDir)
   }
 
   const requestedPath = `${input.projectsRootDir}/${input.data.name}`
-  const snapshot = await createProjectEntry(
-    requestedPath,
-    input.data.name,
-    input.data.author,
-    input.data.projectType,
-    input.data.coverImage,
-  )
+  const snapshot = await createProjectEntry(buildCreateProjectCommandInput(requestedPath, input.data))
 
   syncCurrentProject(input.projectStore, snapshot)
   input.projectStore.setTree([])
@@ -135,11 +164,52 @@ export async function createProjectFlow(input: {
     coverImage: snapshot.project.cover_image,
   })
 
-  input.addToast({
-    title: input.translations.home.createSuccess,
-    description: `${input.translations.home.projectCreatedMsg}${input.data.name}`,
-    variant: 'success',
-  })
+  if (!input.suppressSuccessToast) {
+    input.addToast({
+      title: input.translations.home.createSuccess,
+      description: `${input.translations.home.projectCreatedMsg}${input.data.name}`,
+      variant: 'success',
+    })
+  }
+
+  if (!input.data.aiAssist) {
+    return {
+      snapshot,
+      bootstrapStatus: null,
+      bootstrapError: null,
+      bootstrapUnsupported: false,
+    }
+  }
+
+  try {
+    const initialStatus = await startProjectBootstrapEntry(
+      buildStartProjectBootstrapInput(snapshot.path, input.data),
+    )
+    input.onBootstrapStatus?.(initialStatus)
+
+    return {
+      snapshot,
+      bootstrapStatus: initialStatus,
+      bootstrapError: null,
+      bootstrapUnsupported: false,
+    }
+  } catch (error) {
+    return {
+      snapshot,
+      bootstrapStatus: null,
+      bootstrapError: getErrorMessage(error),
+      bootstrapUnsupported: isBootstrapUnsupportedError(error),
+    }
+  }
+}
+
+export async function resumeProjectBootstrapFlow(input: {
+  projectPath: string
+  onBootstrapStatus?: (status: ProjectBootstrapStatus) => void
+}): Promise<ProjectBootstrapStatus> {
+  const initialStatus = await resumeProjectBootstrapEntry(input.projectPath)
+  input.onBootstrapStatus?.(initialStatus)
+  return initialStatus
 }
 
 export async function openProjectFlow(input: {

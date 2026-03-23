@@ -3,7 +3,7 @@ import { RenameDialog } from '@/components/common/RenameDialog'
 import { SelectDialog } from '@/components/common/SelectDialog'
 import { useTranslation } from '@/hooks/use-translation'
 
-import type { PendingAssetWindow, TreeNodeProps } from '../content-tree-types'
+import type { TreeNodeProps } from '../content-tree-types'
 
 type DialogState = { open: boolean; kind: 'folder' | 'file' } | null
 type ImportDialogState = { open: boolean; kind: 'manuscript' | 'chapter' } | null
@@ -26,33 +26,6 @@ type Input = {
   onExport: (format: string) => Promise<void>
   onImportManuscriptHere: () => Promise<void>
   onImportChapterHere: () => Promise<void>
-}
-
-function CreateFileTypeDialog(input: {
-  open: boolean
-  onClose: () => void
-  onConfirmKind: (kind: string) => void
-}) {
-  const { translations } = useTranslation()
-  const tr = translations.tree
-  const lp = translations.leftPanel
-  return (
-    <SelectDialog
-      open={input.open}
-      title={tr.newFileDialogTitle}
-      label={tr.newFileTypeLabel}
-      options={[
-        { value: 'worldview', label: lp.assetWorldview },
-        { value: 'outline', label: lp.assetOutline },
-        { value: 'character', label: lp.assetCharacter },
-        { value: 'lore', label: lp.assetLore },
-        { value: 'prompt', label: lp.assetPrompt },
-      ]}
-      defaultValue="worldview"
-      onClose={input.onClose}
-      onConfirm={input.onConfirmKind}
-    />
-  )
 }
 
 function ImportExportDialogs(input: Input) {
@@ -121,16 +94,6 @@ export function TreeNodeDialogs(input: Input) {
         placeholder={tr.newFolderPlaceholder}
         onClose={() => input.setCreateDialog(null)}
         onConfirm={input.onCreateFolder}
-      />
-
-      <CreateFileTypeDialog
-        open={!!input.createDialog?.open && input.createDialog.kind === 'file'}
-        onClose={() => input.setCreateDialog(null)}
-        onConfirmKind={(kind) => {
-          input.setCreateDialog(null)
-          input.setCreateFileTitleDialogOpen(true)
-          ;(window as PendingAssetWindow).__pendingAssetKind = kind
-        }}
       />
 
       <InputDialog

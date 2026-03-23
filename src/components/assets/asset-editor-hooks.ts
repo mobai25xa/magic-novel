@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { readMagicAsset } from '@/features/assets-management'
+import { readAssetFile } from '@/features/assets-management'
 
 import { flattenAssetNodes, type AssetTree } from './asset-tree-utils'
 
@@ -29,7 +29,7 @@ export function useLoadAssetEditor({
 
       setIsLoading(true)
       try {
-        const asset = (await readMagicAsset(projectPath, currentAssetPath)) as AssetTree
+        const asset = (await readAssetFile(projectPath, currentAssetPath)) as AssetTree
         setAsset(asset)
 
         const firstNode = flattenAssetNodes(asset.root).find((node) => node.level > 0) || null

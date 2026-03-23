@@ -40,6 +40,8 @@ export type AgentUiTurnPhase =
 export type AgentUiEventType =
   | 'TURN_STARTED'
   | 'PLAN_STARTED'
+  | 'WORKER_STARTED'
+  | 'WORKER_COMPLETED'
   | 'STREAMING_STARTED'
   | 'ASSISTANT_TEXT_DELTA'
   | 'THINKING_TEXT_DELTA'
@@ -85,20 +87,15 @@ export interface AgentUiTurnError {
     category_hint?: string
     tool_name?: string
     schema_path?: string
-    tool_package?: string
-    route_reason?: string
-    fallback_from?: string
-    fallback_reason?: string
-    rollout_mode?: string
-    rollout_in_canary?: boolean
-    canary_percent?: number
+    policy_source?: string
+    capability_preset?: string
+    exposure_reason?: string
     turn_failed_classification?: string
     provider_schema_error?: boolean
     provider_400_error?: boolean
     missing_tool_escalation?: boolean
     tool_call_count?: number
     rounds_executed?: number
-    fallback_occurred?: boolean
     exposed_tools?: string[]
     skipped_tools?: Array<{
       tool_name?: string

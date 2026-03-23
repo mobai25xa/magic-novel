@@ -1,14 +1,6 @@
-import type {
-  Actor,
-  CommitRequest,
-  CommitResult,
-  ExportRequest,
-  ExportResult,
-  PreviewRequest,
-  PreviewResult,
-} from '@/lib/jvm-types'
-
 import { invokeTauri } from './core'
+
+export type Actor = 'agent' | 'user' | 'system'
 
 export type EmbeddingSource = 'provider' | 'local'
 
@@ -159,18 +151,6 @@ export async function aiOpenAiChatCompletionClient(input: OpenAiChatCompletionIn
   return invokeTauri('ai_openai_chat_completion', { input })
 }
 
-export async function jvmExportChapterClient(input: ExportRequest): Promise<ExportResult> {
-  return invokeTauri('jvm_export_chapter', { input })
-}
-
-export async function jvmPreviewPatchClient(input: PreviewRequest): Promise<PreviewResult> {
-  return invokeTauri('jvm_preview_patch', { input })
-}
-
-export async function jvmCommitPatchClient(input: CommitRequest): Promise<CommitResult> {
-  return invokeTauri('jvm_commit_patch', { input })
-}
-
 export async function vcGetCurrentHeadClient(projectPath: string, entityId: string): Promise<EntityHead> {
   return invokeTauri('vc_get_current_head', { projectPath, entityId })
 }
@@ -185,14 +165,4 @@ export async function vcRollbackByCallIdClient(input: RollbackByCallIdInput): Pr
 
 export async function vcRecoverClient(projectPath: string): Promise<RecoverOutput> {
   return invokeTauri('vc_recover', { projectPath })
-}
-
-export type {
-  Actor,
-  CommitRequest,
-  CommitResult,
-  ExportRequest,
-  ExportResult,
-  PreviewRequest,
-  PreviewResult,
 }

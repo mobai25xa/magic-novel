@@ -7,10 +7,10 @@ use crate::knowledge::{types as knowledge_types, writeback as knowledge_writebac
 use crate::mission::artifacts;
 use crate::mission::events::MissionEventEmitter;
 use crate::models::AppError;
+use crate::review::types as review_types;
 use crate::services::agent_session::{
     self as agent_session, CanonUpdatesAcceptedEntry, CanonUpdatesProposedEntry,
 };
-use crate::review::types as review_types;
 
 use super::runtime::acquire_mission_runtime_lock;
 
@@ -105,20 +105,16 @@ pub async fn mission_knowledge_repropose(
     }
 
     let review_latest = artifacts::read_review_latest(project_path, &input.mission_id)?;
-    let review_for_gate: Option<review_types::ReviewReport> = match (
-        bundle.source_review_id.as_deref(),
-        review_latest.as_ref(),
-    ) {
-        (Some(src), Some(r)) if r.review_id == src => Some(r.clone()),
-        _ => None,
-    };
+    let review_for_gate: Option<review_types::ReviewReport> =
+        match (bundle.source_review_id.as_deref(), review_latest.as_ref()) {
+            (Some(src), Some(r)) if r.review_id == src => Some(r.clone()),
+            _ => None,
+        };
 
-    let rebased = knowledge_writeback::repropose_bundle_refresh_target_revisions(project_path, &bundle)?;
-    let regated = knowledge_writeback::gate_bundle(
-        project_path,
-        &rebased,
-        review_for_gate.as_ref(),
-    )?;
+    let rebased =
+        knowledge_writeback::repropose_bundle_refresh_target_revisions(project_path, &bundle)?;
+    let regated =
+        knowledge_writeback::gate_bundle(project_path, &rebased, review_for_gate.as_ref())?;
 
     artifacts::write_knowledge_bundle_latest(project_path, &input.mission_id, &rebased)?;
     let _ = artifacts::append_knowledge_bundle(project_path, &input.mission_id, &rebased);
@@ -140,7 +136,8 @@ pub async fn mission_knowledge_repropose(
 
     if !regated.conflicts.is_empty() {
         let pending = knowledge_writeback::build_pending_decision(&rebased, &regated);
-        let _ = artifacts::write_pending_knowledge_decision(project_path, &input.mission_id, &pending);
+        let _ =
+            artifacts::write_pending_knowledge_decision(project_path, &input.mission_id, &pending);
     } else {
         let _ = artifacts::clear_pending_knowledge_decision(project_path, &input.mission_id);
     }

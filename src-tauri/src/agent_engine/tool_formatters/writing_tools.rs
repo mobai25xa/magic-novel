@@ -1,213 +1,154 @@
-fn format_impact(impact: Option<&serde_json::Value>) -> String {
-    let Some(impact) = impact else {
-        return String::new();
-    };
-
-    let chapter_count = impact.get("chapter_count").and_then(|v| v.as_u64());
-    let chapter_id = impact.get("chapter_id").and_then(|v| v.as_str());
-
-    match (chapter_count, chapter_id) {
-        (Some(count), _) => format!(" impact=chapter_count:{}", count),
-        (_, Some(id)) => format!(" impact=chapter_id:{}", id),
-        _ => String::new(),
-    }
-}
-
-pub(super) fn format_read_result(data: Option<&serde_json::Value>) -> String {
+pub(super) fn format_draft_write_result(
+    data: Option<&serde_json::Value>,
+    args: &serde_json::Value,
+) -> String {
     let Some(payload) = data else {
         return "null".to_string();
     };
 
-    let path = payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-    let revision = payload
-        .get("revision")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let hash = payload.get("hash").and_then(|v| v.as_str()).unwrap_or("?");
-
-    if payload.get("content_json").is_some() && payload.get("content").is_none() {
-        return serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
-    }
-
-    let body = payload
-        .get("content")
+    let target_ref = args
+        .get("target_ref")
         .and_then(|v| v.as_str())
-        .unwrap_or("");
-
-    let mut result = format!(
-        "[revision={}] Use this revision number as base_revision when calling edit.\n[path={} hash={}]\n\n{}",
-        revision, path, hash, body
-    );
-
-    if let Some(trunc) = payload.get("truncated") {
-        let total = trunc
-            .get("total_chars")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let returned = trunc
-            .get("returned_chars")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        let next_offset = trunc
-            .get("next_offset")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0);
-        result.push_str(&format!(
-            "\n\n[truncated: returned {} of {} chars. Continue with another read call from offset {} if needed.]",
-            returned, total, next_offset
-        ));
-    }
-
-    result
-}
-
-pub(super) fn format_edit_result(data: Option<&serde_json::Value>) -> String {
-    let Some(payload) = data else {
-        return "null".to_string();
-    };
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("?");
+    let write_mode = args
+        .get("write_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("?");
 
     let mode = payload.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
-    let path = payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-    let rev_before = payload
-        .get("revision_before")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let rev_after = payload
-        .get("revision_after")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let accepted = payload
+        .get("accepted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let tx_id = payload.get("tx_id").and_then(|v| v.as_str()).unwrap_or("");
 
-    let mut lines = Vec::new();
+    let mut header = format!(
+        "[draft_write mode={} accepted={} write_mode={} target_ref={}]",
+        mode, accepted, write_mode, target_ref
+    );
+    if !tx_id.trim().is_empty() {
+        header.push_str(&format!(" tx={}", tx_id.trim()));
+    }
 
-    if mode == "preview" {
-        lines.push(format!(
-            "[preview path={} revision={}→{}]",
-            path, rev_before, rev_after
-        ));
+    let mut lines = vec![header];
 
-        if let Some(diffs) = payload.get("diff_summary").and_then(|v| v.as_array()) {
-            if !diffs.is_empty() {
-                lines.push("Changes:".to_string());
-                for d in diffs {
-                    let op = d.get("operation").and_then(|v| v.as_str()).unwrap_or("?");
-                    let desc = d.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                    lines.push(format!("  - {} {}", op, desc));
+    if let Some(diffs) = payload.get("diff_summary").and_then(|v| v.as_array()) {
+        if !diffs.is_empty() {
+            lines.push("diff_summary:".to_string());
+            for item in diffs {
+                if let Some(text) = item.as_str() {
+                    lines.push(format!("- {}", text.trim()));
+                } else {
+                    lines.push(format!("- {}", item));
                 }
             }
         }
+    }
 
-        if let Some(diags) = payload.get("diagnostics").and_then(|v| v.as_array()) {
-            let errors: Vec<_> = diags
-                .iter()
-                .filter(|d| d.get("level").and_then(|v| v.as_str()) == Some("error"))
-                .collect();
-            if errors.is_empty() {
-                lines.push("No issues found. Preview only — call edit with dry_run=false if you want to commit this change.".to_string());
-            } else {
-                for e in errors {
-                    let msg = e.get("message").and_then(|v| v.as_str()).unwrap_or("?");
-                    lines.push(format!("  ERROR: {}", msg));
-                }
-            }
-        } else {
-            lines.push("No issues found. Preview only — call edit with dry_run=false if you want to commit this change.".to_string());
+    if let Some(snippet) = payload.get("snippet_after").and_then(|v| v.as_str()) {
+        if !snippet.trim().is_empty() {
+            lines.push("snippet_after:".to_string());
+            lines.push(snippet.trim().to_string());
         }
-    } else {
-        let tx_part = if tx_id.is_empty() {
-            String::new()
-        } else {
-            format!(" tx={}", tx_id)
-        };
-        lines.push(format!(
-            "[committed path={} revision={}→{}{}]",
-            path, rev_before, rev_after, tx_part
-        ));
-        lines.push("Edit applied successfully.".to_string());
     }
 
     lines.join("\n")
 }
 
-pub(super) fn format_create_result(data: Option<&serde_json::Value>) -> String {
+pub(super) fn format_structure_edit_result(
+    data: Option<&serde_json::Value>,
+    args: &serde_json::Value,
+) -> String {
     let Some(payload) = data else {
         return "null".to_string();
     };
 
-    let path = payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-    let revision = payload
-        .get("revision_after")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let kind = payload
-        .get("created_kind")
-        .and_then(|v| v.as_str())
-        .unwrap_or("file");
-
-    format!(
-        "[created path={} revision={}]\n{} created successfully.",
-        path, revision, kind
-    )
-}
-
-pub(super) fn format_delete_result(data: Option<&serde_json::Value>) -> String {
-    let Some(payload) = data else {
-        return "null".to_string();
-    };
-
-    let mode = payload
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("preview");
-    let kind = payload.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
-    let path = payload.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-    let impact = format_impact(payload.get("impact"));
-
-    if mode == "preview" {
-        format!("[delete preview kind={} path={}{}]", kind, path, impact)
-    } else {
-        format!(
-            "[delete committed kind={} path={}{}]\nMoved to recycle bin.",
-            kind, path, impact
-        )
-    }
-}
-
-pub(super) fn format_move_result(data: Option<&serde_json::Value>) -> String {
-    let Some(payload) = data else {
-        return "null".to_string();
-    };
-
-    let mode = payload
-        .get("mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("preview");
-    let chapter_path = payload
-        .get("chapter_path")
+    let op = args.get("op").and_then(|v| v.as_str()).unwrap_or("?");
+    let node_type = args
+        .get("node_type")
         .and_then(|v| v.as_str())
         .unwrap_or("?");
-    let target_volume_path = payload
-        .get("target_volume_path")
+    let mode = payload.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
+    let accepted = payload
+        .get("accepted")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let tx_id = payload.get("tx_id").and_then(|v| v.as_str()).unwrap_or("");
+
+    let mut header = format!(
+        "[structure_edit mode={} accepted={} op={} node_type={}]",
+        mode, accepted, op, node_type
+    );
+    if !tx_id.trim().is_empty() {
+        header.push_str(&format!(" tx={}", tx_id.trim()));
+    }
+
+    let mut lines = vec![header];
+
+    if let Some(refs) = payload.get("refs") {
+        lines.push(format!("refs: {}", refs));
+    }
+
+    if let Some(items) = payload.get("impact_summary").and_then(|v| v.as_array()) {
+        if !items.is_empty() {
+            lines.push("impact_summary:".to_string());
+            for item in items {
+                if let Some(text) = item.as_str() {
+                    lines.push(format!("- {}", text.trim()));
+                } else {
+                    lines.push(format!("- {}", item));
+                }
+            }
+        }
+    }
+
+    lines.join("\n")
+}
+
+pub(super) fn format_knowledge_write_result(
+    data: Option<&serde_json::Value>,
+    args: &serde_json::Value,
+) -> String {
+    let Some(payload) = data else {
+        return "null".to_string();
+    };
+
+    let changes_count = args
+        .get("changes")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.len())
+        .unwrap_or(0);
+
+    let delta_id = payload
+        .get("delta_id")
         .and_then(|v| v.as_str())
         .unwrap_or("?");
-    let target_index = payload
-        .get("target_index")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
-    let new_path = payload
-        .get("new_chapter_path")
+    let status = payload
+        .get("status")
         .and_then(|v| v.as_str())
-        .unwrap_or(chapter_path);
+        .unwrap_or("?");
+    let next_action = payload
+        .get("next_action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
-    if mode == "preview" {
-        format!(
-            "[move preview chapter={} -> volume={} index={} next_path={}]",
-            chapter_path, target_volume_path, target_index, new_path
-        )
-    } else {
-        format!(
-            "[move committed chapter={} -> volume={} index={} new_path={}]",
-            chapter_path, target_volume_path, target_index, new_path
-        )
+    let mut header = format!(
+        "[knowledge_write status={} delta_id={} changes={}]",
+        status, delta_id, changes_count
+    );
+    if !next_action.trim().is_empty() {
+        header.push_str(&format!(" next_action={}", next_action.trim()));
     }
+
+    let mut lines = vec![header];
+
+    if let Some(conflicts) = payload.get("conflicts").and_then(|v| v.as_array()) {
+        if !conflicts.is_empty() {
+            lines.push(format!("conflicts: {}", conflicts.len()));
+        }
+    }
+
+    lines.join("\n")
 }

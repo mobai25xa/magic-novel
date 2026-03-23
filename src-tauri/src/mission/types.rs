@@ -72,9 +72,15 @@ pub enum MissionState {
     AwaitingInput,
     Initializing,
     Running,
+    Blocked,
+    WaitingUser,
+    WaitingReview,
+    WaitingKnowledgeDecision,
     Paused,
     OrchestratorTurn,
+    Failed,
     Completed,
+    Cancelled,
 }
 
 // ── StateDoc (state.json) ───────────────────────────────────────
@@ -259,7 +265,10 @@ mod tests {
             worker_id: "wk_abc".to_string(),
             ok: true,
             summary: "Feature completed successfully".to_string(),
-            commands_run: vec!["read ch1".to_string(), "edit ch1".to_string()],
+            commands_run: vec![
+                "context_read ch1".to_string(),
+                "draft_write ch1".to_string(),
+            ],
             artifacts: vec!["ch1.md".to_string()],
             issues: Vec::new(),
         };

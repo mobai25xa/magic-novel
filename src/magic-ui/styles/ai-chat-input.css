@@ -149,6 +149,15 @@
     background: var(--ai-input-divider);
 }
 
+.chat-input-model-wrap--leading {
+    padding-left: 0;
+    margin-left: 0;
+}
+
+.chat-input-model-wrap--leading::before {
+    display: none;
+}
+
 .chat-input-model-selector {
     display: inline-flex;
     align-items: center;

@@ -1,7 +1,7 @@
 use crate::models::{AppError, ErrorCode};
 use crate::services::{
     append_events_jsonl, delete_runtime_snapshot, ensure_dir, find_meta, load_index,
-    read_and_migrate, recover_stream_file, save_index, session_index_path, session_settings_path,
+    read_events_jsonl, recover_stream_file, save_index, session_index_path, session_settings_path,
     session_stream_path, sessions_root, upsert_meta, AgentSessionEvent, AgentSessionIndex,
     AgentSessionMeta, AgentSessionSettings, AGENT_SESSION_SCHEMA_VERSION,
 };
@@ -205,7 +205,7 @@ pub fn load_session_events(
     session_id: &str,
 ) -> Result<Vec<AgentSessionEvent>, AppError> {
     let stream_path = session_stream_path(project_path, session_id);
-    read_and_migrate(&stream_path)
+    read_events_jsonl(&stream_path)
 }
 pub fn update_session_meta(
     project_path: &Path,

@@ -26,7 +26,6 @@ export function HomePageOverlays(input: { vm: HomePageViewModel }) {
         translations={input.vm.translations}
         state={input.vm.state}
         setters={input.vm.setters}
-        onCreateProject={input.vm.projectActions.handleCreateProject}
         onEditProjectConfirm={input.vm.projectActions.handleEditConfirm}
         onConfirmPendingAction={input.vm.handleConfirmPendingAction}
         onImportProject={input.vm.projectActions.handleProjectImport}

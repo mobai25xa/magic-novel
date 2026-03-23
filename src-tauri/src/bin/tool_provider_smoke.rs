@@ -1,7 +1,9 @@
-use magic_novel_lib::agent_engine::tool_routing::{package_tool_whitelist, ToolPackageName};
-use magic_novel_lib::agent_engine::types::ClarificationMode;
+use magic_novel_lib::agent_engine::exposure_policy::{
+    CapabilityPolicy, CapabilityPreset, ExposureContext, SessionSource,
+};
+use magic_novel_lib::agent_engine::types::{AgentMode, ApprovalMode, ClarificationMode};
 use magic_novel_lib::agent_tools::definition::ToolSchemaContext;
-use magic_novel_lib::agent_tools::registry::build_filtered_openai_tool_schema_report;
+use magic_novel_lib::agent_tools::registry::build_openai_tool_schema_report_for_exposure;
 use magic_novel_lib::load_openai_search_settings;
 use serde::Serialize;
 use serde_json::json;
@@ -67,30 +69,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let scenarios = [
         (
-            "light_chat_package",
-            package_tool_whitelist(ToolPackageName::LightChat, false, None),
+            "main_interactive",
+            ExposureContext::new(
+                AgentMode::Writing,
+                ApprovalMode::ConfirmWrites,
+                ClarificationMode::Interactive,
+                SessionSource::UserInteractive,
+                0,
+                context.semantic_retrieval_enabled,
+                None,
+                None,
+                CapabilityPolicy::new(CapabilityPreset::MainInteractive),
+            ),
         ),
         (
-            "writing_package",
-            package_tool_whitelist(ToolPackageName::Writing, false, None),
+            "main_planning",
+            ExposureContext::new(
+                AgentMode::Planning,
+                ApprovalMode::ConfirmWrites,
+                ClarificationMode::Interactive,
+                SessionSource::UserInteractive,
+                0,
+                context.semantic_retrieval_enabled,
+                None,
+                None,
+                CapabilityPolicy::new(CapabilityPreset::MainPlanning),
+            ),
         ),
         (
-            "structure_package",
-            package_tool_whitelist(ToolPackageName::StructureOps, false, None),
+            "headless_writer",
+            ExposureContext::new(
+                AgentMode::Writing,
+                ApprovalMode::Auto,
+                ClarificationMode::HeadlessDefer,
+                SessionSource::WorkflowJob,
+                0,
+                context.semantic_retrieval_enabled,
+                None,
+                None,
+                CapabilityPolicy::new(CapabilityPreset::HeadlessWriter),
+            ),
         ),
         (
-            "research_package",
-            package_tool_whitelist(ToolPackageName::Research, false, None),
+            "read_only_reviewer",
+            ExposureContext::new(
+                AgentMode::Planning,
+                ApprovalMode::Auto,
+                ClarificationMode::HeadlessDefer,
+                SessionSource::ReviewGate,
+                0,
+                context.semantic_retrieval_enabled,
+                None,
+                None,
+                CapabilityPolicy::new(CapabilityPreset::ReadOnlyReviewer),
+            ),
         ),
     ];
 
     let mut results = Vec::new();
-    for (name, whitelist) in scenarios {
-        let tool_report = build_filtered_openai_tool_schema_report(
-            &whitelist,
-            magic_novel_lib::agent_engine::types::AgentMode::Writing,
-            &context,
-        );
+    for (name, exposure) in scenarios {
+        let tool_report = build_openai_tool_schema_report_for_exposure(&exposure, &context);
 
         let request_body = build_request_body(&model, &tool_report.tools);
         let url = completions_url(&base_url);

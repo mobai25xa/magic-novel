@@ -5,41 +5,53 @@
 
 use serde::Serialize;
 
-use crate::agent_engine::types::AgentMode;
+use crate::agent_engine::exposure_policy::{ExposureContext, SessionSource};
+use crate::agent_engine::types::{AgentMode, ApprovalMode};
 use crate::agent_tools::contracts::ToolDomain;
-use crate::agent_tools::definition::{ToolDefinition, ToolManifest, ToolSchemaContext};
+use crate::agent_tools::definition::{
+    ToolCapability, ToolDefinition, ToolManifest, ToolSchemaContext,
+};
 
-mod context;
-mod discovery;
+mod context_ops;
+mod draft;
+mod inspiration;
+mod knowledge;
 mod review;
+mod structure;
 mod utility;
-mod writing;
+mod workspace;
 
-use context::{CHARACTER_SHEET_TOOL, OUTLINE_TOOL, SEARCH_KNOWLEDGE_TOOL};
-use discovery::{GREP_TOOL, LS_TOOL};
+use context_ops::{CONTEXT_READ_TOOL, CONTEXT_SEARCH_TOOL};
+use draft::DRAFT_WRITE_TOOL;
+use inspiration::{INSPIRATION_CONSENSUS_PATCH_TOOL, INSPIRATION_OPEN_QUESTIONS_PATCH_TOOL};
+use knowledge::{KNOWLEDGE_READ_TOOL, KNOWLEDGE_WRITE_TOOL};
 use review::REVIEW_CHECK_TOOL;
+use structure::STRUCTURE_EDIT_TOOL;
 use utility::{ASKUSER_TOOL, SKILL_TOOL, TODOWRITE_TOOL};
-use writing::{CREATE_TOOL, DELETE_TOOL, EDIT_TOOL, MOVE_TOOL, READ_TOOL};
+use workspace::WORKSPACE_MAP_TOOL;
 
 const DISALLOWED_PROVIDER_SCHEMA_KEYWORDS: &[&str] = &["oneOf", "anyOf", "allOf", "not", "const"];
+const INSPIRATION_SESSION_ALLOWED_TOOLS: &[&str] = &[
+    "inspiration_consensus_patch",
+    "inspiration_open_questions_patch",
+];
 
 // ── Registry ──
 
 static TOOL_REGISTRY: &[&dyn ToolDefinition] = &[
-    &READ_TOOL,
-    &EDIT_TOOL,
-    &CREATE_TOOL,
-    &DELETE_TOOL,
-    &MOVE_TOOL,
-    &LS_TOOL,
-    &GREP_TOOL,
+    &WORKSPACE_MAP_TOOL,
+    &CONTEXT_READ_TOOL,
+    &CONTEXT_SEARCH_TOOL,
+    &KNOWLEDGE_READ_TOOL,
+    &KNOWLEDGE_WRITE_TOOL,
+    &DRAFT_WRITE_TOOL,
+    &STRUCTURE_EDIT_TOOL,
     &REVIEW_CHECK_TOOL,
+    &INSPIRATION_CONSENSUS_PATCH_TOOL,
+    &INSPIRATION_OPEN_QUESTIONS_PATCH_TOOL,
     &ASKUSER_TOOL,
     &SKILL_TOOL,
     &TODOWRITE_TOOL,
-    &OUTLINE_TOOL,
-    &CHARACTER_SHEET_TOOL,
-    &SEARCH_KNOWLEDGE_TOOL,
 ];
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -64,10 +76,17 @@ pub struct ToolSchemaSkipDiagnostic {
     pub error: String,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ToolHiddenDiagnostic {
+    pub tool_name: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ToolSchemaBuildReport {
     pub tools: Vec<serde_json::Value>,
     pub exposed_tools: Vec<String>,
+    pub hidden_tools: Vec<ToolHiddenDiagnostic>,
     pub skipped_tools: Vec<ToolSchemaSkipDiagnostic>,
 }
 
@@ -130,10 +149,13 @@ pub fn get_schema(tool_name: &str, context: &ToolSchemaContext) -> Option<serde_
 
 fn tool_layer(tool_name: &str) -> ToolLayer {
     match tool_name {
-        "read" | "edit" | "create" | "delete" | "move" | "ls" | "grep" | "review_check" => {
+        "workspace_map" | "context_read" | "context_search" | "knowledge_read"
+        | "knowledge_write" | "draft_write" | "structure_edit" | "review_check" => {
             ToolLayer::CoreResource
         }
-        "outline" | "character_sheet" | "search_knowledge" => ToolLayer::DerivedView,
+        "inspiration_consensus_patch" | "inspiration_open_questions_patch" => {
+            ToolLayer::DerivedView
+        }
         "askuser" | "todowrite" | "skill" => ToolLayer::SessionControl,
         _ => ToolLayer::CoreResource,
     }
@@ -290,17 +312,37 @@ pub fn build_openai_tool_schema_report(
     mode: AgentMode,
     context: &ToolSchemaContext,
 ) -> ToolSchemaBuildReport {
-    let visible = visible_tools_for_mode(mode);
+    let exposure = default_exposure_context(mode, context);
+    build_openai_tool_schema_report_for_exposure(&exposure, context)
+}
+
+pub fn build_openai_tool_schema_report_for_exposure(
+    exposure: &ExposureContext,
+    context: &ToolSchemaContext,
+) -> ToolSchemaBuildReport {
     let mut tools = Vec::new();
     let mut exposed_tools = Vec::new();
+    let mut hidden_tools = Vec::new();
     let mut skipped_tools = Vec::new();
 
     for tool in TOOL_REGISTRY
         .iter()
-        .filter(|tool| visible.contains(&tool.name()))
-        .filter(|tool| !(tool.name() == "askuser" && !context.clarification_mode.exposes_askuser()))
+        .filter(|tool| matches!(tool.manifest().domain, ToolDomain::Novel))
     {
+        let manifest = tool.manifest();
+        if let Some(reason) = tool_hidden_reason_for_exposure(tool.name(), &manifest, exposure) {
+            hidden_tools.push(ToolHiddenDiagnostic {
+                tool_name: tool.name().to_string(),
+                reason,
+            });
+            continue;
+        }
+
         let Some(parameters) = tool.schema(context) else {
+            hidden_tools.push(ToolHiddenDiagnostic {
+                tool_name: tool.name().to_string(),
+                reason: "schema_unavailable".to_string(),
+            });
             continue;
         };
 
@@ -319,19 +361,17 @@ pub fn build_openai_tool_schema_report(
         }
 
         exposed_tools.push(tool.name().to_string());
-        tools.push(serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": tool.name(),
-                "description": tool.description(),
-                "parameters": parameters,
-            }
-        }));
+        tools.push(tool_schema_entry(
+            tool.name(),
+            tool.description(),
+            parameters,
+        ));
     }
 
     ToolSchemaBuildReport {
         tools,
         exposed_tools,
+        hidden_tools,
         skipped_tools,
     }
 }
@@ -343,50 +383,6 @@ pub fn build_openai_tool_schemas(
     build_openai_tool_schema_report(mode, context).tools
 }
 
-/// Build OpenAI-compatible schemas and then apply a whitelist filter.
-pub fn build_filtered_openai_tool_schema_report(
-    whitelist: &[String],
-    mode: AgentMode,
-    context: &ToolSchemaContext,
-) -> ToolSchemaBuildReport {
-    let report = build_openai_tool_schema_report(mode, context);
-    let tools = report
-        .tools
-        .into_iter()
-        .filter(|tool| {
-            tool.get("function")
-                .and_then(|f| f.get("name"))
-                .and_then(|n| n.as_str())
-                .map(|name| whitelist.iter().any(|w| w == name))
-                .unwrap_or(false)
-        })
-        .collect::<Vec<_>>();
-    let exposed_tools = report
-        .exposed_tools
-        .into_iter()
-        .filter(|name| whitelist.iter().any(|allowed| allowed == name))
-        .collect::<Vec<_>>();
-    let skipped_tools = report
-        .skipped_tools
-        .into_iter()
-        .filter(|tool| whitelist.iter().any(|allowed| allowed == &tool.tool_name))
-        .collect::<Vec<_>>();
-
-    ToolSchemaBuildReport {
-        tools,
-        exposed_tools,
-        skipped_tools,
-    }
-}
-
-pub fn build_filtered_openai_tool_schemas(
-    whitelist: &[String],
-    mode: AgentMode,
-    context: &ToolSchemaContext,
-) -> Vec<serde_json::Value> {
-    build_filtered_openai_tool_schema_report(whitelist, mode, context).tools
-}
-
 /// Get all tool definitions.
 pub fn get_all_definitions() -> &'static [&'static dyn ToolDefinition] {
     TOOL_REGISTRY
@@ -394,52 +390,188 @@ pub fn get_all_definitions() -> &'static [&'static dyn ToolDefinition] {
 
 /// Get visible tool names for the model.
 pub fn visible_tools_for_model() -> Vec<&'static str> {
+    visible_tools_for_exposure(&default_exposure_context(
+        AgentMode::Writing,
+        &ToolSchemaContext::default(),
+    ))
+}
+
+fn default_exposure_context(mode: AgentMode, context: &ToolSchemaContext) -> ExposureContext {
+    ExposureContext::new(
+        mode,
+        ApprovalMode::ConfirmWrites,
+        context.clarification_mode,
+        SessionSource::UserInteractive,
+        0,
+        context.semantic_retrieval_enabled,
+        None,
+        None,
+        crate::agent_engine::exposure_policy::CapabilityPolicy::default_for_mode(
+            mode,
+            context.clarification_mode,
+        ),
+    )
+}
+
+fn tool_schema_entry(
+    tool_name: &str,
+    description: &str,
+    parameters: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": description,
+            "parameters": parameters,
+        }
+    })
+}
+
+fn tool_hidden_reason_for_exposure(
+    tool_name: &str,
+    manifest: &ToolManifest,
+    exposure: &ExposureContext,
+) -> Option<String> {
+    if let Some(reason) = tool_hidden_reason_for_hard_boundaries(tool_name, manifest, exposure) {
+        return Some(reason);
+    }
+
+    if exposure.capability_policy.hides_tool(tool_name) {
+        return Some("capability_policy:hidden_override".to_string());
+    }
+
+    if exposure.capability_policy.forces_tool(tool_name) {
+        return None;
+    }
+
+    exposure
+        .capability_policy
+        .capability_denial_reason(manifest.capabilities)
+}
+
+fn tool_hidden_reason_for_hard_boundaries(
+    tool_name: &str,
+    manifest: &ToolManifest,
+    exposure: &ExposureContext,
+) -> Option<String> {
+    if let Some(reason) = tool_hidden_reason_for_profile_boundary(tool_name, exposure) {
+        return Some(reason);
+    }
+
+    if !session_source_allowed(manifest, exposure.session_source) {
+        return Some(format!(
+            "session_source:{}",
+            exposure.session_source.as_str()
+        ));
+    }
+
+    if tool_name == "askuser" && !exposure.clarification_mode.exposes_askuser() {
+        return Some("clarification_mode:headless_defer".to_string());
+    }
+
+    if !tool_allowed_in_mode(manifest, exposure.mode) {
+        return Some("mode:planning".to_string());
+    }
+
+    None
+}
+
+fn tool_hidden_reason_for_profile_boundary(
+    tool_name: &str,
+    exposure: &ExposureContext,
+) -> Option<String> {
+    let allowed_tools = match exposure.active_profile.as_deref() {
+        Some(profile) if profile.eq_ignore_ascii_case("inspiration_session") => {
+            Some(INSPIRATION_SESSION_ALLOWED_TOOLS)
+        }
+        _ => None,
+    }?;
+
+    if allowed_tools.iter().any(|allowed| *allowed == tool_name) {
+        None
+    } else {
+        Some(format!(
+            "profile_boundary:{}",
+            exposure.active_profile.as_deref().unwrap_or("unknown")
+        ))
+    }
+}
+
+fn session_source_allowed(manifest: &ToolManifest, session_source: SessionSource) -> bool {
+    if manifest.visibility.interactive_only
+        && !matches!(session_source, SessionSource::UserInteractive)
+    {
+        return false;
+    }
+
+    match session_source {
+        SessionSource::UserInteractive => true,
+        SessionSource::Delegate => manifest.visibility.allow_in_delegate,
+        SessionSource::WorkflowJob => manifest.visibility.allow_in_workflow_job,
+        SessionSource::ReviewGate => manifest.visibility.allow_in_review_gate,
+    }
+}
+
+fn tool_allowed_in_mode(manifest: &ToolManifest, mode: AgentMode) -> bool {
+    match mode {
+        AgentMode::Writing => true,
+        AgentMode::Planning => !tool_requires_write_capability(manifest.capabilities),
+    }
+}
+
+fn tool_requires_write_capability(capabilities: &[ToolCapability]) -> bool {
+    capabilities.iter().any(|capability| {
+        matches!(
+            capability,
+            ToolCapability::DraftWrite
+                | ToolCapability::StructureWrite
+                | ToolCapability::KnowledgeWrite
+        )
+    })
+}
+
+fn visible_tools_for_exposure(exposure: &ExposureContext) -> Vec<&'static str> {
     TOOL_REGISTRY
         .iter()
-        .filter(|t| matches!(t.manifest().domain, ToolDomain::Novel))
-        .map(|t| t.name())
+        .filter(|tool| matches!(tool.manifest().domain, ToolDomain::Novel))
+        .filter(|tool| {
+            let manifest = tool.manifest();
+            tool_hidden_reason_for_exposure(tool.name(), &manifest, exposure).is_none()
+        })
+        .map(|tool| tool.name())
         .collect()
 }
 
-/// Tools hidden in Planning mode (read-only exploration).
-const PLANNING_HIDDEN: &[&str] = &["edit", "create", "delete", "move"];
-
 /// Get visible tool names filtered by agent mode.
 pub fn visible_tools_for_mode(mode: AgentMode) -> Vec<&'static str> {
-    TOOL_REGISTRY
-        .iter()
-        .filter(|t| matches!(t.manifest().domain, ToolDomain::Novel))
-        .filter(|t| match mode {
-            AgentMode::Writing => true,
-            AgentMode::Planning => !PLANNING_HIDDEN.contains(&t.name()),
-        })
-        .map(|t| t.name())
-        .collect()
+    visible_tools_for_exposure(&default_exposure_context(
+        mode,
+        &ToolSchemaContext::default(),
+    ))
 }
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
-    use std::path::PathBuf;
 
     use super::*;
 
     #[test]
     fn test_all_tools_have_manifests() {
         for tool in [
-            "read",
-            "edit",
-            "create",
-            "delete",
-            "move",
-            "ls",
-            "grep",
+            "workspace_map",
+            "context_read",
+            "context_search",
+            "knowledge_read",
+            "knowledge_write",
+            "draft_write",
+            "structure_edit",
             "review_check",
+            "inspiration_consensus_patch",
+            "inspiration_open_questions_patch",
             "askuser",
             "skill",
             "todowrite",
-            "outline",
-            "character_sheet",
-            "search_knowledge",
         ] {
             assert!(
                 get_manifest(tool).is_some(),
@@ -462,21 +594,32 @@ mod tests {
     }
 
     #[test]
-    fn test_edit_description_references_read() {
-        let desc = get_description("edit").expect("edit description");
+    fn test_context_read_description_mentions_ref_and_budgeting() {
+        let desc = get_description("context_read").expect("context_read description");
         assert!(
-            desc.contains("read"),
-            "edit description should reference 'read' tool"
+            desc.contains("<kind>:<project_relative_path>"),
+            "context_read should document the ref form"
+        );
+        assert!(
+            desc.contains("budget") || desc.contains("budgeted"),
+            "context_read should mention budgeted output"
         );
     }
 
     #[test]
-    fn test_read_description_references_edit() {
-        let desc = get_description("read").expect("read description");
-        assert!(
-            desc.contains("edit") || desc.contains("base_revision"),
-            "read description should reference edit workflow"
-        );
+    fn test_draft_write_description_does_not_mention_legacy_parameters() {
+        let desc = get_description("draft_write").expect("draft_write description");
+        let forbidden = [
+            "snapshot".to_string() + "_id",
+            "base".to_string() + "_revision",
+            "o".to_string() + "ps",
+        ];
+        for forbidden in forbidden {
+            assert!(
+                !desc.contains(&forbidden),
+                "draft_write description must not mention legacy field '{forbidden}'"
+            );
+        }
     }
 
     #[test]
@@ -543,7 +686,7 @@ mod tests {
 
         assert_eq!(
             tools.len(),
-            14,
+            10,
             "all writing-mode tools should build successfully"
         );
 
@@ -562,8 +705,12 @@ mod tests {
         let context = ToolSchemaContext::default();
         let report = build_openai_tool_schema_report(AgentMode::Writing, &context);
 
-        assert_eq!(report.tools.len(), 14);
-        assert_eq!(report.exposed_tools.len(), 14);
+        assert_eq!(report.tools.len(), 10);
+        assert_eq!(report.exposed_tools.len(), 10);
+        assert!(report
+            .hidden_tools
+            .iter()
+            .any(|tool| tool.tool_name == "skill"));
         assert!(report.skipped_tools.is_empty());
     }
 
@@ -571,52 +718,20 @@ mod tests {
     fn test_build_tool_schema_inventory_covers_registered_tools() {
         let inventory = build_tool_schema_inventory(&ToolSchemaContext::default());
 
-        assert_eq!(inventory.total_tools, 14);
-        assert_eq!(inventory.provider_safe_tools, 14);
-        assert_eq!(inventory.tools.len(), 14);
+        assert_eq!(inventory.total_tools, 13);
+        assert_eq!(inventory.provider_safe_tools, 13);
+        assert_eq!(inventory.tools.len(), 13);
         assert!(inventory
             .tools
             .iter()
-            .any(|tool| tool.tool_name == "edit"
+            .any(|tool| tool.tool_name == "draft_write"
                 && tool.provider_safe_risk == ProviderSafeRisk::Medium));
     }
 
     #[test]
-    fn test_registry_tools_have_dispatch_or_external_handler() {
-        for tool in TOOL_REGISTRY {
-            assert!(
-                crate::agent_engine::tool_dispatch::dispatch_supports_tool(tool.name())
-                    || tool.externally_handled(),
-                "tool '{}' must either dispatch or be externally handled",
-                tool.name()
-            );
-        }
-    }
-
-    #[test]
-    fn test_tool_schema_inventory_matches_snapshot() {
-        let inventory = build_tool_schema_inventory(&ToolSchemaContext::default());
-        let actual = serde_json::to_value(inventory).expect("inventory should serialize");
-        let snapshot_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("schemas")
-            .join("agent-tool-schema-inventory.json");
-        let expected = std::fs::read_to_string(&snapshot_path).unwrap_or_else(|error| {
-            panic!(
-                "failed to read snapshot {}: {error}",
-                snapshot_path.display()
-            )
-        });
-        let expected: serde_json::Value =
-            serde_json::from_str(&expected).expect("snapshot should be valid json");
-
-        assert_eq!(actual, expected);
-    }
-
-    #[test]
-    fn test_grep_schema_keyword_only_when_semantic_disabled() {
+    fn test_context_search_schema_keyword_only_when_semantic_disabled() {
         let context = ToolSchemaContext::default();
-        let schema = get_schema("grep", &context).expect("grep schema");
+        let schema = get_schema("context_search", &context).expect("context_search schema");
         let modes = schema
             .get("properties")
             .and_then(|p| p.get("mode"))
@@ -628,12 +743,12 @@ mod tests {
     }
 
     #[test]
-    fn test_grep_schema_exposes_semantic_modes_when_enabled() {
+    fn test_context_search_schema_exposes_semantic_modes_when_enabled() {
         let context = ToolSchemaContext {
             semantic_retrieval_enabled: true,
             ..ToolSchemaContext::default()
         };
-        let schema = get_schema("grep", &context).expect("grep schema");
+        let schema = get_schema("context_search", &context).expect("context_search schema");
         let modes = schema
             .get("properties")
             .and_then(|p| p.get("mode"))
@@ -652,6 +767,42 @@ mod tests {
             ..ToolSchemaContext::default()
         };
         assert!(get_schema("askuser", &context).is_none());
+    }
+
+    #[test]
+    fn test_inspiration_session_profile_boundary_only_exposes_patch_tools() {
+        let mut policy = crate::agent_engine::exposure_policy::CapabilityPolicy::new(
+            crate::agent_engine::exposure_policy::CapabilityPreset::MainPlanning,
+        );
+        policy.forced_tools = INSPIRATION_SESSION_ALLOWED_TOOLS
+            .iter()
+            .map(|tool| tool.to_string())
+            .collect();
+        let exposure = ExposureContext::new(
+            AgentMode::Planning,
+            ApprovalMode::ConfirmWrites,
+            crate::agent_engine::types::ClarificationMode::Interactive,
+            SessionSource::UserInteractive,
+            0,
+            false,
+            None,
+            Some("inspiration_session".to_string()),
+            policy,
+        );
+
+        let report =
+            build_openai_tool_schema_report_for_exposure(&exposure, &ToolSchemaContext::default());
+
+        assert_eq!(
+            report.exposed_tools,
+            INSPIRATION_SESSION_ALLOWED_TOOLS
+                .iter()
+                .map(|tool| tool.to_string())
+                .collect::<Vec<_>>()
+        );
+        assert!(report.hidden_tools.iter().any(|tool| {
+            tool.tool_name == "askuser" && tool.reason == "profile_boundary:inspiration_session"
+        }));
     }
 
     #[test]
@@ -677,10 +828,8 @@ mod tests {
 
     #[test]
     fn test_visible_tools_for_model_returns_all_novel_tools() {
-        let expected: BTreeSet<&'static str> = TOOL_REGISTRY
-            .iter()
-            .filter(|t| matches!(t.manifest().domain, ToolDomain::Novel))
-            .map(|t| t.name())
+        let expected: BTreeSet<&'static str> = visible_tools_for_mode(AgentMode::Writing)
+            .into_iter()
             .collect();
 
         let actual: BTreeSet<&'static str> = visible_tools_for_model().into_iter().collect();
@@ -688,16 +837,22 @@ mod tests {
     }
 
     #[test]
-    fn test_context_tools_are_parallel_safe() {
-        for name in ["outline", "character_sheet", "search_knowledge"] {
+    fn test_readonly_tools_are_parallel_safe() {
+        for name in [
+            "workspace_map",
+            "context_read",
+            "context_search",
+            "knowledge_read",
+            "review_check",
+        ] {
             let manifest = get_manifest(name).expect("manifest should exist");
             assert!(manifest.parallel_safe, "{} should be parallel_safe", name);
         }
     }
 
     #[test]
-    fn test_registry_has_14_tools() {
-        assert_eq!(TOOL_REGISTRY.len(), 14);
+    fn test_registry_has_13_tools() {
+        assert_eq!(TOOL_REGISTRY.len(), 13);
     }
 
     #[test]
@@ -711,14 +866,17 @@ mod tests {
             );
         }
         for name in [
-            "read",
-            "edit",
-            "create",
-            "delete",
-            "move",
-            "ls",
-            "grep",
+            "workspace_map",
+            "context_read",
+            "context_search",
+            "knowledge_read",
+            "knowledge_write",
+            "draft_write",
+            "structure_edit",
             "review_check",
+            "inspiration_consensus_patch",
+            "inspiration_open_questions_patch",
+            "todowrite",
         ] {
             let def = TOOL_REGISTRY.iter().find(|t| t.name() == name).unwrap();
             assert!(
@@ -732,24 +890,39 @@ mod tests {
     #[test]
     fn test_planning_mode_hides_write_tools() {
         let visible = visible_tools_for_mode(AgentMode::Planning);
-        assert!(!visible.contains(&"edit"), "Planning should hide edit");
-        assert!(!visible.contains(&"create"), "Planning should hide create");
-        assert!(!visible.contains(&"delete"), "Planning should hide delete");
-        assert!(!visible.contains(&"move"), "Planning should hide move");
-        assert!(visible.contains(&"read"));
-        assert!(visible.contains(&"ls"));
-        assert!(visible.contains(&"grep"));
-        assert!(visible.contains(&"outline"));
+        assert!(
+            !visible.contains(&"draft_write"),
+            "Planning should hide draft_write"
+        );
+        assert!(
+            !visible.contains(&"structure_edit"),
+            "Planning should hide structure_edit"
+        );
+        assert!(
+            !visible.contains(&"knowledge_write"),
+            "Planning should hide knowledge_write"
+        );
+        assert!(visible.contains(&"workspace_map"));
+        assert!(visible.contains(&"context_read"));
+        assert!(visible.contains(&"context_search"));
+        assert!(visible.contains(&"knowledge_read"));
+        assert!(visible.contains(&"review_check"));
+        assert!(visible.contains(&"askuser"));
+        assert!(visible.contains(&"todowrite"));
+        assert!(!visible.contains(&"skill"));
     }
 
     #[test]
     fn test_writing_mode_includes_all_tools() {
         let visible = visible_tools_for_mode(AgentMode::Writing);
-        assert_eq!(visible.len(), 14);
-        assert!(visible.contains(&"edit"));
-        assert!(visible.contains(&"create"));
-        assert!(visible.contains(&"delete"));
-        assert!(visible.contains(&"move"));
+        assert_eq!(visible.len(), 10);
+        assert!(visible.contains(&"draft_write"));
+        assert!(visible.contains(&"knowledge_write"));
+        assert!(visible.contains(&"structure_edit"));
         assert!(visible.contains(&"review_check"));
+        assert!(visible.contains(&"askuser"));
+        assert!(visible.contains(&"todowrite"));
+        assert!(!visible.contains(&"skill"));
+        assert!(!visible.contains(&"inspiration_consensus_patch"));
     }
 }

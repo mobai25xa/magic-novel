@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, type RefObject } from 'react'
 
 import { readChapter } from '@/features/editor-reading'
+import { useProjectBootstrapStatusSync } from '@/features/project-home/use-project-bootstrap-status-sync'
+import { useSessionUiStateSync } from '@/features/editor-session/use-session-ui-state-sync'
 import { useAgentChatStore } from '@/state/agent'
 import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
@@ -163,7 +165,7 @@ function useRestoreLastOpenedChapter(projectPath: string | null, currentChapterI
       lastOpenedChapterPath &&
       lastOpenedChapterId &&
       !currentChapterId &&
-      currentDocKind !== 'asset'
+      currentDocKind === null
     ) {
       readChapter(projectPath, lastOpenedChapterPath)
         .then((chapter) => {
@@ -212,6 +214,8 @@ export function EditorPage({ onOpenSettings }: EditorPageProps) {
   })
 
   useRestoreLastOpenedChapter(projectPath, currentChapterId)
+  useProjectBootstrapStatusSync(projectPath)
+  useSessionUiStateSync()
 
   // 响应式面板自动隐藏
   useEditorPanelAutoHide({ disableRightPanelAutoHide: isAgentSessionActive })

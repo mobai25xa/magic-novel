@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { createChatPanelActions } from './agent-chat-panel-actions'
 import { AgentChatPanelView } from './agent-chat-panel-view'
 import { useAgentChatPanelState } from './panel/agent-chat-panel-state'
@@ -8,6 +10,7 @@ type AgentChatPanelProps = {
 
 export function AgentChatPanel({ onClosePanel }: AgentChatPanelProps) {
   const state = useAgentChatPanelState()
+  const [missionPanelOpen, setMissionPanelOpen] = useState(false)
 
   const {
     handleSend,
@@ -17,10 +20,16 @@ export function AgentChatPanel({ onClosePanel }: AgentChatPanelProps) {
     approvalMode: state.approvalMode,
     capabilityMode: state.capabilityMode,
     running: state.running,
+    missionBusy: state.missionBusy,
+    missionLocked: state.missionLocked,
+    missionId: state.missionId,
+    projectPath: state.projectPath,
     canContinue: state.sessionCanContinue,
     runtimeState: state.sessionRuntimeState,
     setInput: state.setInput,
     setLastError: state.setLastError,
+    setMissionDispatching: state.setMissionDispatching,
+    onMissionStarted: () => setMissionPanelOpen(true),
     contexts: state.contexts,
     clearContexts: state.clearContexts,
     labels: state.chatLabels,
@@ -72,9 +81,13 @@ export function AgentChatPanel({ onClosePanel }: AgentChatPanelProps) {
       onAddContext={state.addContext}
       onRemoveContext={state.removeContext}
       elapsedTime={state.streamingElapsedTime}
+      elapsedSeconds={state.streamingElapsedSeconds}
       showTimer={state.showStreamingTimer}
       projectPath={state.projectPath}
       missionId={state.missionId}
+      missionPanelOpen={missionPanelOpen}
+      onOpenMissionPanel={() => setMissionPanelOpen(true)}
+      onCloseMissionPanel={() => setMissionPanelOpen(false)}
       onClosePanel={onClosePanel}
     />
   )

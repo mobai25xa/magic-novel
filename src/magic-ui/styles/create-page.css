@@ -21,11 +21,21 @@
 /* 表单容器 */
 .creation-container {
   width: 100%;
-  max-width: 900px;
+  max-width: 980px;
   display: flex;
   flex-direction: column;
   gap: 24px;
   padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.creation-container--workspace {
+  max-width: none;
+  padding: 0 clamp(16px, 2vw, 32px);
+}
+
+.creation-container--fixed-workspace {
+  min-height: 0;
 }
 
 /* 页面标题区 */
@@ -55,6 +65,64 @@
   padding: 40px;
   position: relative;
   overflow: hidden;
+}
+
+.create-glass-card--workspace {
+  padding: clamp(24px, 2vw, 36px);
+}
+
+.create-glass-card--fixed-workspace {
+  min-height: 0;
+}
+
+@media (min-width: 1280px) {
+  .main-scroll--workspace-mode > .content-scroll-create--workspace {
+    flex: 1;
+    min-height: 0;
+    height: 100%;
+  }
+
+  .content-scroll-create--workspace {
+    overflow: hidden;
+    min-height: 0;
+    height: 100%;
+    padding-bottom: 0;
+    padding-top: clamp(12px, 1.8vh, 18px);
+    align-items: stretch;
+  }
+
+  .creation-container--fixed-workspace {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    gap: 16px;
+  }
+
+  .create-glass-card--fixed-workspace {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 1024px) {
+  .create-glass-card {
+    padding: 28px;
+  }
+}
+
+@media (max-width: 640px) {
+  .creation-container,
+  .creation-container--workspace {
+    padding: 0 12px;
+  }
+
+  .create-glass-card,
+  .create-glass-card--workspace {
+    padding: 20px;
+  }
 }
 
 /* 表单组 */

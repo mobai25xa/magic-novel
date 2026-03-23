@@ -90,7 +90,12 @@ async function main() {
     loadAction: readFileSync(resolve(root, 'src/lib/agent-chat/session/store/session-store-action-builders-load.ts'), 'utf-8'),
     resumeAction: readFileSync(resolve(root, 'src/lib/agent-chat/session/store/session-store-action-builders-resume.ts'), 'utf-8'),
     runtime: readFileSync(resolve(root, 'src/lib/agent-chat/runtime.ts'), 'utf-8'),
-    runtimeBackendEvents: readFileSync(resolve(root, 'src/lib/agent-chat/runtime-backend-events.ts'), 'utf-8'),
+    runtimeBackendEvents: [
+      readFileSync(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/tool.ts'), 'utf-8'),
+      readFileSync(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/turn.ts'), 'utf-8'),
+      readFileSync(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/turn-failed.ts'), 'utf-8'),
+      readFileSync(resolve(root, 'src/lib/agent-chat/runtime-backend-events/utils.ts'), 'utf-8'),
+    ].join('\n'),
   }
 
   checks.push(createCheck(

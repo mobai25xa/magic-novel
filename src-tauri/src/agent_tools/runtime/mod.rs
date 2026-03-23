@@ -5,298 +5,495 @@ use std::time::Instant;
 use serde_json::Value;
 
 mod helpers;
+mod input;
+mod refs;
 
-use crate::agent_tools::contracts::{
-    CreateInput, DeleteInput, EditInput, FaultDomain, GrepInput, LsInput, MoveInput, ReadInput,
-    ToolMeta, ToolResult,
-};
-use crate::agent_tools::registry::{get_manifest, visible_tools_for_model};
-use crate::agent_tools::tools::{
-    create_tool, delete_tool, edit_tool, grep_tool, ls_tool, move_tool, read_tool,
-};
+mod draft_write;
+mod inspiration;
+mod structure_edit;
+
+#[cfg(test)]
+mod tests;
+
+use crate::agent_tools::contracts::{FaultDomain, ToolError, ToolMeta, ToolResult};
 use crate::review::engine as review_engine;
 use crate::review::types::ReviewRunInput;
-use helpers::{
-    edit_entity_ref, emit_from_result, extract_revision, extract_tx_id, map_app_error,
-    read_entity_ref, tool_error,
-};
+use helpers::{emit_from_result, map_app_error};
+use input::{classify_serde_error, take_project_path};
 
-fn disabled_tool_message(tool: &str) -> String {
-    let available = visible_tools_for_model();
-    if available.is_empty() {
-        return format!("tool {tool} is not registered");
-    }
-
-    format!(
-        "tool {tool} is not registered (available: {})",
-        available.join(", ")
-    )
-}
-
-pub fn execute_create(input: CreateInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("create").is_none() {
-        return tool_error(
-            "create",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("create"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let result = match create_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v),
-            error: None,
-            meta: ToolMeta {
-                tool: "create".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: None,
-                revision_after: None,
-                tx_id: None,
-                read_set: None,
-                write_set: None,
-            },
-        },
-        Err(err) => map_app_error("create", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
-}
-
-pub fn execute_read(input: ReadInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("read").is_none() {
-        return tool_error(
-            "read",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("read"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let read_set = Some(vec![read_entity_ref(&input)]);
-
-    let result = match read_tool::run(input, &call_id) {
-        Ok(v) => {
-            let revision = extract_revision(&v, "revision");
-            ToolResult {
-                ok: true,
-                data: Some(v),
-                error: None,
-                meta: ToolMeta {
-                    tool: "read".to_string(),
-                    call_id,
-                    duration_ms: started.elapsed().as_millis() as u64,
-                    revision_before: revision,
-                    revision_after: revision,
-                    tx_id: None,
-                    read_set,
-                    write_set: None,
-                },
+fn fault_domain_for_code(code: &str) -> FaultDomain {
+    match code {
+        "E_TOOL_SCHEMA_INVALID"
+        | "E_TOOL_UNKNOWN_FIELD"
+        | "E_REF_INVALID"
+        | "E_REF_KIND_UNSUPPORTED"
+        | "E_PAYLOAD_TOO_LARGE" => FaultDomain::Validation,
+        "E_REF_NOT_FOUND" | "E_IO" => FaultDomain::Io,
+        "E_CONFLICT" => FaultDomain::Vc,
+        "E_NOT_IMPLEMENTED" | "E_INTERNAL" => FaultDomain::Tool,
+        _ => {
+            if code.starts_with("E_IO") {
+                FaultDomain::Io
+            } else {
+                FaultDomain::Tool
             }
         }
-        Err(err) => map_app_error("read", call_id, started, err),
+    }
+}
+
+fn tool_ok(
+    tool: &str,
+    call_id: String,
+    started: Instant,
+    data: Value,
+    read_set: Option<Vec<String>>,
+    write_set: Option<Vec<String>>,
+) -> ToolResult<Value> {
+    ToolResult {
+        ok: true,
+        data: Some(data),
+        error: None,
+        meta: ToolMeta {
+            tool: tool.to_string(),
+            call_id,
+            duration_ms: started.elapsed().as_millis() as u64,
+            revision_before: None,
+            revision_after: None,
+            tx_id: None,
+            read_set,
+            write_set,
+        },
+    }
+}
+
+fn tool_err(
+    tool: &str,
+    call_id: String,
+    started: Instant,
+    code: &str,
+    message: &str,
+    retryable: bool,
+    fault_domain: FaultDomain,
+    read_set: Option<Vec<String>>,
+    write_set: Option<Vec<String>>,
+) -> ToolResult<Value> {
+    ToolResult {
+        ok: false,
+        data: None,
+        error: Some(ToolError {
+            code: code.to_string(),
+            message: message.to_string(),
+            retryable,
+            fault_domain,
+            details: None,
+        }),
+        meta: ToolMeta {
+            tool: tool.to_string(),
+            call_id,
+            duration_ms: started.elapsed().as_millis() as u64,
+            revision_before: None,
+            revision_after: None,
+            tx_id: None,
+            read_set,
+            write_set,
+        },
+    }
+}
+
+pub fn execute_workspace_map(
+    project_path: &str,
+    mut input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+
+    let project_path = match take_project_path(project_path, &mut input) {
+        Ok(p) => p,
+        Err(e) => {
+            let result = tool_err(
+                "workspace_map",
+                call_id,
+                started,
+                "E_TOOL_SCHEMA_INVALID",
+                &e,
+                false,
+                FaultDomain::Validation,
+                None,
+                None,
+            );
+            emit_from_result(&result, "execute");
+            return result;
+        }
+    };
+
+    let args: crate::agent_tools::tools::workspace_map::WorkspaceMapArgs =
+        match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => {
+                let (code, msg) = classify_serde_error(&err);
+                let result = tool_err(
+                    "workspace_map",
+                    call_id,
+                    started,
+                    code,
+                    &msg,
+                    false,
+                    FaultDomain::Validation,
+                    None,
+                    None,
+                );
+                emit_from_result(&result, "execute");
+                return result;
+            }
+        };
+
+    let result =
+        match crate::agent_tools::tools::workspace_map::run_workspace_map(&project_path, args) {
+            Ok(run) => tool_ok(
+                "workspace_map",
+                call_id,
+                started,
+                serde_json::to_value(run.output).expect("workspace_map output should serialize"),
+                run.read_set,
+                None,
+            ),
+            Err(err) => tool_err(
+                "workspace_map",
+                call_id,
+                started,
+                err.code,
+                &err.message,
+                false,
+                fault_domain_for_code(err.code),
+                None,
+                None,
+            ),
+        };
+
+    emit_from_result(&result, "execute");
+    result
+}
+
+pub fn execute_context_read(
+    project_path: &str,
+    mut input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+
+    let project_path = match take_project_path(project_path, &mut input) {
+        Ok(p) => p,
+        Err(e) => {
+            let result = tool_err(
+                "context_read",
+                call_id,
+                started,
+                "E_TOOL_SCHEMA_INVALID",
+                &e,
+                false,
+                FaultDomain::Validation,
+                None,
+                None,
+            );
+            emit_from_result(&result, "execute");
+            return result;
+        }
+    };
+
+    let args: crate::agent_tools::tools::context_read::ContextReadArgs =
+        match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => {
+                let (code, msg) = classify_serde_error(&err);
+                let result = tool_err(
+                    "context_read",
+                    call_id,
+                    started,
+                    code,
+                    &msg,
+                    false,
+                    FaultDomain::Validation,
+                    None,
+                    None,
+                );
+                emit_from_result(&result, "execute");
+                return result;
+            }
+        };
+
+    let result =
+        match crate::agent_tools::tools::context_read::run_context_read(&project_path, args) {
+            Ok(run) => tool_ok(
+                "context_read",
+                call_id,
+                started,
+                serde_json::to_value(run.output).expect("context_read output should serialize"),
+                run.read_set,
+                None,
+            ),
+            Err(err) => tool_err(
+                "context_read",
+                call_id,
+                started,
+                err.code,
+                &err.message,
+                false,
+                fault_domain_for_code(err.code),
+                None,
+                None,
+            ),
+        };
+
+    emit_from_result(&result, "execute");
+    result
+}
+
+pub fn execute_context_search(
+    project_path: &str,
+    mut input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+
+    let project_path = match take_project_path(project_path, &mut input) {
+        Ok(p) => p,
+        Err(e) => {
+            let result = tool_err(
+                "context_search",
+                call_id,
+                started,
+                "E_TOOL_SCHEMA_INVALID",
+                &e,
+                false,
+                FaultDomain::Validation,
+                None,
+                None,
+            );
+            emit_from_result(&result, "execute");
+            return result;
+        }
+    };
+
+    let args: crate::agent_tools::tools::context_search::ContextSearchArgs =
+        match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => {
+                let (code, msg) = classify_serde_error(&err);
+                let result = tool_err(
+                    "context_search",
+                    call_id,
+                    started,
+                    code,
+                    &msg,
+                    false,
+                    FaultDomain::Validation,
+                    None,
+                    None,
+                );
+                emit_from_result(&result, "execute");
+                return result;
+            }
+        };
+
+    let result =
+        match crate::agent_tools::tools::context_search::run_context_search(&project_path, args) {
+            Ok(run) => tool_ok(
+                "context_search",
+                call_id,
+                started,
+                serde_json::to_value(run.output).expect("context_search output should serialize"),
+                run.read_set,
+                None,
+            ),
+            Err(err) => tool_err(
+                "context_search",
+                call_id,
+                started,
+                err.code,
+                &err.message,
+                false,
+                fault_domain_for_code(err.code),
+                None,
+                None,
+            ),
+        };
+
+    emit_from_result(&result, "execute");
+    result
+}
+
+pub fn execute_knowledge_read(
+    project_path: &str,
+    mut input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+
+    let project_path = match take_project_path(project_path, &mut input) {
+        Ok(p) => p,
+        Err(e) => {
+            let result = tool_err(
+                "knowledge_read",
+                call_id,
+                started,
+                "E_TOOL_SCHEMA_INVALID",
+                &e,
+                false,
+                FaultDomain::Validation,
+                None,
+                None,
+            );
+            emit_from_result(&result, "execute");
+            return result;
+        }
+    };
+
+    let args: crate::agent_tools::tools::knowledge_read::KnowledgeReadArgs =
+        match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => {
+                let (code, msg) = classify_serde_error(&err);
+                let result = tool_err(
+                    "knowledge_read",
+                    call_id,
+                    started,
+                    code,
+                    &msg,
+                    false,
+                    FaultDomain::Validation,
+                    None,
+                    None,
+                );
+                emit_from_result(&result, "execute");
+                return result;
+            }
+        };
+
+    let result =
+        match crate::agent_tools::tools::knowledge_read::run_knowledge_read(&project_path, args) {
+            Ok(run) => tool_ok(
+                "knowledge_read",
+                call_id,
+                started,
+                serde_json::to_value(run.output).expect("knowledge_read output should serialize"),
+                run.read_set,
+                None,
+            ),
+            Err(err) => tool_err(
+                "knowledge_read",
+                call_id,
+                started,
+                err.code,
+                &err.message,
+                false,
+                fault_domain_for_code(err.code),
+                None,
+                None,
+            ),
+        };
+
+    emit_from_result(&result, "execute");
+    result
+}
+
+pub fn execute_knowledge_write(
+    project_path: &str,
+    mut input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    let started = Instant::now();
+
+    let project_path = match take_project_path(project_path, &mut input) {
+        Ok(p) => p,
+        Err(e) => {
+            let result = tool_err(
+                "knowledge_write",
+                call_id,
+                started,
+                "E_TOOL_SCHEMA_INVALID",
+                &e,
+                false,
+                FaultDomain::Validation,
+                None,
+                None,
+            );
+            emit_from_result(&result, "execute");
+            return result;
+        }
+    };
+
+    let args: crate::agent_tools::tools::knowledge_write::KnowledgeWriteArgs =
+        match serde_json::from_value(input) {
+            Ok(v) => v,
+            Err(err) => {
+                let (code, msg) = classify_serde_error(&err);
+                let result = tool_err(
+                    "knowledge_write",
+                    call_id,
+                    started,
+                    code,
+                    &msg,
+                    false,
+                    FaultDomain::Validation,
+                    None,
+                    None,
+                );
+                emit_from_result(&result, "execute");
+                return result;
+            }
+        };
+
+    let result = match crate::agent_tools::tools::knowledge_write::run_knowledge_write(
+        &project_path,
+        &call_id,
+        args,
+    ) {
+        Ok(run) => tool_ok(
+            "knowledge_write",
+            call_id,
+            started,
+            serde_json::to_value(run.output).expect("knowledge_write output should serialize"),
+            run.read_set,
+            run.write_set,
+        ),
+        Err(err) => tool_err(
+            "knowledge_write",
+            call_id,
+            started,
+            err.code,
+            &err.message,
+            false,
+            fault_domain_for_code(err.code),
+            None,
+            None,
+        ),
     };
 
     emit_from_result(&result, "execute");
     result
 }
 
-pub fn execute_edit(input: EditInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("edit").is_none() {
-        return tool_error(
-            "edit",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("edit"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let rw_set = Some(vec![edit_entity_ref(&input)]);
-
-    let result = match edit_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v.clone()),
-            error: None,
-            meta: ToolMeta {
-                tool: "edit".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: extract_revision(&v, "revision_before"),
-                revision_after: extract_revision(&v, "revision_after"),
-                tx_id: extract_tx_id(&v),
-                read_set: rw_set.clone(),
-                write_set: rw_set,
-            },
-        },
-        Err(err) => map_app_error("edit", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
+pub fn execute_draft_write(project_path: &str, input: Value, call_id: String) -> ToolResult<Value> {
+    draft_write::execute(project_path, input, call_id)
 }
 
-pub fn execute_ls(input: LsInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("ls").is_none() {
-        return tool_error(
-            "ls",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("ls"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let result = match ls_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v),
-            error: None,
-            meta: ToolMeta {
-                tool: "ls".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: None,
-                revision_after: None,
-                tx_id: None,
-                read_set: None,
-                write_set: None,
-            },
-        },
-        Err(err) => map_app_error("ls", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
+pub fn execute_inspiration_consensus_patch(input: Value, call_id: String) -> ToolResult<Value> {
+    inspiration::execute_consensus_patch(input, call_id)
 }
 
-pub fn execute_delete(input: DeleteInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("delete").is_none() {
-        return tool_error(
-            "delete",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("delete"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let result = match delete_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v),
-            error: None,
-            meta: ToolMeta {
-                tool: "delete".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: None,
-                revision_after: None,
-                tx_id: None,
-                read_set: None,
-                write_set: None,
-            },
-        },
-        Err(err) => map_app_error("delete", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
+pub fn execute_inspiration_open_questions_patch(
+    input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    inspiration::execute_open_questions_patch(input, call_id)
 }
 
-pub fn execute_move(input: MoveInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("move").is_none() {
-        return tool_error(
-            "move",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("move"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let result = match move_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v),
-            error: None,
-            meta: ToolMeta {
-                tool: "move".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: None,
-                revision_after: None,
-                tx_id: None,
-                read_set: None,
-                write_set: None,
-            },
-        },
-        Err(err) => map_app_error("move", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
-}
-
-pub fn execute_grep(input: GrepInput, call_id: String) -> ToolResult<Value> {
-    let started = Instant::now();
-    if get_manifest("grep").is_none() {
-        return tool_error(
-            "grep",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("grep"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
-    let result = match grep_tool::run(input, &call_id) {
-        Ok(v) => ToolResult {
-            ok: true,
-            data: Some(v),
-            error: None,
-            meta: ToolMeta {
-                tool: "grep".to_string(),
-                call_id,
-                duration_ms: started.elapsed().as_millis() as u64,
-                revision_before: None,
-                revision_after: None,
-                tx_id: None,
-                read_set: None,
-                write_set: None,
-            },
-        },
-        Err(err) => map_app_error("grep", call_id, started, err),
-    };
-
-    emit_from_result(&result, "execute");
-    result
+pub fn execute_structure_edit(
+    project_path: &str,
+    input: Value,
+    call_id: String,
+) -> ToolResult<Value> {
+    structure_edit::execute(project_path, input, call_id)
 }
 
 pub fn execute_review_check(
@@ -305,18 +502,6 @@ pub fn execute_review_check(
     call_id: String,
 ) -> ToolResult<Value> {
     let started = Instant::now();
-    if get_manifest("review_check").is_none() {
-        return tool_error(
-            "review_check",
-            call_id,
-            started,
-            "E_TOOL_DISABLED",
-            &disabled_tool_message("review_check"),
-            false,
-            FaultDomain::Policy,
-        );
-    }
-
     let read_set = Some(input.target_refs.clone());
 
     let result = match review_engine::run_review(std::path::Path::new(project_path), input) {

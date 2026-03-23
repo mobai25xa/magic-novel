@@ -1,19 +1,22 @@
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog'
 
 import {
-  createMagicAssetFileNode,
-  createMagicAssetFolderNode,
-  deleteMagicAssetNode,
+  createKnowledgeDocumentNode,
+  createKnowledgeFolderNode,
+  deleteKnowledgeNode,
+  createAssetFileNode,
+  createAssetFolderNode,
+  deleteAssetNode,
   exportProjectTreeNode,
   importVolumeNodeContent,
   loadProjectTree,
-  renameMagicAssetNode,
+  renameAssetNode,
 } from '@/features/content-tree-management'
 import type { useToast } from '@/magic-ui/components'
 import type { Translations } from '@/i18n/locales/zh'
 
 import { convertFileNode } from '../content-tree-converters'
-import type { PendingAssetWindow, TreeNodeProps } from '../content-tree-types'
+import type { TreeNodeProps } from '../content-tree-types'
 import { sanitizeFilename } from '../content-tree-utils'
 
 type Input = {
@@ -27,6 +30,10 @@ type Input = {
   currentAssetPath: string | null
   setCurrentAsset: (relativePath: string | null, title?: string | null) => void
   labels: Translations['tree']
+}
+
+function isKnowledgeVirtualPath(path?: string | null) {
+  return typeof path === 'string' && path.startsWith('.magic_novel/')
 }
 
 async function refreshTree(input: Input) {
@@ -45,7 +52,11 @@ async function deleteAssetIfNeeded(input: Input): Promise<boolean> {
   if (input.node.kind !== 'asset_file' && input.node.kind !== 'asset_dir') return false
 
   try {
-    await deleteMagicAssetNode(input.projectPath, input.node.assetRelativePath)
+    if (isKnowledgeVirtualPath(input.node.assetRelativePath)) {
+      await deleteKnowledgeNode(input.projectPath, input.node.assetRelativePath)
+    } else {
+      await deleteAssetNode(input.projectPath, input.node.assetRelativePath)
+    }
 
     const isCurrentAsset =
       input.node.kind === 'asset_file' &&
@@ -151,7 +162,7 @@ async function handleRenameNode(input: Input, newName: string) {
 
   if (input.node.kind === 'asset_file' && input.node.assetRelativePath) {
     try {
-      await renameMagicAssetNode(input.projectPath, {
+      await renameAssetNode(input.projectPath, {
         kind: 'asset_file',
         relativePath: input.node.assetRelativePath,
         title: newName,
@@ -167,7 +178,7 @@ async function handleRenameNode(input: Input, newName: string) {
 
   if (input.node.kind === 'asset_dir' && input.node.assetRelativePath) {
     try {
-      await renameMagicAssetNode(input.projectPath, {
+      await renameAssetNode(input.projectPath, {
         kind: 'asset_dir',
         relativePath: input.node.assetRelativePath,
         title: newName,
@@ -189,7 +200,11 @@ async function handleCreateFolder(input: Input, title: string) {
 
   try {
     const parentDir = input.node.kind === 'knowledge' ? '' : input.node.assetRelativePath || ''
-    await createMagicAssetFolderNode(input.projectPath, parentDir, title)
+    if (!parentDir || isKnowledgeVirtualPath(parentDir)) {
+      await createKnowledgeFolderNode(input.projectPath, parentDir, title)
+    } else {
+      await createAssetFolderNode(input.projectPath, parentDir, title)
+    }
     await refreshTree(input)
     input.addToast({ title: input.labels.createSuccess, description: input.labels.createFolderSuccess, variant: 'success' })
   } catch (error) {
@@ -202,21 +217,21 @@ async function handleCreateFile(input: Input, title: string) {
   if (!input.projectPath) return
 
   try {
-    const pendingWindow = window as PendingAssetWindow
-    const kind = String(pendingWindow.__pendingAssetKind || 'worldview')
-    pendingWindow.__pendingAssetKind = undefined
-
     const parentDir = input.node.kind === 'knowledge' ? '' : input.node.assetRelativePath || ''
-    const relativePath = await createMagicAssetFileNode(input.projectPath, parentDir, kind as 'worldview' | 'outline' | 'character' | 'lore' | 'prompt', title)
+    const isKnowledgeTarget = !parentDir || isKnowledgeVirtualPath(parentDir)
+    const relativePath = isKnowledgeTarget
+      ? await createKnowledgeDocumentNode(input.projectPath, parentDir, title)
+      : await createAssetFileNode(input.projectPath, parentDir, 'worldview', title)
 
     await refreshTree(input)
 
     try {
+      const normalizedTitle = title.replace(/\.md$/i, '')
       input.onSelect({
         kind: 'asset_file',
         name: relativePath.split('/').pop() || relativePath,
-        title,
-        path: `magic_assets/${relativePath}`,
+        title: normalizedTitle,
+        path: isKnowledgeTarget ? `knowledge:${relativePath}` : `assets/${relativePath}`,
         assetRelativePath: relativePath,
       })
     } catch {}

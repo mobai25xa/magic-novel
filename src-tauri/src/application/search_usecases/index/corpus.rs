@@ -8,8 +8,8 @@ use super::types::{ChunkRecord, CorpusFile, CorpusItem, CorpusSummary};
 
 const MANUSCRIPTS_DIR: &str = "manuscripts";
 const VOLUME_FILE: &str = "volume.json";
-const MAGIC_ASSETS_DIR: &str = "magic_assets";
-const MAGIC_FOLDER_META: &str = ".magic_folder.json";
+const ASSETS_DIR: &str = "assets";
+const ASSET_FOLDER_META: &str = ".magic_folder.json";
 
 pub fn scan_corpus(project_path: &str) -> Result<CorpusFile, AppError> {
     let mut items = vec![];
@@ -97,7 +97,7 @@ fn scan_chapters(project_path: &str, items: &mut Vec<CorpusItem>) -> Result<(), 
 }
 
 fn scan_assets(project_path: &str, items: &mut Vec<CorpusItem>) -> Result<(), AppError> {
-    let assets_root = PathBuf::from(project_path).join(MAGIC_ASSETS_DIR);
+    let assets_root = PathBuf::from(project_path).join(ASSETS_DIR);
     if !assets_root.exists() {
         return Ok(());
     }
@@ -123,11 +123,11 @@ fn walk_assets(root: &Path, relative: &str, items: &mut Vec<CorpusItem>) -> Resu
             continue;
         }
 
-        if !file_type.is_file() || name == MAGIC_FOLDER_META || !name.ends_with(".json") {
+        if !file_type.is_file() || name == ASSET_FOLDER_META || !name.ends_with(".json") {
             continue;
         }
 
-        let rel_path = PathBuf::from(MAGIC_ASSETS_DIR)
+        let rel_path = PathBuf::from(ASSETS_DIR)
             .join(&rel)
             .to_string_lossy()
             .replace('\\', "/");

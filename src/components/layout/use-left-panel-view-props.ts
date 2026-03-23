@@ -54,7 +54,11 @@ export function useLeftPanelViewProps(input: Input): LeftPanelViewProps {
         relativePath,
         setCurrentAssetDoc: ({ relativePath: path, title, content }) => {
           const editorStore = useEditorStore.getState()
-          editorStore.setCurrentAsset(path, title || null)
+          if (path.startsWith('.magic_novel/')) {
+            editorStore.setCurrentKnowledge(path, title || null)
+          } else {
+            editorStore.setCurrentAsset(path, title || null)
+          }
           editorStore.setContent(content)
           editorStore.setIsDirty(false)
         },

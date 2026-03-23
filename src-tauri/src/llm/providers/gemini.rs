@@ -468,8 +468,8 @@ mod tests {
                 "content": {
                     "parts": [{
                         "functionCall": {
-                            "name": "read",
-                            "args": { "path": "chapter1" }
+                            "name": "context_read",
+                            "args": { "target_ref": "chapter:manuscripts/vol_1/ch_1.json" }
                         }
                     }],
                     "role": "model"
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(events.len(), 4);
         match &events[0] {
             LlmStreamEvent::ToolCallStart { id, name } => {
-                assert_eq!(name, "read");
+                assert_eq!(name, "context_read");
                 assert!(id.starts_with("gemini_call_"));
             }
             _ => panic!("expected ToolCallStart"),
@@ -548,7 +548,7 @@ mod tests {
                 role: crate::agent_engine::messages::Role::Tool,
                 blocks: vec![crate::agent_engine::messages::ContentBlock::ToolResult {
                     tool_call_id: "gemini_call_1".to_string(),
-                    tool_name: Some("read".to_string()),
+                    tool_name: Some("context_read".to_string()),
                     content: "{\"ok\":true}".to_string(),
                     is_error: false,
                 }],
@@ -573,7 +573,7 @@ mod tests {
             .and_then(|v| v.get("name"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        assert_eq!(name, "read");
+        assert_eq!(name, "context_read");
     }
 
     #[test]

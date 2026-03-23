@@ -32,7 +32,7 @@ export type ChapterRunState = {
   latest_review_id?: string
   latest_knowledge_delta_id?: string
 
-  last_handoff_summary?: string
+  last_result_summary?: string
   updated_at: number
 }
 

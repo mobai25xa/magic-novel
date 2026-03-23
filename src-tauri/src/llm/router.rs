@@ -33,6 +33,16 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
+    /// Config for foreground user-triggered chat (fail faster, retry less).
+    pub fn interactive() -> Self {
+        Self {
+            max_retries: 1,
+            base_delay_ms: 500,
+            factor: 2.0,
+            jitter: true,
+        }
+    }
+
     /// Config for worker/exec context (more aggressive retries)
     pub fn worker() -> Self {
         Self {
@@ -274,5 +284,12 @@ mod tests {
         let config = RetryConfig::worker();
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.base_delay_ms, 2000);
+    }
+
+    #[test]
+    fn test_interactive_config() {
+        let config = RetryConfig::interactive();
+        assert_eq!(config.max_retries, 1);
+        assert_eq!(config.base_delay_ms, 500);
     }
 }

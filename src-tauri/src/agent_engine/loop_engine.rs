@@ -7,6 +7,7 @@ use std::time::Instant;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
+use crate::agent_engine::exposure_policy::{CapabilityPolicy, ExposureContext, SessionSource};
 use crate::agent_engine::session_state::{self, SuspendedTurnState};
 use crate::commands::agent_engine::AgentEditorState;
 use crate::models::AppError;
@@ -19,11 +20,11 @@ use super::context_loader::{inject_unified_context, ContextCache};
 use super::emitter::EventSink;
 use super::llm_compaction_summarizer::LlmCompactionSummarizer;
 use super::messages::{AgentMessage, ConversationState};
-use super::tool_routing::resolve_turn_tool_exposure;
+use super::recovery::RecoveryBudget;
+use super::tool_routing::resolve_turn_tool_exposure_with_context;
 use super::tool_scheduler::ToolScheduler;
 use super::turn::TurnEngine;
 use super::types::{LoopConfig, StopReason, ToolCallInfo, DEFAULT_MODEL, DEFAULT_PROVIDER};
-use super::worker_dispatch::{extract_worker_todo_items, has_worker_items};
 
 /// Result from a complete agent loop run
 #[derive(Debug, Clone)]
@@ -44,7 +45,9 @@ pub struct AgentLoop<S: EventSink> {
     cancel_token: CancellationToken,
     active_chapter_path: Option<String>,
     active_skill: Option<String>,
-    worker_tool_whitelist: Option<Vec<String>>,
+    session_source: SessionSource,
+    delegate_depth: u8,
+    capability_policy: CapabilityPolicy,
     /// Editor state snapshot from frontend
     editor_state: Option<AgentEditorState>,
     /// Provider info saved for suspend/resume (set by caller)
@@ -61,6 +64,9 @@ impl<S: EventSink> AgentLoop<S> {
         project_path: String,
         cancel_token: CancellationToken,
     ) -> Self {
+        let capability_policy =
+            CapabilityPolicy::default_for_mode(config.capability_mode, config.clarification_mode);
+
         Self {
             emitter,
             config,
@@ -69,7 +75,9 @@ impl<S: EventSink> AgentLoop<S> {
             cancel_token,
             active_chapter_path: None,
             active_skill: None,
-            worker_tool_whitelist: None,
+            session_source: SessionSource::UserInteractive,
+            delegate_depth: 0,
+            capability_policy,
             editor_state: None,
             provider_name: String::new(),
             model: String::new(),
@@ -114,24 +122,23 @@ impl<S: EventSink> AgentLoop<S> {
         self
     }
 
-    pub fn with_editor_state(mut self, editor_state: Option<AgentEditorState>) -> Self {
-        self.editor_state = editor_state;
+    pub fn with_capability_policy(mut self, capability_policy: CapabilityPolicy) -> Self {
+        self.capability_policy = capability_policy.normalized();
         self
     }
 
-    pub fn with_tool_whitelist(mut self, tool_whitelist: Option<Vec<String>>) -> Self {
-        self.worker_tool_whitelist = tool_whitelist.and_then(|tools| {
-            let filtered: Vec<String> = tools
-                .into_iter()
-                .map(|t| t.trim().to_string())
-                .filter(|t| !t.is_empty())
-                .collect();
-            if filtered.is_empty() {
-                None
-            } else {
-                Some(filtered)
-            }
-        });
+    pub fn with_session_source(mut self, session_source: SessionSource) -> Self {
+        self.session_source = session_source;
+        self
+    }
+
+    pub fn with_delegate_depth(mut self, delegate_depth: u8) -> Self {
+        self.delegate_depth = delegate_depth;
+        self
+    }
+
+    pub fn with_editor_state(mut self, editor_state: Option<AgentEditorState>) -> Self {
+        self.editor_state = editor_state;
         self
     }
 
@@ -146,15 +153,25 @@ impl<S: EventSink> AgentLoop<S> {
         let mut total_tool_calls = 0_u32;
         let mut active_skill: Option<String> = self.active_skill.clone();
         let mut plan_policy_corrected_this_turn = false;
+        let mut recovery_budget = RecoveryBudget::default();
+        let mut recovery_budget_exhausted = false;
         let semantic_retrieval_enabled = load_openai_search_settings()
             .map(|settings| settings.openai_embedding_enabled)
             .unwrap_or(false);
-        let resolved_tool_exposure = resolve_turn_tool_exposure(
-            state,
+        let resolved_tool_exposure = resolve_turn_tool_exposure_with_context(
             &self.config,
             self.active_chapter_path.as_deref(),
-            self.worker_tool_whitelist.as_deref(),
-            semantic_retrieval_enabled,
+            ExposureContext::new(
+                self.config.capability_mode,
+                self.config.approval_mode,
+                self.config.clarification_mode,
+                self.session_source,
+                self.delegate_depth,
+                semantic_retrieval_enabled,
+                self.active_chapter_path.clone(),
+                self.active_skill.clone(),
+                self.capability_policy.clone(),
+            ),
         );
         let tool_schema_bundle = &resolved_tool_exposure.bundle;
         let tool_exposure_payload = resolved_tool_exposure.telemetry.to_payload();
@@ -406,6 +423,32 @@ impl<S: EventSink> AgentLoop<S> {
                 });
             }
 
+            if recovery_budget_exhausted {
+                tracing::warn!(
+                    target: "agent_engine",
+                    session_id = %state.session_id,
+                    "recovery budget exhausted; refusing further tool execution in this turn"
+                );
+                let latency_ms = loop_start.elapsed().as_millis() as u64;
+                self.emitter.turn_completed_with_meta(
+                    &StopReason::Limit,
+                    latency_ms,
+                    false,
+                    Some(with_turn_outcome_meta(
+                        &tool_exposure_payload,
+                        total_tool_calls,
+                        rounds_executed,
+                    )),
+                )?;
+                return Ok(LoopResult {
+                    stop_reason: StopReason::Limit,
+                    rounds_executed,
+                    total_tool_calls,
+                    latency_ms,
+                    active_skill: active_skill.clone(),
+                });
+            }
+
             // (C) Policy gate: Plan-before-Write (soft)
             if let Some(violation) = check_plan_before_write_policy(&turn_out.tool_calls) {
                 let policy_msg = "Policy hint: for multi-step changes, call todowrite first with milestone-level, user-verifiable tasks.";
@@ -505,17 +548,14 @@ impl<S: EventSink> AgentLoop<S> {
             let tool_messages = exec_result.tool_messages;
             update_active_skill_from_tool_results(&tool_messages, &mut active_skill);
 
-            // Invalidate context cache if create/edit tools were called
+            // Invalidate context cache after write tools
             for tc in &tool_calls_snapshot {
-                if tc.tool_name == "create" {
+                if tc.tool_name == "structure_edit" || tc.tool_name == "draft_write" {
                     context_cache.invalidate_project();
                 }
-                if tc.tool_name == "edit" {
-                    if let Some(path) = tc.args.get("path").and_then(|v| v.as_str()) {
-                        if path.starts_with(".magic_novel") {
-                            context_cache.invalidate_rules();
-                        }
-                    }
+                if tc.tool_name == "knowledge_write" {
+                    context_cache.invalidate_rules();
+                    context_cache.invalidate_project();
                 }
             }
 
@@ -523,16 +563,12 @@ impl<S: EventSink> AgentLoop<S> {
                 state.messages.push(msg);
             }
 
-            // (D') Legacy todo-worker dispatch is retired. Keep parsing for compatibility,
-            // but do not execute worker-assigned todo items.
-            let todo_items = extract_worker_todo_items(&tool_calls_snapshot);
-            if has_worker_items(&todo_items) {
-                tracing::info!(
-                    target: "agent_engine",
-                    session_id = %state.session_id,
-                    worker_items = todo_items.iter().filter(|i| i.worker.is_some()).count(),
-                    "worker todo items detected but legacy dispatch is retired; ignoring"
-                );
+            let recovery_directive = recovery_budget.observe(&exec_result.diagnostics);
+            if let Some(system_message) = recovery_directive.system_message {
+                state.messages.push(system_message);
+            }
+            if recovery_directive.budget_exhausted {
+                recovery_budget_exhausted = true;
             }
 
             // Check safety valve
@@ -685,7 +721,10 @@ fn todowrite_call_is_valid(args: &serde_json::Value) -> bool {
 }
 
 fn is_write_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "edit" | "create")
+    matches!(
+        tool_name,
+        "draft_write" | "structure_edit" | "knowledge_write"
+    )
 }
 
 fn with_turn_outcome_meta(
@@ -702,15 +741,8 @@ fn with_turn_outcome_meta(
         });
     };
 
-    let fallback_occurred = map
-        .get("fallback_from")
-        .and_then(|value| value.as_str())
-        .map(|value| !value.trim().is_empty())
-        .unwrap_or(false);
-
     map.insert("tool_call_count".to_string(), json!(total_tool_calls));
     map.insert("rounds_executed".to_string(), json!(rounds_executed));
-    map.insert("fallback_occurred".to_string(), json!(fallback_occurred));
 
     meta
 }
@@ -726,13 +758,14 @@ fn emit_tool_exposure_observability_metric(
         session_id = %session_id,
         provider = %provider_name,
         model = %model_name,
-        tool_package = ?telemetry.tool_package,
-        route_reason = %telemetry.route_reason,
-        rollout_mode = %telemetry.rollout_mode,
-        rollout_in_canary = telemetry.rollout_in_canary,
-        canary_percent = ?telemetry.canary_percent,
-        metric = "package_fallback_rate",
-        value = if telemetry.fallback_from.is_some() { 1_u8 } else { 0_u8 },
+        policy_source = %telemetry.policy_source,
+        capability_preset = %telemetry.capability_preset,
+        exposure_reason = %telemetry.exposure_reason,
+        exposed_tool_count = telemetry.exposed_tools.len(),
+        hidden_tool_count = telemetry.hidden_tools.len(),
+        skipped_tool_count = telemetry.skipped_tools.len(),
+        metric = "tool_visibility_hidden_count",
+        value = telemetry.hidden_tools.len(),
         "tool exposure selected"
     );
 }
@@ -846,8 +879,9 @@ fn emit_turn_failed_observability_metrics(
         session_id = %session_id,
         provider = %provider_name,
         model = %model_name,
-        tool_package = ?telemetry.tool_package,
-        route_reason = %telemetry.route_reason,
+        policy_source = %telemetry.policy_source,
+        capability_preset = %telemetry.capability_preset,
+        exposure_reason = %telemetry.exposure_reason,
         error_code = %error_code,
         turn_failed_classification = classification,
         tool_call_count = total_tool_calls,
@@ -921,23 +955,23 @@ fn enrich_turn_failure_detail(
     if !model_name.trim().is_empty() {
         map.insert("model".to_string(), json!(model_name));
     }
-    map.insert("tool_package".to_string(), json!(telemetry.tool_package));
-    map.insert("route_reason".to_string(), json!(telemetry.route_reason));
-    map.insert("rollout_mode".to_string(), json!(telemetry.rollout_mode));
+    map.insert("policy_source".to_string(), json!(telemetry.policy_source));
     map.insert(
-        "rollout_in_canary".to_string(),
-        json!(telemetry.rollout_in_canary),
+        "policy_summary".to_string(),
+        json!(telemetry.policy_summary),
     );
-    if let Some(canary_percent) = telemetry.canary_percent {
-        map.insert("canary_percent".to_string(), json!(canary_percent));
-    }
-    if let Some(fallback_from) = telemetry.fallback_from {
-        map.insert("fallback_from".to_string(), json!(fallback_from));
-    }
-    if let Some(fallback_reason) = telemetry.fallback_reason.as_deref() {
-        map.insert("fallback_reason".to_string(), json!(fallback_reason));
-    }
+    map.insert(
+        "capability_preset".to_string(),
+        json!(telemetry.capability_preset),
+    );
+    map.insert(
+        "exposure_reason".to_string(),
+        json!(telemetry.exposure_reason),
+    );
     map.insert("exposed_tools".to_string(), json!(exposed_tools));
+    if !telemetry.hidden_tools.is_empty() {
+        map.insert("hidden_tools".to_string(), json!(telemetry.hidden_tools));
+    }
     if !skipped_tools.is_empty() {
         map.insert("skipped_tools".to_string(), json!(skipped_tools));
     }
@@ -963,10 +997,6 @@ fn enrich_turn_failure_detail(
     );
     map.insert("tool_call_count".to_string(), json!(total_tool_calls));
     map.insert("rounds_executed".to_string(), json!(rounds_executed));
-    map.insert(
-        "fallback_occurred".to_string(),
-        json!(telemetry.fallback_from.is_some()),
-    );
 
     Some(detail)
 }
@@ -1000,7 +1030,9 @@ fn update_active_skill_from_tool_results(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agent_engine::tool_routing::{ToolExposureTelemetry, ToolPackageName};
+    use crate::agent_engine::exposure_policy::CapabilityPreset;
+    use crate::agent_engine::tool_routing::ToolExposureTelemetry;
+    use crate::agent_tools::registry::ToolHiddenDiagnostic;
     use serde_json::json;
 
     fn make_tool_call(name: &str, args: serde_json::Value) -> ToolCallInfo {
@@ -1022,21 +1054,36 @@ mod tests {
     // ── check_plan_before_write_policy tests ──
 
     #[test]
-    fn policy_allows_todowrite_then_edit() {
+    fn policy_allows_todowrite_then_draft_write() {
         let calls = vec![
             make_tool_call("todowrite", valid_todowrite_args()),
-            make_tool_call("edit", json!({"path": "foo.rs", "old": "a", "new": "b"})),
+            make_tool_call(
+                "draft_write",
+                json!({
+                    "target_ref": "chapter:manuscripts/vol_1/ch_1.json",
+                    "write_mode": "draft",
+                    "instruction": "x",
+                    "content": { "kind": "markdown", "value": "Body" }
+                }),
+            ),
         ];
         assert!(check_plan_before_write_policy(&calls).is_none());
     }
 
     #[test]
-    fn policy_allows_todowrite_then_create() {
+    fn policy_allows_todowrite_then_structure_edit() {
         let calls = vec![
             make_tool_call("todowrite", valid_todowrite_args()),
             make_tool_call(
-                "create",
-                json!({"path": "new.rs", "content": "fn main() {}"}),
+                "structure_edit",
+                json!({
+                    "op": "create",
+                    "node_type": "chapter",
+                    "parent_ref": "volume:manuscripts/vol_1",
+                    "position": 0,
+                    "title": "Chapter A",
+                    "dry_run": true
+                }),
             ),
         ];
         assert!(check_plan_before_write_policy(&calls).is_none());
@@ -1045,24 +1092,35 @@ mod tests {
     #[test]
     fn policy_allows_read_only_calls() {
         let calls = vec![
-            make_tool_call("read", json!({"path": "foo.rs"})),
-            make_tool_call("ls", json!({"path": "."})),
-            make_tool_call("grep", json!({"pattern": "fn main"})),
+            make_tool_call("workspace_map", json!({"scope": "book"})),
+            make_tool_call(
+                "context_read",
+                json!({"target_ref": "chapter:manuscripts/vol_1/ch_1.json"}),
+            ),
+            make_tool_call("context_search", json!({"query": "dragon"})),
         ];
         assert!(check_plan_before_write_policy(&calls).is_none());
     }
 
     #[test]
-    fn policy_rejects_invalid_todowrite_before_edit() {
+    fn policy_rejects_invalid_todowrite_before_draft_write() {
         // todowrite with missing 'todos' field is invalid
         let calls = vec![
             make_tool_call("todowrite", json!({"wrong_field": "oops"})),
-            make_tool_call("edit", json!({"path": "foo.rs", "old": "a", "new": "b"})),
+            make_tool_call(
+                "draft_write",
+                json!({
+                    "target_ref": "chapter:manuscripts/vol_1/ch_1.json",
+                    "write_mode": "draft",
+                    "instruction": "x",
+                    "content": { "kind": "markdown", "value": "Body" }
+                }),
+            ),
         ];
         let violation = check_plan_before_write_policy(&calls);
         assert!(violation.is_some());
         let v = violation.unwrap();
-        assert_eq!(v.violating_tool, "edit");
+        assert_eq!(v.violating_tool, "draft_write");
         assert_eq!(v.violating_index, 1);
     }
 
@@ -1075,11 +1133,14 @@ mod tests {
 
     #[test]
     fn write_tool_detection() {
-        assert!(is_write_tool("edit"));
-        assert!(is_write_tool("create"));
-        assert!(!is_write_tool("read"));
-        assert!(!is_write_tool("ls"));
-        assert!(!is_write_tool("grep"));
+        assert!(is_write_tool("draft_write"));
+        assert!(is_write_tool("structure_edit"));
+        assert!(is_write_tool("knowledge_write"));
+        assert!(!is_write_tool("context_read"));
+        assert!(!is_write_tool("workspace_map"));
+        assert!(!is_write_tool("context_search"));
+        assert!(!is_write_tool("knowledge_read"));
+        assert!(!is_write_tool("review_check"));
         assert!(!is_write_tool("todowrite"));
     }
 
@@ -1114,8 +1175,8 @@ mod tests {
     #[test]
     fn update_skill_ignores_non_skill_tools() {
         let msg = AgentMessage::tool_result(
-            "call_read".to_string(),
-            Some("read".to_string()),
+            "call_ctx".to_string(),
+            Some("context_read".to_string()),
             "file contents here".to_string(),
             false,
         );
@@ -1148,23 +1209,26 @@ mod tests {
         let detail = enrich_turn_failure_detail(
             Some(json!({
                 "code": "E_PROVIDER_TOOL_SCHEMA",
-                "diagnostic": "Invalid schema for function 'edit'"
+                "diagnostic": "Invalid schema for function 'draft_write'"
             })),
             "E_PROVIDER_TOOL_SCHEMA",
             "openai-compatible",
             "gpt-4o-mini",
             &ToolExposureTelemetry {
-                tool_package: ToolPackageName::Writing,
-                route_reason: "writing_signal".to_string(),
-                fallback_from: Some(ToolPackageName::LightChat),
-                fallback_reason: Some("light_chat_to_writing".to_string()),
-                rollout_mode: "canary".to_string(),
-                rollout_in_canary: true,
-                canary_percent: Some(10),
-                exposed_tools: vec!["read".to_string(), "edit".to_string()],
+                policy_source: "capability_policy".to_string(),
+                exposure_reason: "capability_policy.main_interactive".to_string(),
+                capability_preset: CapabilityPreset::MainInteractive.as_str().to_string(),
+                tool_package: "main_agent_core".to_string(),
+                fallback_from: None,
+                policy_summary: ExposureContext::default().policy_summary(),
+                exposed_tools: vec!["context_read".to_string(), "draft_write".to_string()],
+                hidden_tools: vec![ToolHiddenDiagnostic {
+                    tool_name: "skill".to_string(),
+                    reason: "capability_policy:skill_disabled".to_string(),
+                }],
                 skipped_tools: vec![],
             },
-            &["read".to_string(), "edit".to_string()],
+            &["context_read".to_string(), "draft_write".to_string()],
             &[crate::agent_tools::registry::ToolSchemaSkipDiagnostic {
                 tool_name: "skill".to_string(),
                 error: "unsupported keyword 'const'".to_string(),
@@ -1176,13 +1240,13 @@ mod tests {
 
         assert_eq!(detail["provider"], "openai-compatible");
         assert_eq!(detail["model"], "gpt-4o-mini");
-        assert_eq!(detail["tool_package"], "writing");
-        assert_eq!(detail["fallback_from"], "light_chat");
-        assert_eq!(detail["exposed_tools"][0], "read");
+        assert_eq!(detail["policy_source"], "capability_policy");
+        assert_eq!(detail["capability_preset"], "main_interactive");
+        assert_eq!(detail["exposed_tools"][0], "context_read");
+        assert_eq!(detail["hidden_tools"][0]["tool_name"], "skill");
         assert_eq!(detail["skipped_tools"][0]["tool_name"], "skill");
         assert_eq!(detail["turn_failed_classification"], "provider_schema");
         assert_eq!(detail["provider_schema_error"], true);
-        assert_eq!(detail["fallback_occurred"], true);
         assert_eq!(detail["tool_call_count"], 0);
     }
 }

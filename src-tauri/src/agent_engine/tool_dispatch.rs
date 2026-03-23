@@ -3,44 +3,62 @@
 use serde_json::json;
 
 use crate::agent_tools::runtime::{
-    execute_create, execute_delete, execute_edit, execute_grep, execute_ls, execute_move,
-    execute_read, execute_review_check,
+    execute_context_read, execute_context_search, execute_draft_write,
+    execute_inspiration_consensus_patch, execute_inspiration_open_questions_patch,
+    execute_knowledge_read, execute_knowledge_write, execute_review_check, execute_structure_edit,
+    execute_workspace_map,
+};
+use crate::application::command_usecases::inspiration::{
+    ApplyConsensusPatchInput, ApplyOpenQuestionsPatchInput,
 };
 
 use super::types::ToolCallInfo;
 
-mod context_tools;
-mod parse;
-mod parse_review;
-
-use context_tools::{
-    execute_character_sheet_tool, execute_outline_tool, execute_search_knowledge_tool,
-};
-use parse::{
-    parse_create_input, parse_delete_input, parse_edit_input, parse_grep_input, parse_ls_input,
-    parse_move_input, parse_read_input,
-};
-use parse_review::parse_review_check_input;
+use crate::review::types::ReviewRunInput;
 
 const SKILL_FIELDS: &[&str] = &["skill"];
+const REVIEW_CHECK_FIELDS: &[&str] = &[
+    "scope_ref",
+    "target_refs",
+    "review_types",
+    "branch_id",
+    "task_card_ref",
+    "context_pack_ref",
+    "effective_rules_fingerprint",
+    "severity_threshold",
+];
+const INSPIRATION_CONSENSUS_PATCH_FIELDS: &[&str] = &[
+    "state",
+    "field_id",
+    "operation",
+    "text_value",
+    "items",
+    "source_turn_id",
+];
+const INSPIRATION_OPEN_QUESTIONS_PATCH_FIELDS: &[&str] = &[
+    "questions",
+    "operation",
+    "question_id",
+    "question",
+    "importance",
+];
 
 pub fn dispatch_supports_tool(tool_name: &str) -> bool {
     matches!(
         tool_name,
-        "read"
-            | "edit"
-            | "create"
-            | "delete"
-            | "move"
-            | "ls"
-            | "grep"
+        "workspace_map"
+            | "context_read"
+            | "context_search"
+            | "knowledge_read"
+            | "knowledge_write"
+            | "draft_write"
+            | "structure_edit"
             | "review_check"
+            | "inspiration_consensus_patch"
+            | "inspiration_open_questions_patch"
             | "askuser"
             | "skill"
             | "todowrite"
-            | "outline"
-            | "character_sheet"
-            | "search_knowledge"
     )
 }
 
@@ -49,64 +67,52 @@ pub fn execute_tool_call(
     tc: &ToolCallInfo,
     project_path: &str,
     call_id: &str,
-    active_chapter_path: Option<&str>,
+    _active_chapter_path: Option<&str>,
     _active_skill: Option<&str>,
 ) -> crate::agent_tools::contracts::ToolResult<serde_json::Value> {
     match tc.tool_name.as_str() {
-        "read" => {
-            let input = parse_read_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_read(i, call_id.to_string()),
-                Err(e) => tool_parse_error("read", call_id, &e),
-            }
+        "workspace_map" => {
+            execute_workspace_map(project_path, tc.args.clone(), call_id.to_string())
         }
-        "edit" => {
-            let input = parse_edit_input(&tc.args, project_path, active_chapter_path);
-            match input {
-                Ok(i) => execute_edit(i, call_id.to_string()),
-                Err(e) => tool_parse_error("edit", call_id, &e),
-            }
+        "context_read" => execute_context_read(project_path, tc.args.clone(), call_id.to_string()),
+        "context_search" => {
+            execute_context_search(project_path, tc.args.clone(), call_id.to_string())
         }
-        "create" => {
-            let input = parse_create_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_create(i, call_id.to_string()),
-                Err(e) => tool_parse_error("create", call_id, &e),
-            }
+        "knowledge_read" => {
+            execute_knowledge_read(project_path, tc.args.clone(), call_id.to_string())
         }
-        "delete" => {
-            let input = parse_delete_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_delete(i, call_id.to_string()),
-                Err(e) => tool_parse_error("delete", call_id, &e),
-            }
+        "knowledge_write" => {
+            execute_knowledge_write(project_path, tc.args.clone(), call_id.to_string())
         }
-        "move" => {
-            let input = parse_move_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_move(i, call_id.to_string()),
-                Err(e) => tool_parse_error("move", call_id, &e),
-            }
-        }
-        "ls" => {
-            let input = parse_ls_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_ls(i, call_id.to_string()),
-                Err(e) => tool_parse_error("ls", call_id, &e),
-            }
-        }
-        "grep" => {
-            let input = parse_grep_input(&tc.args, project_path);
-            match input {
-                Ok(i) => execute_grep(i, call_id.to_string()),
-                Err(e) => tool_parse_error("grep", call_id, &e),
-            }
+        "draft_write" => execute_draft_write(project_path, tc.args.clone(), call_id.to_string()),
+        "structure_edit" => {
+            execute_structure_edit(project_path, tc.args.clone(), call_id.to_string())
         }
         "review_check" => {
             let input = parse_review_check_input(&tc.args);
             match input {
                 Ok(i) => execute_review_check(project_path, i, call_id.to_string()),
                 Err(e) => tool_parse_error("review_check", call_id, &e),
+            }
+        }
+        "inspiration_consensus_patch" => {
+            let input = parse_inspiration_consensus_patch_input(&tc.args);
+            match input {
+                Ok(i) => execute_inspiration_consensus_patch(
+                    serde_json::to_value(i).expect("consensus patch input should serialize"),
+                    call_id.to_string(),
+                ),
+                Err(e) => tool_parse_error("inspiration_consensus_patch", call_id, &e),
+            }
+        }
+        "inspiration_open_questions_patch" => {
+            let input = parse_inspiration_open_questions_patch_input(&tc.args);
+            match input {
+                Ok(i) => execute_inspiration_open_questions_patch(
+                    serde_json::to_value(i).expect("open questions patch input should serialize"),
+                    call_id.to_string(),
+                ),
+                Err(e) => tool_parse_error("inspiration_open_questions_patch", call_id, &e),
             }
         }
         "askuser" => {
@@ -200,14 +206,62 @@ pub fn execute_tool_call(
             }
             Err(e) => tool_parse_error("todowrite", call_id, &e),
         },
-        "outline" => execute_outline_tool(tc, project_path, call_id),
-        "character_sheet" => execute_character_sheet_tool(tc, project_path, call_id),
-        "search_knowledge" => execute_search_knowledge_tool(tc, project_path, call_id),
         other => {
             tracing::warn!(target: "agent_engine", tool = other, "unknown tool");
             tool_parse_error(other, call_id, &format!("unknown tool: {other}"))
         }
     }
+}
+
+fn parse_review_check_input(args: &serde_json::Value) -> Result<ReviewRunInput, String> {
+    reject_unknown_fields(args, REVIEW_CHECK_FIELDS, "review_check")?;
+
+    serde_json::from_value::<ReviewRunInput>(args.clone())
+        .map_err(|error| format!("review_check args: {error}"))
+}
+
+fn parse_inspiration_consensus_patch_input(
+    args: &serde_json::Value,
+) -> Result<ApplyConsensusPatchInput, String> {
+    reject_unknown_fields(
+        args,
+        INSPIRATION_CONSENSUS_PATCH_FIELDS,
+        "inspiration_consensus_patch",
+    )?;
+
+    serde_json::from_value::<ApplyConsensusPatchInput>(args.clone())
+        .map_err(|error| format!("inspiration_consensus_patch args: {error}"))
+}
+
+fn parse_inspiration_open_questions_patch_input(
+    args: &serde_json::Value,
+) -> Result<ApplyOpenQuestionsPatchInput, String> {
+    reject_unknown_fields(
+        args,
+        INSPIRATION_OPEN_QUESTIONS_PATCH_FIELDS,
+        "inspiration_open_questions_patch",
+    )?;
+
+    serde_json::from_value::<ApplyOpenQuestionsPatchInput>(args.clone())
+        .map_err(|error| format!("inspiration_open_questions_patch args: {error}"))
+}
+
+fn reject_unknown_fields(
+    args: &serde_json::Value,
+    allowed_fields: &[&str],
+    tool_name: &str,
+) -> Result<(), String> {
+    let Some(map) = args.as_object() else {
+        return Ok(());
+    };
+
+    for key in map.keys() {
+        if !allowed_fields.contains(&key.as_str()) {
+            return Err(format!("{tool_name} args: unknown field '{key}'"));
+        }
+    }
+
+    Ok(())
 }
 
 fn validate_skill_args(args: &serde_json::Value) -> Result<(), String> {
@@ -257,6 +311,8 @@ pub(super) fn tool_parse_error(
 mod tests {
     use std::collections::BTreeSet;
 
+    use serde_json::json;
+
     #[test]
     fn skill_parser_allowlist_matches_registered_schema_properties() {
         let context = crate::agent_tools::definition::ToolSchemaContext::default();
@@ -270,6 +326,59 @@ mod tests {
             .cloned()
             .collect();
         let parser_fields: BTreeSet<String> = super::SKILL_FIELDS
+            .iter()
+            .map(|field| field.to_string())
+            .collect();
+
+        assert_eq!(schema_fields, parser_fields);
+    }
+
+    #[test]
+    fn parse_review_check_accepts_full_payload() {
+        let args = json!({
+            "scope_ref": "chapter:manuscripts/vol_1/ch_1.json",
+            "target_refs": ["manuscripts/vol_1/ch_1.json"],
+            "review_types": ["word_count", "continuity"],
+            "branch_id": "branch/main",
+            "task_card_ref": "task:123",
+            "context_pack_ref": "ctx:abc",
+            "effective_rules_fingerprint": "rules:v1",
+            "severity_threshold": "warn"
+        });
+
+        let input = super::parse_review_check_input(&args).expect("review_check parsed");
+        assert_eq!(input.scope_ref, "chapter:manuscripts/vol_1/ch_1.json");
+        assert_eq!(input.target_refs, vec!["manuscripts/vol_1/ch_1.json"]);
+        assert_eq!(input.review_types.len(), 2);
+        assert_eq!(input.severity_threshold.as_deref(), Some("warn"));
+    }
+
+    #[test]
+    fn parse_review_check_rejects_unknown_fields() {
+        let args = json!({
+            "scope_ref": "chapter:manuscripts/vol_1/ch_1.json",
+            "target_refs": ["manuscripts/vol_1/ch_1.json"],
+            "unexpected": true
+        });
+
+        let err = super::parse_review_check_input(&args).expect_err("should fail");
+        assert!(err.contains("unknown field"));
+        assert!(err.contains("unexpected"));
+    }
+
+    #[test]
+    fn review_check_parser_allowlist_matches_registered_schema_properties() {
+        let context = crate::agent_tools::definition::ToolSchemaContext::default();
+        let schema = crate::agent_tools::registry::get_schema("review_check", &context)
+            .expect("review_check schema should exist");
+        let schema_fields: BTreeSet<String> = schema
+            .get("properties")
+            .and_then(|value| value.as_object())
+            .expect("schema properties")
+            .keys()
+            .cloned()
+            .collect();
+        let parser_fields: BTreeSet<String> = super::REVIEW_CHECK_FIELDS
             .iter()
             .map(|field| field.to_string())
             .collect();

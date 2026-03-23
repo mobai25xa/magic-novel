@@ -9,6 +9,7 @@ use crate::services::{
 use super::parser::{app_err_jvm, ensure_doc_block_ids};
 use super::validator::validate_doc_integrity;
 
+#[cfg(test)]
 pub fn apply_patch_ops_to_doc(
     base_doc: &serde_json::Value,
     patch_ops: &[PatchOp],
@@ -54,6 +55,7 @@ pub fn apply_patch_ops_to_doc(
     Ok(doc)
 }
 
+#[cfg(test)]
 fn delete_blocks(doc: &mut serde_json::Value, block_ids: &[String]) {
     let Some(arr) = doc.get_mut("content").and_then(|v| v.as_array_mut()) else {
         return;
@@ -71,6 +73,7 @@ fn delete_blocks(doc: &mut serde_json::Value, block_ids: &[String]) {
     });
 }
 
+#[cfg(test)]
 fn update_block(doc: &mut serde_json::Value, block_id: &str, after: serde_json::Value) {
     let Some(arr) = doc.get_mut("content").and_then(|v| v.as_array_mut()) else {
         return;
@@ -96,6 +99,7 @@ fn update_block(doc: &mut serde_json::Value, block_id: &str, after: serde_json::
     }
 }
 
+#[cfg(test)]
 fn insert_blocks(
     doc: &mut serde_json::Value,
     after_block_id: Option<String>,
@@ -112,6 +116,7 @@ fn insert_blocks(
     }
 }
 
+#[cfg(test)]
 fn resolve_insert_index(arr: &[serde_json::Value], after_block_id: Option<&str>) -> usize {
     match after_block_id {
         None => 0,
@@ -129,6 +134,7 @@ fn resolve_insert_index(arr: &[serde_json::Value], after_block_id: Option<&str>)
     }
 }
 
+#[cfg(test)]
 fn move_block(doc: &mut serde_json::Value, block_id: &str, after_block_id: Option<String>) {
     let Some(arr) = doc.get_mut("content").and_then(|v| v.as_array_mut()) else {
         return;
@@ -168,69 +174,13 @@ fn move_block(doc: &mut serde_json::Value, block_id: &str, after_block_id: Optio
     arr.insert(insert_idx, node);
 }
 
-pub fn commit_patch_with_occ(
-    project_path: &str,
-    chapter_path: &str,
-    base_revision: i64,
-    call_id: &str,
-    actor: Actor,
-    patch_ops: Vec<PatchOp>,
-) -> Result<CommitResult, AppError> {
-    validate_commit_input(call_id)?;
-
-    let full_path = PathBuf::from(project_path)
-        .join("manuscripts")
-        .join(chapter_path);
-
-    if !full_path.exists() {
-        return Err(app_err_jvm(
-            "E_JVM_SCHEMA_INVALID",
-            "chapter_path not found".to_string(),
-            false,
-            None,
-        ));
-    }
-
-    let chapter: Chapter = read_json(&full_path)?;
-
-    let vc = VersioningService::new();
-    let entity_id = format!("chapter:{chapter_path}");
-    let head = vc.get_current_head(project_path, &entity_id)?;
-    ensure_revision_match(head.revision, base_revision)?;
-
-    let after_doc = apply_patch_ops_to_doc(&chapter.content, &patch_ops)?;
-    let after_json = build_after_chapter_json(chapter, after_doc)?;
-
-    let commit_out = vc.commit_with_occ(VcCommitInput {
-        project_path: project_path.to_string(),
-        entity_id,
-        expected_revision: base_revision,
-        call_id: call_id.to_string(),
-        actor: map_actor(actor),
-        before_hash: head.json_hash.clone(),
-        after_json,
-        patch_ops: patch_ops
-            .iter()
-            .map(|op| serde_json::to_value(op).unwrap_or(serde_json::Value::Null))
-            .collect(),
-    })?;
-
-    Ok(CommitResult {
-        ok: commit_out.ok,
-        revision_before: commit_out.revision_before,
-        revision_after: commit_out.revision_after,
-        json_hash_after: commit_out.after_hash,
-        tx_id: commit_out.tx_id,
-    })
-}
-
 /// Commit a fully-built TipTap document, bypassing the patch-apply pipeline.
 /// `patch_ops_for_audit` is stored in the version-control log for diffing/auditing
 /// but is NOT used to derive the document — `new_doc` is written as-is.
 pub fn commit_full_document(
     project_path: &str,
     chapter_path: &str,
-    base_revision: i64,
+    expected_revision: i64,
     call_id: &str,
     actor: Actor,
     mut new_doc: serde_json::Value,
@@ -256,7 +206,7 @@ pub fn commit_full_document(
     let vc = VersioningService::new();
     let entity_id = format!("chapter:{chapter_path}");
     let head = vc.get_current_head(project_path, &entity_id)?;
-    ensure_revision_match(head.revision, base_revision)?;
+    ensure_revision_match(head.revision, expected_revision)?;
 
     // Defense: ensure every block has an ID before committing.
     ensure_doc_block_ids(&mut new_doc);
@@ -284,7 +234,7 @@ pub fn commit_full_document(
     let commit_out = vc.commit_with_occ(VcCommitInput {
         project_path: project_path.to_string(),
         entity_id,
-        expected_revision: base_revision,
+        expected_revision,
         call_id: call_id.to_string(),
         actor: map_actor(actor),
         before_hash: head.json_hash.clone(),
@@ -316,20 +266,20 @@ fn validate_commit_input(call_id: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn ensure_revision_match(current_revision: i64, base_revision: i64) -> Result<(), AppError> {
-    if current_revision == base_revision {
+fn ensure_revision_match(current_revision: i64, expected_revision: i64) -> Result<(), AppError> {
+    if current_revision == expected_revision {
         return Ok(());
     }
 
     Err(app_err_jvm(
         "E_JVM_CONFLICT_REVISION",
         format!(
-            "base_revision {} does not match current {}",
-            base_revision, current_revision
+            "expected_revision {} does not match current {}",
+            expected_revision, current_revision
         ),
         true,
         Some(serde_json::json!({
-            "expected_revision": base_revision,
+            "expected_revision": expected_revision,
             "current_revision": current_revision,
         })),
     ))

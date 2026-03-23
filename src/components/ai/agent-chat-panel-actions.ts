@@ -1,6 +1,8 @@
 import { cancelCurrentChatTurn, runChatTurn, useAgentChatStore } from '@/lib/agent-chat'
+import { missionPauseFeature } from '@/features/agent-chat'
 import type { Translations } from '@/i18n/locales/zh'
 import type { ApprovalMode, CapabilityMode } from '@/state/settings'
+import type { Dispatch, SetStateAction } from 'react'
 
 import type { ChatContext } from './input/chat-context-types'
 import { parseAgentError } from './agent-chat-panel-utils'
@@ -13,10 +15,16 @@ type CreateChatPanelActionsInput = {
   approvalMode: ApprovalMode
   capabilityMode: CapabilityMode
   running: boolean
+  missionBusy: boolean
+  missionLocked: boolean
+  missionId: string
+  projectPath: string
   canContinue: boolean
   runtimeState: 'ready' | 'running' | 'suspended_confirmation' | 'suspended_askuser' | 'completed' | 'failed' | 'cancelled' | 'degraded'
   setInput: SetInput
   setLastError: SetLastError
+  setMissionDispatching: Dispatch<SetStateAction<boolean>>
+  onMissionStarted: (missionId: string) => void
   contexts: ChatContext[]
   clearContexts: () => void
   labels: Translations['aiChat']
@@ -84,6 +92,14 @@ export function createChatPanelActions(input: CreateChatPanelActionsInput) {
     handleSend,
     handleRetryStep,
     handleCancel: () => {
+      if (input.missionBusy && input.projectPath && input.missionId) {
+        void runWithErrorGuard({
+          setLastError: input.setLastError,
+          task: () => missionPauseFeature(input.projectPath, input.missionId),
+        })
+        return
+      }
+
       cancelCurrentChatTurn()
       input.setLastError(null)
     },

@@ -1,5 +1,7 @@
 import { logConcurrency } from '@/agent/telemetry'
+import { buildStandardAiProviderConfig, buildStandardAiProviderInput } from '@/features/standard-ai-consumer'
 import { formatUnknownError } from '@/lib/error-utils'
+import { missionCreate, missionStart, type Feature } from '@/lib/tauri-commands/mission'
 
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -9,6 +11,11 @@ import {
   createClientRequestId,
   normalizeUserInput,
 } from './runtime-helpers'
+import { appendPersistedSessionEventsClient } from './session/session-client'
+import {
+  toSessionMessageEvent,
+  toSessionTurnFinalEvent,
+} from './session/session-event-builders'
 import { useAgentChatStore } from './store'
 import {
   agentTurnStartClient,
@@ -24,6 +31,13 @@ import {
   startBackendEventListeners,
   stopBackendEventListeners,
 } from './runtime-backend-events'
+import {
+  bindMissionBackedTurn,
+  clearMissionBackedTurnBinding,
+  commitMissionUiState,
+  createMissionUiState,
+  updateMissionBackedTurnState,
+} from './runtime-backend-events/mission-store'
 
 const MAX_CONCURRENT_TURNS = 1
 const DEFAULT_APPROVAL_MODE: ApprovalMode = 'confirm_writes'
@@ -34,6 +48,13 @@ let activeTurnCount = 0
 let backendListenersStarted = false
 
 function buildSessionGateError(code: 'E_AGENT_SESSION_READONLY' | 'E_AGENT_SESSION_SUSPENDED', message: string) {
+  const error = new Error(message) as Error & { code?: string }
+  error.name = code
+  error.code = code
+  return error
+}
+
+function buildMissionDispatchError(code: string, message: string) {
   const error = new Error(message) as Error & { code?: string }
   error.name = code
   error.code = code
@@ -110,6 +131,218 @@ export function normalizeRunModes(options: RunChatTurnOptions = {}) {
   }
 }
 
+function normalizeMissionWritePath(rawPath?: string) {
+  if (typeof rawPath !== 'string') {
+    return undefined
+  }
+
+  const normalized = rawPath
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^chapter:/, '')
+    .replace(/^manuscripts\//, '')
+    .replace(/^\/+/, '')
+
+  if (!normalized || normalized.split('/').some((segment) => segment === '..')) {
+    return undefined
+  }
+
+  return normalized
+}
+
+function createChatMissionTitle(userText: string) {
+  const normalized = userText.replace(/\s+/g, ' ').trim()
+  if (!normalized) {
+    return 'Editor Chat Mission'
+  }
+
+  return normalized.length <= 64
+    ? `Editor Chat · ${normalized}`
+    : `Editor Chat · ${normalized.slice(0, 61)}...`
+}
+
+function resolveNextMissionTurnId() {
+  const store = useAgentChatStore.getState()
+  const turnOrderMax = store.turnOrder.length > 0
+    ? Math.max(...store.turnOrder)
+    : 0
+
+  return Math.max(
+    1,
+    typeof store.turn === 'number' && store.turn > 0 ? store.turn + 1 : 0,
+    typeof store.sessionNextTurnId === 'number' && store.sessionNextTurnId > 0 ? store.sessionNextTurnId : 0,
+    typeof store.sessionLastTurn === 'number' && store.sessionLastTurn >= 0 ? store.sessionLastTurn + 1 : 0,
+    turnOrderMax + 1,
+  )
+}
+
+async function appendMissionSessionEvents(input: {
+  projectPath: string
+  sessionId: string
+  events: Parameters<typeof appendPersistedSessionEventsClient>[0]['events']
+}) {
+  if (!input.projectPath.trim()) {
+    return
+  }
+
+  await appendPersistedSessionEventsClient({
+    projectPath: input.projectPath,
+    sessionId: input.sessionId,
+    events: input.events,
+  })
+}
+
+async function prepareMissionBackedTurn(input: {
+  projectPath: string
+  userText: string
+}) {
+  const store = useAgentChatStore.getState()
+  const turnId = resolveNextMissionTurnId()
+  const userMessage = buildUserUiMessage(input.userText, turnId)
+  const startedAt = userMessage.ts
+
+  store.markTurnStarted(turnId)
+  store.addUiMessage(userMessage)
+  store.pushLlmMessage({ role: 'user', content: input.userText })
+  store.setStateStatus('thinking')
+  store.pushTurnEvent(turnId, {
+    type: 'TURN_STARTED',
+    ts: startedAt,
+    summary: 'Mission dispatched from editor chat.',
+  })
+  store.pushTurnEvent(turnId, {
+    type: 'PLAN_STARTED',
+    ts: startedAt + 1,
+    summary: 'Preparing mission execution.',
+  })
+  store.setSessionRuntimeCapability({
+    runtimeState: 'running',
+    canContinue: false,
+    canResume: false,
+    readonlyReason: undefined,
+  })
+
+  await appendMissionSessionEvents({
+    projectPath: input.projectPath,
+    sessionId: store.session_id,
+    events: [
+      toSessionMessageEvent({
+        sessionId: store.session_id,
+        message: userMessage,
+      }),
+    ],
+  })
+
+  return {
+    sessionId: store.session_id,
+    turnId,
+    startedAt,
+  }
+}
+
+async function failMissionBackedTurnStart(input: {
+  projectPath: string
+  sessionId: string
+  turnId: number
+  startedAt: number
+  errorText: string
+}) {
+  const finishedAt = Date.now()
+  const store = useAgentChatStore.getState()
+  const isVisibleSession = store.session_id === input.sessionId
+
+  if (isVisibleSession) {
+    store.setLastStopReason('error')
+    store.setLastTurnLatency(Math.max(0, finishedAt - input.startedAt))
+    store.setTurnPhase(input.turnId, 'failed', {
+      stopReason: 'error',
+      error: input.errorText,
+      finishedAt,
+    })
+    store.pushTurnEvent(input.turnId, {
+      type: 'TURN_FAILED',
+      ts: finishedAt,
+      summary: input.errorText,
+    })
+    store.commitTurnTimelineSnapshot(input.turnId)
+    store.setStateStatus('idle')
+    store.setSessionRuntimeCapability({
+      runtimeState: 'failed',
+      canContinue: true,
+      canResume: false,
+      readonlyReason: undefined,
+    })
+  }
+
+  await appendMissionSessionEvents({
+    projectPath: input.projectPath,
+    sessionId: input.sessionId,
+    events: [
+      toSessionTurnFinalEvent({
+        sessionId: input.sessionId,
+        turnId: input.turnId,
+        stopReason: 'error',
+        latencyMs: Math.max(0, finishedAt - input.startedAt),
+        ts: finishedAt,
+      }),
+    ],
+  })
+}
+
+function buildChatMissionFeature(input: {
+  userText: string
+  sessionId: string
+  capabilityMode: CapabilityMode
+  activeChapterPath?: string
+  activeSkill?: string
+}): Feature {
+  const writePath = input.capabilityMode === 'writing'
+    ? normalizeMissionWritePath(input.activeChapterPath)
+    : undefined
+  const featureId = `chat_${Date.now()}`
+
+  const preconditions = [
+    `Origin session: ${input.sessionId}`,
+    input.activeSkill ? `Active skill: ${input.activeSkill}` : '',
+    writePath ? `Primary chapter scope: ${writePath}` : '',
+  ].filter(Boolean)
+
+  const expectedBehavior = input.capabilityMode === 'planning'
+    ? [
+        'Focus on analysis, planning, and scoped recommendations before any concrete edits.',
+        writePath
+          ? `Treat ${writePath} as the primary inspection scope when grounding the plan.`
+          : 'Inspect only the project files needed to ground the plan.',
+        'Return a concise execution summary and explicitly call out unresolved blockers.',
+      ]
+    : [
+        writePath
+          ? `Keep file writes scoped to ${writePath} unless the request clearly requires a broader change.`
+          : 'Inspect relevant project context before making changes, and keep edits tightly scoped.',
+        'Use the assigned worker profile and approved tools to complete the request directly when safe.',
+        'Return a concise summary of changes, touched artifacts, and unresolved issues.',
+      ]
+
+  const verificationSteps = [
+    writePath
+      ? `Verify the result against ${writePath} and any directly related artifacts.`
+      : 'Verify the result against the files and artifacts touched during execution.',
+    'Report what changed, what was not changed, and any follow-up work that remains.',
+  ]
+
+  return {
+    id: featureId,
+    status: 'pending',
+    description: input.userText,
+    skill: input.activeSkill?.trim() || '',
+    preconditions,
+    depends_on: [],
+    expected_behavior: expectedBehavior,
+    verification_steps: verificationSteps,
+    write_paths: writePath ? [writePath] : [],
+  }
+}
+
 function getOldestPendingClientRequestId() {
   const pendingRequests = Object.values(useAgentChatStore.getState().pendingRequestsByClientRequestId)
   if (pendingRequests.length === 0) {
@@ -167,24 +400,126 @@ async function executeRustEngineTurn(
 ): Promise<AgentTurnStartOutput> {
   await ensureBackendListeners()
 
-  const settings = useSettingsStore.getState()
   const projectPath = useProjectStore.getState().projectPath || ''
   const normalizedModes = normalizeRunModes(options)
+  const providerInput = buildStandardAiProviderInput({ clientRequestId })
 
   return agentTurnStartClient({
     session_id: sessionId,
     client_request_id: clientRequestId,
     user_text: input,
     project_path: projectPath,
-    model: settings.openaiModel || undefined,
-    provider: 'openai-compatible',
-    base_url: settings.openaiBaseUrl || undefined,
-    api_key: settings.openaiApiKey || undefined,
+    ...providerInput,
     active_chapter_path: useAgentChatStore.getState().active_chapter_path || undefined,
     approval_mode: normalizedModes.approvalMode,
     capability_mode: normalizedModes.capabilityMode,
     clarification_mode: normalizedModes.clarificationMode,
   })
+}
+
+export async function startChatMission(
+  inputText: string,
+  options: RunChatTurnOptions = {},
+): Promise<string> {
+  const input = normalizeUserInput(inputText)
+  if (!input) return ''
+
+  await ensurePersistedSessionForTurn()
+  assertSessionCanContinueForTurn()
+  await ensureBackendListeners()
+
+  const projectPath = (useProjectStore.getState().projectPath || '').trim()
+  if (!projectPath) {
+    throw buildMissionDispatchError(
+      'E_MISSION_PROJECT_REQUIRED',
+      'Open a project before starting a mission from editor chat.',
+    )
+  }
+
+  const modes = normalizeRunModes(options)
+  const providerConfig = buildStandardAiProviderConfig()
+  const turnContext = await prepareMissionBackedTurn({
+    projectPath,
+    userText: input,
+  })
+  const store = useAgentChatStore.getState()
+
+  const feature = buildChatMissionFeature({
+    userText: input,
+    sessionId: turnContext.sessionId,
+    capabilityMode: modes.capabilityMode,
+    activeChapterPath: store.active_chapter_path,
+    activeSkill: store.activeSkill,
+  })
+  let createdMissionId = ''
+
+  try {
+    const created = await missionCreate({
+      project_path: projectPath,
+      title: createChatMissionTitle(input),
+      mission_text: input,
+      features: [feature],
+    })
+    createdMissionId = created.mission_id
+
+    bindMissionBackedTurn({
+      missionId: createdMissionId,
+      sessionId: turnContext.sessionId,
+      turnId: turnContext.turnId,
+      projectPath,
+      userInput: input,
+      startedAt: turnContext.startedAt,
+    })
+
+    const startedAt = Date.now()
+    commitMissionUiState({
+      ...createMissionUiState(createdMissionId),
+      state: 'initializing',
+      currentFeatureId: feature.id,
+      progressLog: [{
+        ts: startedAt,
+        message: `Mission created from editor chat (${turnContext.sessionId})`,
+      }],
+    })
+
+    await missionStart({
+      project_path: projectPath,
+      mission_id: createdMissionId,
+      max_workers: 1,
+      provider: providerConfig.provider,
+      model: providerConfig.model,
+      base_url: providerConfig.base_url,
+      api_key: providerConfig.api_key,
+      parent_session_id: turnContext.sessionId,
+      parent_turn_id: turnContext.turnId,
+      delegate_transport: 'in_process',
+    })
+
+    return createdMissionId
+  } catch (error) {
+    const errorText = formatUnknownError(error)
+    if (createdMissionId) {
+      updateMissionBackedTurnState(createdMissionId, 'failed')
+      commitMissionUiState({
+        ...createMissionUiState(createdMissionId),
+        state: 'failed',
+        currentFeatureId: feature.id,
+        progressLog: [{
+          ts: Date.now(),
+          message: `Mission start failed: ${errorText}`,
+        }],
+      })
+      clearMissionBackedTurnBinding(createdMissionId)
+    }
+    await failMissionBackedTurnStart({
+      projectPath,
+      sessionId: turnContext.sessionId,
+      turnId: turnContext.turnId,
+      startedAt: turnContext.startedAt,
+      errorText,
+    })
+    throw error
+  }
 }
 
 

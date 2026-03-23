@@ -50,8 +50,12 @@ export type AgentChatPanelViewProps = {
   onAddContext: (context: ChatContext) => void
   onRemoveContext: (contextId: string) => void
   elapsedTime?: string
+  elapsedSeconds?: number
   showTimer?: boolean
   projectPath: string
   missionId: string
+  missionPanelOpen: boolean
+  onOpenMissionPanel: () => void
+  onCloseMissionPanel: () => void
   onClosePanel?: () => void
 }

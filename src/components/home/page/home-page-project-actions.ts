@@ -167,7 +167,7 @@ function makeProjectExportHandler(input: Input) {
 function makeCreateProjectHandler(input: Input) {
   return async (data: HomeCreateProjectInput) => {
     try {
-      await createProjectFlow({
+      return await createProjectFlow({
         onOpenSettings: input.onOpenSettings,
         projectsRootDir: input.projectsRootDir,
         projectStore: input.projectStore,
@@ -185,6 +185,7 @@ function makeCreateProjectHandler(input: Input) {
     } catch (error) {
       console.error('Failed to create project:', error)
       toastError(input.addToast, input.translations.home.createFailed, error)
+      throw error
     }
   }
 }

@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 
+use crate::mission::agent_profile::SessionSource;
 use crate::mission::artifacts;
 use crate::mission::contextpack_builder::{self, BuildContextPackInput};
 use crate::mission::contextpack_staleness::{
@@ -23,10 +24,12 @@ use crate::review::{
 
 use super::runtime::*;
 use crate::commands::mission::scheduler::{
-    spawn_and_initialize_worker, spawn_worker_supervision_tasks, start_feature_on_worker,
+    active_in_process_delegate_worker_ids, cancel_in_process_delegates,
+    spawn_and_initialize_worker, spawn_in_process_delegate_supervision_task,
+    spawn_process_delegate_supervision_task, start_feature_in_process, start_feature_on_worker,
 };
 
-use super::{MissionStartConfig, REVIEW_FIXUP_MAX_ATTEMPTS};
+use super::{DelegateTransportMode, MissionStartConfig, REVIEW_FIXUP_MAX_ATTEMPTS};
 
 mod gate_select;
 
@@ -72,13 +75,52 @@ fn review_fixup_key_for_targets(target_refs: &[String]) -> String {
 // ── M3: Review Gate helpers ───────────────────────────────────
 
 pub(super) fn infer_review_scope_ref(project_path: &std::path::Path, mission_id: &str) -> String {
-    artifacts::read_layer1_chapter_card(project_path, mission_id)
-        .ok()
-        .flatten()
-        .map(|cc| cc.scope_ref)
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| format!("mission:{mission_id}"))
+    fn normalize_chapter_locator(raw: &str) -> Option<String> {
+        let mut norm = raw.trim().replace('\\', "/");
+        if norm.is_empty() {
+            return None;
+        }
+        if let Some(stripped) = norm.strip_prefix("manuscripts/") {
+            norm = stripped.to_string();
+        }
+        while norm.starts_with("./") {
+            norm = norm[2..].to_string();
+        }
+        while norm.contains("//") {
+            norm = norm.replace("//", "/");
+        }
+        let norm = norm.trim();
+        if norm.is_empty() {
+            return None;
+        }
+        if norm.starts_with('/') || norm.contains(':') {
+            return None;
+        }
+        if norm.split('/').any(|seg| seg == "..") {
+            return None;
+        }
+        if !norm.to_ascii_lowercase().ends_with(".json") {
+            return None;
+        }
+        Some(norm.to_string())
+    }
+
+    if let Ok(Some(cc)) = artifacts::read_layer1_chapter_card(project_path, mission_id) {
+        if let Some(locator) = cc
+            .scope_locator
+            .as_deref()
+            .and_then(normalize_chapter_locator)
+        {
+            return format!("chapter:{locator}");
+        }
+
+        let scope_ref = cc.scope_ref.trim();
+        if !scope_ref.is_empty() {
+            return scope_ref.to_string();
+        }
+    }
+
+    format!("mission:{mission_id}")
 }
 
 pub(super) fn persist_review_report(
@@ -139,6 +181,144 @@ pub(super) fn filter_chapter_write_targets(
     out
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct ReviewGatePolicy {
+    pub(crate) review_types: Vec<review_types::ReviewType>,
+    pub(crate) severity_threshold: Option<String>,
+    pub(crate) strict_warn: bool,
+    pub(crate) auto_fix_on_block: bool,
+    pub(crate) effective_rules_fingerprint: Option<String>,
+}
+
+/// DevC: Resolve the effective gate policy for the given scope.
+///
+/// Priority:
+/// - If a `ValidationProfile` is configured via `EffectiveRules.validation_profile_id`, use it.
+/// - Otherwise fall back to the legacy macro gate policy knobs and default review types.
+pub(crate) fn resolve_chapter_gate_policy(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    scope_ref: &str,
+    fallback_strict_warn: bool,
+    fallback_auto_fix_on_block: bool,
+) -> ReviewGatePolicy {
+    let accepted_rulesets = crate::writing_rules::loader::load_accepted_rulesets(project_path);
+    let structured_rulesets_active = !accepted_rulesets.is_empty();
+
+    let (rules, effective_rules_fingerprint) = if structured_rulesets_active {
+        let now = chrono::Utc::now().timestamp_millis();
+        let card = artifacts::read_layer1_chapter_card(project_path, mission_id)
+            .ok()
+            .flatten();
+        let has_binding = card.as_ref().is_some_and(|cc| !cc.rules_sources.is_empty());
+
+        if has_binding {
+            let bound_sources = card
+                .as_ref()
+                .map(|cc| cc.rules_sources.as_slice())
+                .unwrap_or(&[]);
+
+            let bound_rules = crate::writing_rules::chapter_binding::resolve_from_binding(
+                project_path,
+                scope_ref,
+                bound_sources,
+            );
+
+            let rules = match bound_rules {
+                Some(r) => r,
+                None => {
+                    // Missing bound versions: fall back to current effective_at_chapter selector
+                    // but do not overwrite the binding evidence.
+                    let (effective, _binding) =
+                        crate::writing_rules::chapter_binding::resolve_and_bind(
+                            project_path,
+                            scope_ref,
+                        );
+                    effective
+                }
+            };
+
+            (rules.clone(), Some(rules.rules_fingerprint.clone()))
+        } else {
+            // No binding yet: resolve using effective_from_chapter-aware selector and persist binding.
+            let (effective, binding) =
+                crate::writing_rules::chapter_binding::resolve_and_bind(project_path, scope_ref);
+
+            if let Some(mut cc) = card {
+                let fp_missing = cc
+                    .rules_fingerprint
+                    .as_deref()
+                    .map(|s| s.trim().is_empty())
+                    .unwrap_or(true);
+                let sources_missing = cc.rules_sources.is_empty();
+                if (fp_missing || sources_missing) && !binding.rules_sources.is_empty() {
+                    cc.schema_version = LAYER1_SCHEMA_VERSION;
+                    cc.rules_fingerprint = Some(binding.rules_fingerprint.clone());
+                    cc.rules_sources = binding.rules_sources.clone();
+                    cc.bound_validation_profile_id = binding.validation_profile_id.clone();
+                    cc.bound_style_template_id = binding.style_template_id.clone();
+                    cc.updated_at = now;
+
+                    if let Err(e) =
+                        artifacts::write_layer1_chapter_card(project_path, mission_id, &cc)
+                    {
+                        tracing::warn!(
+                            target: "mission",
+                            mission_id = %mission_id,
+                            error = %e,
+                            "failed to persist chapter_card rule binding"
+                        );
+                    }
+                }
+            }
+
+            (effective.clone(), Some(binding.rules_fingerprint))
+        }
+    } else {
+        let rules =
+            crate::writing_rules::resolver::resolve_from_rulesets(&accepted_rulesets, scope_ref);
+        let fp = Some(
+            crate::mission::contextpack_staleness::compute_rules_fingerprint(project_path)
+                .to_string(),
+        );
+        (rules, fp)
+    };
+
+    let profile_id = rules
+        .validation_profile_id
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+
+    let profile = profile_id
+        .and_then(|pid| crate::writing_rules::loader::load_validation_profile(project_path, pid));
+
+    if let Some(profile) = profile.as_ref() {
+        let assembled = crate::gate_integration::profile_assembler::assemble_review_input(
+            scope_ref,
+            Vec::new(),
+            profile,
+            effective_rules_fingerprint.clone(),
+        );
+
+        return ReviewGatePolicy {
+            review_types: assembled.review_types,
+            severity_threshold: assembled.severity_threshold,
+            strict_warn: profile.strict_warn,
+            auto_fix_on_block: profile.auto_fix_on_block,
+            effective_rules_fingerprint,
+        };
+    }
+
+    ReviewGatePolicy {
+        review_types: default_chapter_review_types(project_path, mission_id),
+        severity_threshold: None,
+        strict_warn: fallback_strict_warn,
+        auto_fix_on_block: fallback_auto_fix_on_block,
+        effective_rules_fingerprint,
+    }
+}
+
 pub(super) fn default_chapter_review_types(
     project_path: &std::path::Path,
     mission_id: &str,
@@ -184,6 +364,32 @@ fn ensure_contextpack_for_review(
             BuildContextPackInput {
                 scope_ref: Some(scope_ref.to_string()),
                 token_budget: None,
+                active_chapter_path: None,
+                selected_text: None,
+            },
+        )?;
+        return Ok((Some(cp), staleness, true));
+    }
+
+    Ok((existing, staleness, false))
+}
+
+fn ensure_contextpack_for_review_with_budget(
+    project_path: &std::path::Path,
+    mission_id: &str,
+    scope_ref: &str,
+    budget: TokenBudget,
+) -> Result<(Option<ContextPack>, ContextPackStalenessStatus, bool), AppError> {
+    let existing = artifacts::read_latest_contextpack(project_path, mission_id)?;
+    let staleness = check_contextpack_staleness(project_path, mission_id, existing.as_ref())?;
+
+    if !staleness.present || staleness.stale {
+        let cp = contextpack_builder::build_and_persist_contextpack(
+            project_path,
+            mission_id,
+            BuildContextPackInput {
+                scope_ref: Some(scope_ref.to_string()),
+                token_budget: Some(budget),
                 active_chapter_path: None,
                 selected_text: None,
             },
@@ -342,24 +548,97 @@ pub(super) async fn run_review_gate_with_p1_policies(
     mission_id: &str,
     scope_ref: String,
     target_refs: Vec<String>,
-    review_types: Vec<review_types::ReviewType>,
+    policy: ReviewGatePolicy,
+    token_budget: Option<TokenBudget>,
     run_config: Option<&super::MissionRunConfig>,
 ) -> Result<(review_types::ReviewReport, ReviewGateRunMeta), AppError> {
-    let (cp_opt, staleness, rebuilt) =
-        ensure_contextpack_for_review(project_path, mission_id, &scope_ref)?;
+    let (cp_opt, staleness, rebuilt) = if let Some(budget) = token_budget {
+        ensure_contextpack_for_review_with_budget(project_path, mission_id, &scope_ref, budget)?
+    } else {
+        ensure_contextpack_for_review(project_path, mission_id, &scope_ref)?
+    };
 
-    let rules_fp =
-        crate::mission::contextpack_staleness::compute_rules_fingerprint(project_path).to_string();
+    // DevD: prefer ChapterCard-bound rules for reviews (history not polluted).
+    // When binding is missing, resolve via effective_from_chapter-aware selector and persist binding.
+    let effective_rules_override: Option<crate::writing_rules::types::EffectiveRules> = {
+        let rulesets = crate::writing_rules::loader::load_accepted_rulesets(project_path);
+        if rulesets.is_empty() {
+            None
+        } else {
+            let now = chrono::Utc::now().timestamp_millis();
+            let card = artifacts::read_layer1_chapter_card(project_path, mission_id)
+                .ok()
+                .flatten();
+            let has_binding = card.as_ref().is_some_and(|cc| !cc.rules_sources.is_empty());
+
+            let effective_rules = if has_binding {
+                let bound_sources = card
+                    .as_ref()
+                    .map(|cc| cc.rules_sources.as_slice())
+                    .unwrap_or(&[]);
+                crate::writing_rules::chapter_binding::resolve_from_binding(
+                    project_path,
+                    &scope_ref,
+                    bound_sources,
+                )
+                .or_else(|| {
+                    let (effective, _binding) =
+                        crate::writing_rules::chapter_binding::resolve_and_bind(
+                            project_path,
+                            &scope_ref,
+                        );
+                    Some(effective)
+                })
+            } else {
+                let (effective, binding) = crate::writing_rules::chapter_binding::resolve_and_bind(
+                    project_path,
+                    &scope_ref,
+                );
+
+                if let Some(mut cc) = card {
+                    let fp_missing = cc
+                        .rules_fingerprint
+                        .as_deref()
+                        .map(|s| s.trim().is_empty())
+                        .unwrap_or(true);
+                    let sources_missing = cc.rules_sources.is_empty();
+                    if (fp_missing || sources_missing) && !binding.rules_sources.is_empty() {
+                        cc.schema_version = LAYER1_SCHEMA_VERSION;
+                        cc.rules_fingerprint = Some(binding.rules_fingerprint.clone());
+                        cc.rules_sources = binding.rules_sources.clone();
+                        cc.bound_validation_profile_id = binding.validation_profile_id.clone();
+                        cc.bound_style_template_id = binding.style_template_id.clone();
+                        cc.updated_at = now;
+
+                        if let Err(e) =
+                            artifacts::write_layer1_chapter_card(project_path, mission_id, &cc)
+                        {
+                            tracing::warn!(
+                                target: "mission",
+                                mission_id = %mission_id,
+                                error = %e,
+                                "failed to persist chapter_card rule binding"
+                            );
+                        }
+                    }
+                }
+
+                Some(effective)
+            };
+
+            effective_rules
+        }
+    };
 
     let input = review_types::ReviewRunInput {
         scope_ref,
         target_refs,
         branch_id: None,
-        review_types,
+        review_types: policy.review_types,
         task_card_ref: None,
         context_pack_ref: Some("contextpacks/contextpack.json".to_string()),
-        effective_rules_fingerprint: Some(rules_fp),
-        severity_threshold: None,
+        effective_rules_fingerprint: policy.effective_rules_fingerprint,
+        severity_threshold: policy.severity_threshold,
     };
 
     let llm_config = run_config.map(|cfg| ReviewLlmConfig {
@@ -375,6 +654,7 @@ pub(super) async fn run_review_gate_with_p1_policies(
         review_engine::ReviewRuntimeOptions {
             contextpack: cp_opt.as_ref(),
             llm_config: llm_config.as_ref(),
+            effective_rules_override,
         },
     )
     .await?;
@@ -737,6 +1017,42 @@ pub(super) async fn stop_all_workers_for_review_block(
     mission_id: &str,
     exclude_worker_id: Option<&str>,
 ) {
+    for wid in cancel_in_process_delegates(mission_id, exclude_worker_id, true) {
+        clear_worker_from_state(project_path, mission_id, &wid);
+        append_mission_recovery_log(
+            project_path,
+            mission_id,
+            format!("review gate requested in-process delegate stop for {wid}"),
+        );
+    }
+
+    let wait_deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let remaining = active_in_process_delegate_worker_ids(mission_id)
+            .into_iter()
+            .filter(|wid| {
+                exclude_worker_id
+                    .map(|exclude| exclude != wid)
+                    .unwrap_or(true)
+            })
+            .collect::<Vec<_>>();
+        if remaining.is_empty() {
+            break;
+        }
+        if std::time::Instant::now() >= wait_deadline {
+            append_mission_recovery_log(
+                project_path,
+                mission_id,
+                format!(
+                    "review gate timed out waiting for in-process delegates to stop: {}",
+                    remaining.join(", ")
+                ),
+            );
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
     for (wid, handle) in list_worker_handles(mission_id) {
         if exclude_worker_id.is_some_and(|ex| ex == wid.as_str()) {
             continue;
@@ -811,73 +1127,142 @@ pub(super) async fn start_review_fixup_attempt(
         .map(|s| s.state)
         .unwrap_or(MissionState::Paused);
 
-    let (worker_id, worker_arc) =
-        spawn_and_initialize_worker(project_path, project_path_str, mission_id).await?;
-
     let worker_profile = builtin_general_worker_profile();
     let attempt = 0_u32;
-    let start_result = {
-        let worker = worker_arc.lock().await;
-        start_feature_on_worker(
-            orch,
-            &*worker,
-            emitter,
-            project_path,
-            mission_id,
-            fix_feature.clone(),
-            &start_cfg.run_config,
-            &worker_id,
-            attempt,
-            worker_profile,
-            true,
-            false,
-        )
-        .await
-    };
 
-    match start_result {
-        Ok(_feature_id_started) => {
-            insert_worker_handle(
-                mission_id,
-                worker_id.clone(),
-                MissionWorkerHandle {
-                    worker: Arc::clone(&worker_arc),
+    match start_cfg.delegate_transport {
+        DelegateTransportMode::Process => {
+            let (worker_id, worker_arc) =
+                spawn_and_initialize_worker(project_path, project_path_str, mission_id).await?;
+            let delegate_worker = {
+                let worker = worker_arc.lock().await;
+                worker.clone()
+            };
+            let start_result = {
+                let worker = worker_arc.lock().await;
+                start_feature_on_worker(
+                    orch,
+                    &*worker,
+                    emitter,
+                    project_path,
+                    mission_id,
+                    fix_feature.clone(),
+                    &start_cfg.run_config,
+                    &worker_id,
                     attempt,
-                },
-            );
+                    worker_profile.clone(),
+                    SessionSource::ReviewGate,
+                    start_cfg.parent_session_id.as_deref(),
+                    start_cfg.parent_turn_id,
+                    true,
+                    false,
+                )
+                .await
+            };
 
-            spawn_worker_supervision_tasks(
-                app_handle,
-                mission_id.to_string(),
-                project_path_str.to_string(),
-                worker_id.clone(),
-                start_cfg.run_config.clone(),
-                start_cfg.max_workers,
-            );
+            match start_result {
+                Ok(_feature_id_started) => {
+                    insert_worker_handle(
+                        mission_id,
+                        worker_id.clone(),
+                        MissionWorkerHandle {
+                            worker: Arc::clone(&worker_arc),
+                            attempt,
+                        },
+                    );
 
-            let old_state_str = serde_json::to_string(&old_state)
-                .unwrap_or_default()
-                .trim_matches('"')
-                .to_string();
-            if old_state != MissionState::Running {
-                let _ = emitter.state_changed(&old_state_str, "running");
+                    spawn_process_delegate_supervision_task(
+                        app_handle,
+                        mission_id.to_string(),
+                        project_path_str.to_string(),
+                        worker_id.clone(),
+                        delegate_worker,
+                        fix_feature,
+                        worker_profile,
+                        start_cfg.clone(),
+                        attempt,
+                    );
+
+                    let old_state_str = serde_json::to_string(&old_state)
+                        .unwrap_or_default()
+                        .trim_matches('"')
+                        .to_string();
+                    if old_state != MissionState::Running {
+                        let _ = emitter.state_changed(&old_state_str, "running");
+                    }
+
+                    let _ = emitter.fixup_progress(fixup_attempt as i32, "auto fixup started");
+                    append_mission_recovery_log(
+                        project_path,
+                        mission_id,
+                        format!(
+                            "review fixup attempt {fixup_attempt}/{REVIEW_FIXUP_MAX_ATTEMPTS} started"
+                        ),
+                    );
+
+                    Ok(())
+                }
+                Err(e) => {
+                    clear_worker_from_state(project_path, mission_id, &worker_id);
+                    let _ = remove_worker_handle(mission_id, &worker_id);
+                    Err(e)
+                }
             }
-
-            let _ = emitter.fixup_progress(fixup_attempt as i32, "auto fixup started");
-            append_mission_recovery_log(
+        }
+        DelegateTransportMode::InProcess => {
+            let worker_id = format!("wk_{}", uuid::Uuid::new_v4());
+            let start_result = start_feature_in_process(
+                orch,
+                emitter,
                 project_path,
                 mission_id,
-                format!(
-                    "review fixup attempt {fixup_attempt}/{REVIEW_FIXUP_MAX_ATTEMPTS} started"
-                ),
-            );
+                fix_feature.clone(),
+                &start_cfg.run_config,
+                &worker_id,
+                attempt,
+                worker_profile.clone(),
+                false,
+            )
+            .await;
 
-            Ok(())
-        }
-        Err(e) => {
-            clear_worker_from_state(project_path, mission_id, &worker_id);
-            let _ = remove_worker_handle(mission_id, &worker_id);
-            Err(e)
+            match start_result {
+                Ok(_feature_id_started) => {
+                    spawn_in_process_delegate_supervision_task(
+                        app_handle,
+                        mission_id.to_string(),
+                        project_path_str.to_string(),
+                        worker_id.clone(),
+                        fix_feature,
+                        worker_profile,
+                        start_cfg.clone(),
+                        attempt,
+                    );
+
+                    let old_state_str = serde_json::to_string(&old_state)
+                        .unwrap_or_default()
+                        .trim_matches('"')
+                        .to_string();
+                    if old_state != MissionState::Running {
+                        let _ = emitter.state_changed(&old_state_str, "running");
+                    }
+
+                    let _ = emitter.fixup_progress(fixup_attempt as i32, "auto fixup started");
+                    append_mission_recovery_log(
+                        project_path,
+                        mission_id,
+                        format!(
+                            "review fixup attempt {fixup_attempt}/{REVIEW_FIXUP_MAX_ATTEMPTS} started"
+                        ),
+                    );
+
+                    Ok(())
+                }
+                Err(e) => {
+                    let _ = orch.update_feature_status(&fix_feature.id, FeatureStatus::Pending);
+                    clear_worker_from_state(project_path, mission_id, &worker_id);
+                    Err(e)
+                }
+            }
         }
     }
 }

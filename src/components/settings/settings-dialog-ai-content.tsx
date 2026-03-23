@@ -8,6 +8,7 @@ import {
   getGlobalRulesFeature,
   listSkillsFeature,
   listWorkersFeature,
+  resolveWorkerVisibleTools,
   saveGlobalRulesFeature,
   type SkillDefinition,
   type WorkerDefinition,
@@ -209,21 +210,18 @@ function renderWorkersSection(
               <div className="flex-1 min-w-0">
                 <span className="text-sm font-medium">{worker.display_name}</span>
                 <div className="flex flex-wrap gap-1 mt-1">
-                  {worker.tool_whitelist.slice(0, 5).map((tool) => (
+                  {resolveWorkerVisibleTools(worker).slice(0, 5).map((tool) => (
                     <span key={tool} className="tag tag-hover">{tool}</span>
                   ))}
-                  {worker.tool_whitelist.length > 5 && (
-                    <span className="tag tag-hover">+{worker.tool_whitelist.length - 5}</span>
+                  {resolveWorkerVisibleTools(worker).length > 5 && (
+                    <span className="tag tag-hover">+{resolveWorkerVisibleTools(worker).length - 5}</span>
                   )}
                 </div>
-                {worker.match_keywords.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    <span className="text-[10px] ">{t.aiWorkerKeywords}:</span>
-                    {worker.match_keywords.map((kw) => (
-                      <span key={kw} className="tag tag-warning">{kw}</span>
-                    ))}
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-1 mt-1">
+                  <span className="tag tag-warning">{worker.capability_preset}</span>
+                  {worker.allow_delegate && <span className="tag tag-warning">delegate</span>}
+                  {worker.allow_skill_activation && <span className="tag tag-warning">skill</span>}
+                </div>
               </div>
               <button onClick={() => onDelete(worker.name)} className="ml-2 p-1 text-muted-foreground hover:text-destructive transition-colors">
                 <Trash2 className="h-3.5 w-3.5" />

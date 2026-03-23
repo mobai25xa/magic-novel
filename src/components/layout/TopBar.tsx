@@ -8,17 +8,11 @@ import {
   Sun,
 } from 'lucide-react'
 
-import { useAgentChatStore } from '@/state/agent'
 import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
 import { useSettingsStore } from '@/stores/settings-store'
 
-import { readMagicAsset } from '@/features/assets-management'
-import {
-  assetTreeToEditorDoc,
-  type KnowledgeAssetTree,
-} from '@/features/assets-management/asset-editor-document'
-import { readChapter } from '@/features/editor-reading'
+import { openEditorTarget } from '@/features/editor-navigation/open-editor-target'
 import { useTranslation } from '@/hooks/use-translation'
 import { useLayoutStore } from '@/stores/layout-store'
 import { GlobalSearchPanel } from '@/components/common/GlobalSearchPanel'
@@ -29,8 +23,8 @@ interface TopBarProps {
 }
 
 export function TopBar({ onOpenSettings }: TopBarProps) {
-  const { projectPath, setSelectedPath } = useProjectStore()
-  const { setCurrentChapter, setContent, setIsDirty, isSaving, isDirty } = useEditorStore()
+  const { projectPath } = useProjectStore()
+  const { isSaving, isDirty } = useEditorStore()
   const { isLeftPanelVisible, isRightPanelVisible, toggleLeftPanel, toggleRightPanel } = useLayoutStore()
   const { theme, setTheme } = useSettingsStore()
   const { translations } = useTranslation()
@@ -120,34 +114,15 @@ export function TopBar({ onOpenSettings }: TopBarProps) {
           onResultClick={(path) => {
             if (!projectPath) return
 
-            const normalized = String(path || '').replace('\\', '/')
-            const isAsset = normalized.startsWith('.magic_novel/')
-
             const open = async () => {
-              if (isAsset) {
-                const relative = normalized.replace(/^\.magic_novel\//, '')
-                const asset = (await readMagicAsset(projectPath, relative)) as KnowledgeAssetTree
-                const title = asset && typeof asset === 'object' && 'title' in asset && typeof asset.title === 'string'
-                  ? asset.title
-                  : null
-                const docContent = assetTreeToEditorDoc(asset)
-
-                setSelectedPath(`magic_assets/${relative}`)
-                const editorStore = useEditorStore.getState()
-                editorStore.setCurrentAsset(relative, title)
-                editorStore.setContent(docContent)
-                editorStore.setIsDirty(false)
-                setShowSearchResults(false)
-                return
+              const normalized = String(path || '').replace(/\\/g, '/')
+              const opened = await openEditorTarget(normalized, {
+                revealLeftTree: true,
+                switchLeftTab: true,
+              })
+              if (!opened) {
+                throw new Error(`Unsupported search target: ${normalized}`)
               }
-
-              const chapter = await readChapter(projectPath, normalized)
-              setSelectedPath(normalized)
-              setCurrentChapter(chapter.id, normalized, chapter.title)
-              setContent(chapter.content)
-              setIsDirty(false)
-              useEditorStore.getState().setLastOpened(projectPath, normalized, chapter.id, chapter.title)
-              useAgentChatStore.getState().setActiveChapterPath(normalized)
               setShowSearchResults(false)
             }
 

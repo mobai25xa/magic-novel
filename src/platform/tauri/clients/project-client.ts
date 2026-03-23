@@ -10,6 +10,15 @@ export interface ProjectMetadata {
   description?: string
   cover_image?: string
   project_type: ProjectType[]
+  target_total_words?: number
+  planned_volumes?: number
+  target_words_per_volume?: number
+  target_words_per_chapter?: number
+  narrative_pov?: string
+  tone?: string[]
+  audience?: string
+  bootstrap_state?: string
+  bootstrap_updated_at?: number
   created_at: number
   updated_at: number
   app_min_version?: string
@@ -42,6 +51,9 @@ export interface VolumeMetadata {
   volume_id: string
   title: string
   summary?: string
+  target_words?: number
+  dramatic_goal?: string
+  status?: string
   created_at: number
   updated_at: number
 }
@@ -60,11 +72,82 @@ export interface Chapter {
   target_words?: number
   status?: string
   summary?: string
+  plot_goal?: string
+  emotional_goal?: string
   tags?: string[]
   pinned_assets?: { kind: string; asset_id: string; node_ids?: string[] }[]
   last_cursor_position?: number
   created_at: number
   updated_at: number
+}
+
+export type ProjectBootstrapPhase =
+  | 'pending'
+  | 'assembling_prompt'
+  | 'llm_generating'
+  | 'writing_artifacts'
+  | 'partially_generated'
+  | 'ready_for_review'
+  | 'ready_to_write'
+  | 'failed'
+
+export type ProjectBootstrapArtifactStatus = 'draft' | 'proposed' | 'accepted' | 'failed' | string
+
+export interface ProjectBootstrapArtifact {
+  kind: string
+  path: string
+  status: ProjectBootstrapArtifactStatus
+  title?: string
+  summary?: string
+  updated_at?: number
+}
+
+export interface ProjectBootstrapStatus {
+  project_id: string
+  creation_job_id: string
+  phase: ProjectBootstrapPhase
+  progress: number
+  bootstrap_state: string
+  completed_steps: string[]
+  failed_steps: string[]
+  generated_artifacts: ProjectBootstrapArtifact[]
+  recommended_next_action?: string
+  error_message?: string
+  started_at?: number
+  updated_at?: number
+}
+
+export interface CreateProjectInput {
+  path: string
+  name: string
+  author: string
+  description?: string
+  coverImage?: string
+  projectType?: string[]
+  targetTotalWords?: number
+  plannedVolumes?: number
+  targetWordsPerVolume?: number
+  targetWordsPerChapter?: number
+  narrativePov?: string
+  tone?: string[]
+  audience?: string
+}
+
+export interface StartProjectBootstrapInput {
+  project_path: string
+  creation_brief: string
+  description?: string
+  target_total_words?: number
+  planned_volumes?: number
+  target_words_per_volume?: number
+  target_words_per_chapter?: number
+  narrative_pov?: string
+  tone?: string[]
+  audience?: string
+  protagonist_seed?: string
+  counterpart_seed?: string
+  world_seed?: string
+  ending_direction?: string
 }
 
 export type RecycleItemType = 'novel' | 'chapter' | 'volume'
@@ -88,14 +171,8 @@ type ChapterMetadataInput = {
   pinnedAssets?: { kind: string; assetId: string; nodeIds?: string[] }[] | null
 }
 
-export async function createProjectClient(
-  path: string,
-  name: string,
-  author: string,
-  projectType?: string[],
-  coverImage?: string,
-): Promise<ProjectSnapshot> {
-  return invokeTauri('create_project', { path, name, author, projectType, coverImage })
+export async function createProjectClient(input: CreateProjectInput): Promise<ProjectSnapshot> {
+  return invokeTauri('create_project', { ...input })
 }
 
 export async function openProjectClient(path: string): Promise<ProjectSnapshot> {
@@ -310,4 +387,18 @@ export async function exportTreeMultiClient(
   format: string,
 ): Promise<number> {
   return invokeTauri('export_tree_multi', { projectPath, outputDir, format })
+}
+
+export async function startProjectBootstrapClient(
+  input: StartProjectBootstrapInput,
+): Promise<ProjectBootstrapStatus> {
+  return invokeTauri('start_project_bootstrap', { input })
+}
+
+export async function getProjectBootstrapStatusClient(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return invokeTauri('get_project_bootstrap_status', { projectPath })
+}
+
+export async function resumeProjectBootstrapClient(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return invokeTauri('resume_project_bootstrap', { projectPath })
 }

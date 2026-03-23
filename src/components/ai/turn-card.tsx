@@ -9,6 +9,7 @@ import { resumeAgentTurnFeature } from '@/features/agent-chat'
 import { TurnCardContent } from './message/turn-card-content'
 import { TurnCardUserBlock } from './message/turn-card-user-block'
 import { TimelineBlocksRenderer } from './timeline/TimelineBlocksRenderer'
+import { TimelineBlocksByPhaseRenderer } from './timeline/TimelineBlocksByPhaseRenderer'
 import { resolveTurnTimeline } from './timeline/resolve-turn-timeline'
 import { useTurnRenderMetric } from './turn-metrics'
 import { TurnErrorCard } from './error/TurnErrorCard'
@@ -46,35 +47,31 @@ function readTurnToolExposure(view: AgentUiTurnView) {
   const eventMeta = [...view.events]
     .reverse()
     .map((event) => event.meta)
-    .find((meta) => meta && typeof meta.tool_package === 'string')
+    .find((meta) => meta && typeof meta.capability_preset === 'string')
 
   const errorDetail = view.state.turnError?.detail
 
-  const toolPackage = typeof eventMeta?.tool_package === 'string'
-    ? eventMeta.tool_package
-    : errorDetail?.tool_package
-  const routeReason = typeof eventMeta?.route_reason === 'string'
-    ? eventMeta.route_reason
-    : errorDetail?.route_reason
-  const fallbackFrom = typeof eventMeta?.fallback_from === 'string'
-    ? eventMeta.fallback_from
-    : errorDetail?.fallback_from
-  const fallbackReason = typeof eventMeta?.fallback_reason === 'string'
-    ? eventMeta.fallback_reason
-    : errorDetail?.fallback_reason
+  const capabilityPreset = typeof eventMeta?.capability_preset === 'string'
+    ? eventMeta.capability_preset
+    : errorDetail?.capability_preset
+  const exposureReason = typeof eventMeta?.exposure_reason === 'string'
+    ? eventMeta.exposure_reason
+    : errorDetail?.exposure_reason
+  const policySource = typeof eventMeta?.policy_source === 'string'
+    ? eventMeta.policy_source
+    : errorDetail?.policy_source
   const exposedTools = Array.isArray(eventMeta?.exposed_tools)
     ? eventMeta.exposed_tools.filter((value): value is string => typeof value === 'string')
     : errorDetail?.exposed_tools ?? []
 
-  if (!toolPackage && !routeReason && !fallbackFrom && exposedTools.length === 0) {
+  if (!capabilityPreset && !exposureReason && !policySource && exposedTools.length === 0) {
     return null
   }
 
   return {
-    toolPackage,
-    routeReason,
-    fallbackFrom,
-    fallbackReason,
+    capabilityPreset,
+    exposureReason,
+    policySource,
     exposedTools,
   }
 }
@@ -127,8 +124,10 @@ export function TurnCard(input: TurnCardProps) {
   const toolExposure = input.viewMode === 'debug' ? readTurnToolExposure(input.view) : null
 
   const executionBlocks = timeline.blocks.filter((block) => block.type !== 'assistant_segment')
-  const toolCallCount = executionBlocks.filter((block) => block.type === 'tool_call').length
+  const toolCallCount = input.view.toolSteps.length
   const hasThinkingPanel = executionBlocks.some((block) => block.type === 'thinking_panel' && block.hasContent)
+  const hasWorkerPhaseEvents = input.view.events.some((event) => event.type === 'WORKER_STARTED')
+  const showExecutionLayer = toolCallCount > 0 || hasThinkingPanel || hasWorkerPhaseEvents
   const hasWaitingConfirmation = input.view.toolSteps.some(
     (step) => step.status === 'waiting_confirmation' && step.progress === 'waiting_confirmation',
   )
@@ -205,12 +204,10 @@ export function TurnCard(input: TurnCardProps) {
         {toolExposure ? (
           <div className="rounded border border-border/60 bg-muted/30 px-2.5 py-2 text-[11px] text-muted-foreground">
             <div className="font-medium text-foreground">
-              {`package ${toolExposure.toolPackage ?? 'unknown'}`}
+              {`preset ${toolExposure.capabilityPreset ?? 'unknown'}`}
             </div>
-            {toolExposure.routeReason ? <div>{`route ${toolExposure.routeReason}`}</div> : null}
-            {toolExposure.fallbackFrom ? (
-              <div>{`fallback ${toolExposure.fallbackFrom}${toolExposure.fallbackReason ? ` · ${toolExposure.fallbackReason}` : ''}`}</div>
-            ) : null}
+            {toolExposure.policySource ? <div>{`policy ${toolExposure.policySource}`}</div> : null}
+            {toolExposure.exposureReason ? <div>{`reason ${toolExposure.exposureReason}`}</div> : null}
             {toolExposure.exposedTools.length > 0 ? (
               <div className="mt-1 break-all">
                 {`tools ${toolExposure.exposedTools.join(', ')}`}
@@ -247,7 +244,7 @@ export function TurnCard(input: TurnCardProps) {
               onRetry={input.onRetryTurn}
             />
 
-            {toolCallCount > 0 || hasThinkingPanel ? (
+            {showExecutionLayer ? (
               <div className="space-y-1.5">
                 <TurnExecutionToggle
                   open={executionOpen}
@@ -260,21 +257,20 @@ export function TurnCard(input: TurnCardProps) {
 
                 {executionOpen ? (
                   <div className="space-y-2">
-                    <TimelineBlocksRenderer
+                    <TimelineBlocksByPhaseRenderer
                       blocks={executionBlocks}
+                      events={input.view.events}
                       turn={input.view.state}
                       toolSteps={input.view.toolSteps}
                       sessionId={input.sessionId}
                       running={activeTurn}
                       viewMode={input.viewMode}
                       onRetryStep={input.onRetryStep}
-                      onRetryTurn={handleRetry}
                       onApprove={allowResumeAction ? handleApprove : undefined}
                       onSkip={allowResumeAction ? handleSkip : undefined}
                       pendingAskUser={allowResumeAction ? turnPendingAskUser : undefined}
                       onResolveAskUser={input.onResolveAskUser}
                       onCancelAskUser={input.onCancelAskUser}
-                      hideInlineLoadingIndicator={activeTurn && input.running}
                     />
                   </div>
                 ) : null}

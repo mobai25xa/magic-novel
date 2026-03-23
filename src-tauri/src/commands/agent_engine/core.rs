@@ -10,8 +10,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::agent_engine::emitter::{AgentEventEmitter, EventSink};
 use crate::agent_engine::loop_engine::AgentLoop;
-use crate::agent_engine::messages::{AgentMessage, ConversationState};
+use crate::agent_engine::messages::{AgentMessage, ContentBlock, ConversationState, Role};
 use crate::agent_engine::persistence::SessionPersistenceSink;
+use crate::agent_engine::prompt_assembler::role_layer::PromptRole;
 use crate::agent_engine::session_state;
 use crate::agent_engine::tool_formatters::{build_tool_message, build_tool_trace};
 use crate::agent_engine::tool_routing::resolve_turn_tool_exposure;
@@ -36,8 +37,46 @@ fn default_system_prompt() -> &'static str {
     super::prompt::default_system_prompt()
 }
 
+#[cfg(test)]
 fn apply_system_prompt(state: &mut ConversationState, system_prompt: Option<&str>) {
     super::prompt::apply_system_prompt(state, system_prompt)
+}
+
+fn apply_system_prompt_with_config(
+    state: &mut ConversationState,
+    system_prompt: Option<&str>,
+    loop_config: &crate::agent_engine::types::LoopConfig,
+    provider: Option<&str>,
+    model: Option<&str>,
+    role: Option<PromptRole>,
+    reminder: Option<crate::agent_engine::prompt_assembler::reminder_layer::ReminderText>,
+) {
+    super::prompt::apply_system_prompt_with_config(
+        state,
+        system_prompt,
+        loop_config,
+        provider,
+        model,
+        role,
+        reminder,
+    )
+}
+
+fn parse_prompt_role(value: &str) -> Option<PromptRole> {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("orchestrator") {
+        Some(PromptRole::Orchestrator)
+    } else if trimmed.eq_ignore_ascii_case("context") {
+        Some(PromptRole::Context)
+    } else if trimmed.eq_ignore_ascii_case("draft") {
+        Some(PromptRole::Draft)
+    } else if trimmed.eq_ignore_ascii_case("review") {
+        Some(PromptRole::Review)
+    } else if trimmed.eq_ignore_ascii_case("knowledge") {
+        Some(PromptRole::Knowledge)
+    } else {
+        None
+    }
 }
 
 /// Editor state snapshot passed from frontend
@@ -73,6 +112,9 @@ pub struct AgentTurnStartInput {
     /// System prompt to prepend
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Optional prompt role override (orchestrator/context/draft/review/knowledge)
+    #[serde(default)]
+    pub prompt_role: Option<String>,
     /// Active chapter path used by askuser/edit context
     #[serde(default)]
     pub active_chapter_path: Option<String>,
@@ -114,6 +156,8 @@ struct SnapshotContext {
     active_chapter_path: Option<String>,
     active_skill: Option<String>,
     loop_config: LoopConfig,
+    session_canon_revision: Option<i64>,
+    session_branch_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -185,6 +229,88 @@ fn is_session_not_found_error(err: &AppError) -> bool {
                 .and_then(|value| value.as_str()),
             Some("E_AGENT_SESSION_NOT_FOUND")
         )
+}
+
+fn extract_pending_todo_count(state: &ConversationState) -> Option<usize> {
+    // Find the most recent successful todowrite tool result and count pending + in_progress.
+    for msg in state.messages.iter().rev() {
+        if !matches!(msg.role, Role::Tool) {
+            continue;
+        }
+
+        for block in &msg.blocks {
+            let ContentBlock::ToolResult {
+                tool_name,
+                content,
+                is_error,
+                ..
+            } = block
+            else {
+                continue;
+            };
+
+            if *is_error {
+                continue;
+            }
+
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+                continue;
+            };
+
+            let items = value
+                .get("todo_state")
+                .and_then(|v| v.get("items"))
+                .and_then(|v| v.as_array());
+
+            // Legacy compatibility: older snapshots may omit tool_name on tool_result blocks.
+            // Treat it as todowrite only when the JSON shape matches.
+            let is_todowrite = match tool_name.as_deref() {
+                Some("todowrite") => true,
+                Some(_) => false,
+                None => items.is_some(),
+            };
+            if !is_todowrite {
+                continue;
+            }
+
+            let Some(items) = items else { continue };
+
+            let mut count = 0_usize;
+            for item in items {
+                match item.get("status").and_then(|v| v.as_str()) {
+                    Some("pending") | Some("in_progress") => count = count.saturating_add(1),
+                    _ => {}
+                }
+            }
+
+            return Some(count);
+        }
+    }
+
+    None
+}
+
+fn resolve_session_baseline(
+    project_path: &std::path::Path,
+    session_id: &str,
+    current_canon_revision: Option<i64>,
+    current_branch_id: &str,
+) -> (Option<i64>, Option<String>) {
+    let existing = crate::services::load_runtime_snapshot(project_path, session_id)
+        .ok()
+        .flatten();
+
+    let session_canon_revision = existing
+        .as_ref()
+        .and_then(|s| s.session_canon_revision)
+        .or(current_canon_revision);
+
+    let session_branch_id = existing
+        .as_ref()
+        .and_then(|s| s.session_branch_id.clone())
+        .or_else(|| Some(current_branch_id.to_string()));
+
+    (session_canon_revision, session_branch_id)
 }
 
 fn stop_reason_to_runtime_state(reason: &StopReason) -> SessionRuntimeState {
@@ -283,7 +409,8 @@ fn persist_runtime_snapshot_for_conversation(
         ctx.active_chapter_path.clone(),
         Some(ctx.loop_config.clone()),
     )
-    .with_active_skill(active_skill.or_else(|| ctx.active_skill.clone()));
+    .with_active_skill(active_skill.or_else(|| ctx.active_skill.clone()))
+    .with_session_baseline(ctx.session_canon_revision, ctx.session_branch_id.clone());
 
     if let Err(err) =
         save_runtime_snapshot_from_input(std::path::Path::new(&ctx.project_path), input)
@@ -484,7 +611,79 @@ pub async fn agent_turn_start(
     // Build conversation state (prefer saved history for multi-turn continuity)
     let mut state = prepared.conversation;
 
-    apply_system_prompt(&mut state, input.system_prompt.as_deref());
+    let project_path = std::path::Path::new(&input.project_path);
+    let pending_todo_count = extract_pending_todo_count(&state);
+    let current_canon_revision = crate::gate_integration::read_canon_version(project_path)
+        .ok()
+        .flatten()
+        .map(|cv| cv.revision);
+    let current_branch_id =
+        crate::agent_engine::reminder_builder::read_active_branch_id(project_path);
+    let (session_canon_revision, session_branch_id) = resolve_session_baseline(
+        project_path,
+        &session_id,
+        current_canon_revision,
+        &current_branch_id,
+    );
+
+    // DevE: build dynamic reminder for Layer D injection
+    let reminder = {
+        use crate::agent_engine::prompt_assembler::mode_layer::PromptMode;
+        use crate::agent_engine::reminder_builder::{build_reminder, ReminderInput, SessionKind};
+        let mode = PromptMode::from_engine_modes(
+            loop_config.capability_mode,
+            loop_config.clarification_mode,
+        );
+        let session_kind = if state.messages.is_empty() {
+            SessionKind::New
+        } else {
+            SessionKind::Resume
+        };
+        let mut reminder_input = ReminderInput::new(project_path, mode, session_kind);
+
+        reminder_input.active_chapter_path = input
+            .active_chapter_path
+            .as_deref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+
+        reminder_input.pending_todo_count = pending_todo_count;
+        reminder_input.session_canon_revision = session_canon_revision;
+        reminder_input.session_branch_id = session_branch_id.as_deref();
+
+        // DevC: Provide pending-blocker signal (conservative: any mission pending review decision).
+        reminder_input.has_pending_blocker =
+            crate::gate_integration::has_pending_review_blocker(project_path);
+
+        // DevC: Provide Active Rules summary (writing_rules EffectiveRules → compact text).
+        let active_rules_summary = reminder_input.active_chapter_path.and_then(|p| {
+            crate::writing_rules::resolve_effective_rules_if_available(project_path, p)
+                .map(|rules| crate::gate_integration::render_active_rules_summary(&rules))
+                .filter(|summary| !summary.trim().is_empty())
+        });
+        if let Some(ref summary) = active_rules_summary {
+            reminder_input.active_rules_summary = Some(summary.as_str());
+        }
+
+        let r = build_reminder(&reminder_input);
+        if r.is_empty() {
+            None
+        } else {
+            Some(r)
+        }
+    };
+
+    let prompt_role = input.prompt_role.as_deref().and_then(parse_prompt_role);
+
+    apply_system_prompt_with_config(
+        &mut state,
+        input.system_prompt.as_deref(),
+        &loop_config,
+        Some(provider),
+        Some(&model),
+        prompt_role,
+        reminder,
+    );
     state.session_id = session_id.clone();
 
     // Add user message for this turn
@@ -503,7 +702,6 @@ pub async fn agent_turn_start(
         &state,
         &loop_config,
         input.active_chapter_path.as_deref(),
-        None,
         semantic_retrieval_enabled,
     )
     .telemetry
@@ -534,6 +732,8 @@ pub async fn agent_turn_start(
         active_chapter_path: input.active_chapter_path.clone(),
         active_skill: active_skill.clone(),
         loop_config: loop_config.clone(),
+        session_canon_revision,
+        session_branch_id: session_branch_id.clone(),
     };
 
     if use_streaming {
@@ -771,6 +971,20 @@ pub async fn agent_turn_resume(
     )
     .with_persistence(persistence);
 
+    let project_path = std::path::Path::new(&suspended.project_path);
+    let current_canon_revision = crate::gate_integration::read_canon_version(project_path)
+        .ok()
+        .flatten()
+        .map(|cv| cv.revision);
+    let current_branch_id =
+        crate::agent_engine::reminder_builder::read_active_branch_id(project_path);
+    let (session_canon_revision, session_branch_id) = resolve_session_baseline(
+        project_path,
+        &input.session_id,
+        current_canon_revision,
+        &current_branch_id,
+    );
+
     let resume_snapshot_ctx = SnapshotContext {
         project_path: suspended.project_path.clone(),
         session_id: input.session_id.clone(),
@@ -785,6 +999,8 @@ pub async fn agent_turn_resume(
         active_chapter_path: suspended.active_chapter_path.clone(),
         active_skill: suspended.active_skill.clone(),
         loop_config: suspended.loop_config.clone(),
+        session_canon_revision,
+        session_branch_id,
     };
 
     // Build the tool result message based on resume input

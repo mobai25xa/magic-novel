@@ -1,7 +1,7 @@
 /**
  * A3. MacroChapterRunCard
  *
- * Chapter detail card: write_path, review_id, knowledge_delta_id, handoff summary.
+ * Chapter detail card: write_path, review_id, knowledge_delta_id, result summary.
  * Collapsed by default — avoids "log wall".
  * Pure display — no invoke / state management.
  */
@@ -40,7 +40,7 @@ export function MacroChapterRunCard({ chapter, className }: MacroChapterRunCardP
     chapter.write_path ||
     chapter.latest_review_id ||
     chapter.latest_knowledge_delta_id ||
-    chapter.last_handoff_summary
+    chapter.last_result_summary
 
   if (!hasDetails) {
     return (
@@ -69,10 +69,10 @@ export function MacroChapterRunCard({ chapter, className }: MacroChapterRunCardP
         <CopyableField label="knowledge_delta" value={chapter.latest_knowledge_delta_id} />
       ) : null}
 
-      {chapter.last_handoff_summary ? (
+      {chapter.last_result_summary ? (
         <div className="mt-1 border-t border-border/40 pt-1">
-          <span className="text-muted-foreground">handoff</span>
-          <p className="mt-0.5 whitespace-pre-wrap break-words">{chapter.last_handoff_summary}</p>
+          <span className="text-muted-foreground">summary</span>
+          <p className="mt-0.5 whitespace-pre-wrap break-words">{chapter.last_result_summary}</p>
         </div>
       ) : null}
     </div>

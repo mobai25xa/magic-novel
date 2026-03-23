@@ -2,10 +2,17 @@
 //!
 //! Aligned with worktrees/docs/M5/guide.md §2.2–2.3.
 //! Add-only field policy: never remove fields, only append with `#[serde(default)]`.
+//! Legacy input aliases may be accepted when a canonical field name changes.
 
 use serde::{Deserialize, Serialize};
 
+use super::workflow_types::SummaryJobPolicy;
+
 pub const MACRO_SCHEMA_VERSION: i32 = 1;
+
+fn default_macro_summary_job_policy() -> SummaryJobPolicy {
+    SummaryJobPolicy::NoSummaryJob
+}
 
 // ── WorkflowKind ───────────────────────────────────────────────
 
@@ -67,7 +74,15 @@ pub struct MacroWorkflowConfig {
     pub strict_review: bool,
     pub auto_fix_on_block: bool,
     pub token_budget: TokenBudget,
+    #[serde(default = "default_macro_summary_job_policy")]
+    pub summary_job_policy: SummaryJobPolicy,
     pub created_at: i64,
+}
+
+impl MacroWorkflowConfig {
+    pub fn uses_explicit_summary_job(&self) -> bool {
+        self.summary_job_policy == SummaryJobPolicy::ExplicitSummaryJob
+    }
 }
 
 // ── ChapterRunStatus ───────────────────────────────────────────
@@ -102,8 +117,12 @@ pub struct ChapterRunState {
     pub latest_review_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_knowledge_delta_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_handoff_summary: Option<String>,
+    #[serde(
+        default,
+        alias = "last_handoff_summary",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub last_result_summary: Option<String>,
 
     pub updated_at: i64,
 }
@@ -168,6 +187,7 @@ mod tests {
             strict_review: false,
             auto_fix_on_block: true,
             token_budget: TokenBudget::Medium,
+            summary_job_policy: SummaryJobPolicy::NoSummaryJob,
             created_at: 1700000000000,
         }
     }
@@ -191,12 +211,31 @@ mod tests {
                 latest_contextpack_ref: None,
                 latest_review_id: None,
                 latest_knowledge_delta_id: None,
-                last_handoff_summary: None,
+                last_result_summary: None,
                 updated_at: now,
             }],
             last_transition_at: now,
             last_error: None,
         }
+    }
+
+    #[test]
+    fn chapter_state_accepts_legacy_handoff_summary_field() {
+        let value = serde_json::json!({
+            "chapter_ref": "vol1/ch1",
+            "write_path": "chapters/ch1.md",
+            "status": "completed",
+            "last_handoff_summary": "legacy summary",
+            "updated_at": 1700000000000i64,
+        });
+
+        let chapter: ChapterRunState =
+            serde_json::from_value(value).expect("legacy chapter state should deserialize");
+
+        assert_eq!(
+            chapter.last_result_summary.as_deref(),
+            Some("legacy summary")
+        );
     }
 
     #[test]
@@ -208,6 +247,7 @@ mod tests {
         assert_eq!(parsed.chapter_targets.len(), 2);
         assert_eq!(parsed.workflow_kind, WorkflowKind::Book);
         assert_eq!(parsed.token_budget, TokenBudget::Medium);
+        assert_eq!(parsed.summary_job_policy, SummaryJobPolicy::NoSummaryJob);
     }
 
     #[test]

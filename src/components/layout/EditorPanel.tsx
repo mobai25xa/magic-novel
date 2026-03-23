@@ -1,4 +1,6 @@
 import { NovelEditor } from '@/components/editor/NovelEditor'
+import { PendingExternalChapterRefreshBanner } from '@/components/editor/PendingExternalChapterRefreshBanner'
+import { ProjectBootstrapStatusBanner } from '@/components/editor/ProjectBootstrapStatusBanner'
 import { StatusBar } from '@/components/editor/StatusBar'
 import { useEditorStore } from '@/stores/editor-store'
 import { useLayoutStore } from '@/stores/layout-store'
@@ -11,9 +13,10 @@ export function EditorPanel() {
   const lt = translations.layout
 
   const isAssetDoc = currentDocKind === 'asset' && Boolean(currentAssetPath)
+  const isKnowledgeDoc = currentDocKind === 'knowledge' && Boolean(currentAssetPath)
   const isChapterDoc = currentDocKind === 'chapter' && Boolean(currentChapterId)
 
-  if (!isAssetDoc && !isChapterDoc) {
+  if (!isAssetDoc && !isKnowledgeDoc && !isChapterDoc) {
     return (
       <div className="panel-editor flex items-center justify-center">
         <div className="text-center">
@@ -26,13 +29,15 @@ export function EditorPanel() {
 
   return (
     <div className="panel-editor">
+      <ProjectBootstrapStatusBanner />
+      <PendingExternalChapterRefreshBanner />
       <div className="flex-1 min-h-0 overflow-hidden">
         <NovelEditor
           initialContent={content as Parameters<typeof NovelEditor>[0]['initialContent']}
           onContentChange={setContent}
         />
       </div>
-      {!isFullscreen && (isChapterDoc || isAssetDoc) ? <StatusBar editor={editor} /> : null}
+      {!isFullscreen && (isChapterDoc || isAssetDoc || isKnowledgeDoc) ? <StatusBar editor={editor} /> : null}
     </div>
   )
 }

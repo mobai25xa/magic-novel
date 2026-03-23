@@ -12,20 +12,18 @@ export type FaultDomain =
   | 'auth'
   | 'external'
 
-export type ToolName =
-  | 'create'
-  | 'read'
-  | 'edit'
-  | 'delete'
-  | 'move'
-  | 'ls'
-  | 'grep'
-  | 'askuser'
-  | 'skill'
-  | 'todowrite'
-  | 'outline'
-  | 'character_sheet'
-  | 'search_knowledge'
+export const TOOL_GATEWAY_NAMES = [
+  'create',
+  'read',
+  'edit',
+  'delete',
+  'move',
+  'ls',
+  'grep',
+] as const
+
+// Agent-engine tool ids remain backend-owned and are intentionally not modeled here.
+export type ToolGatewayName = typeof TOOL_GATEWAY_NAMES[number]
 
 export interface ToolError {
   code: string
@@ -35,7 +33,7 @@ export interface ToolError {
 }
 
 export interface ToolMeta {
-  tool: ToolName
+  tool: ToolGatewayName
   call_id: string
   duration_ms: number
   revision_before?: number

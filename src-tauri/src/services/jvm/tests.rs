@@ -1,42 +1,11 @@
 #[cfg(test)]
 mod tests {
     use crate::models::jvm::PatchOp;
+    use crate::services::jvm::validator::validate_doc_integrity;
     use crate::services::jvm::{
         apply_patch_ops_to_doc, build_doc_from_markdown_blocks, ensure_doc_block_ids,
-        export_chapter_to_markdown, generate_patch_ops, parse_markdown_to_blocks,
-        validate_doc_integrity,
+        generate_patch_ops, parse_markdown_to_blocks,
     };
-
-    #[test]
-    fn export_is_stable_for_simple_doc() {
-        let chapter = crate::models::Chapter {
-            schema_version: 1,
-            id: "chap_1".to_string(),
-            title: "T".to_string(),
-            content: serde_json::json!({
-                "type": "doc",
-                "content": [
-                    {"type": "heading", "attrs": {"id": "h1", "level": 1}, "content": [{"type": "text", "text": "Hello"}]},
-                    {"type": "paragraph", "attrs": {"id": "p1"}, "content": [{"type": "text", "text": "World"}]}
-                ]
-            }),
-            counts: Default::default(),
-            target_words: None,
-            status: None,
-            summary: None,
-            tags: None,
-            pinned_assets: None,
-            last_cursor_position: None,
-            created_at: 0,
-            updated_at: 0,
-        };
-
-        let r1 = export_chapter_to_markdown(&chapter, 1, "hash".to_string(), true).unwrap();
-        let r2 = export_chapter_to_markdown(&chapter, 1, "hash".to_string(), true).unwrap();
-        assert_eq!(r1.markdown, r2.markdown);
-        assert!(r1.markdown.contains("@block:id=h1"));
-        assert!(r1.markdown.contains("# Hello"));
-    }
 
     #[test]
     fn parser_extracts_block_hints() {
@@ -280,40 +249,36 @@ mod tests {
         assert_eq!(extract_block_texts(&doc_v1), vec!["Para one", "Para two"]);
         assert!(all_blocks_have_ids(&doc_v1));
 
-        // Export v1 to markdown (simulating a read) — blocks now have IDs.
-        let chapter_v1 = crate::models::Chapter {
-            schema_version: 1,
-            id: "ch1".to_string(),
-            title: "T".to_string(),
-            content: doc_v1.clone(),
-            counts: Default::default(),
-            target_words: None,
-            status: None,
-            summary: None,
-            tags: None,
-            pinned_assets: None,
-            last_cursor_position: None,
-            created_at: 0,
-            updated_at: 0,
-        };
-        let exported = export_chapter_to_markdown(&chapter_v1, 1, "h".to_string(), true).unwrap();
+        let content_v1 = doc_v1.get("content").and_then(|v| v.as_array()).unwrap();
+        let id_1 = content_v1[0]
+            .get("attrs")
+            .and_then(|a| a.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+        let id_2 = content_v1[1]
+            .get("attrs")
+            .and_then(|a| a.get("id"))
+            .and_then(|v| v.as_str())
+            .unwrap()
+            .to_string();
+
+        let exported_v1 = format!(
+            "<!-- @block:id={id_1} type=paragraph -->\nPara one\n\n<!-- @block:id={id_2} type=paragraph -->\nPara two"
+        );
 
         // Simulate str_replace: replace "Para one" with "Changed"
-        let md_v2 = exported.markdown.replace("Para one", "Changed");
+        let md_v2 = exported_v1.replace("Para one", "Changed");
         let (blocks_v2, _) = parse_markdown_to_blocks(&md_v2).unwrap();
         let doc_v2 = build_doc_from_markdown_blocks(&blocks_v2);
 
         assert_eq!(extract_block_texts(&doc_v2), vec!["Changed", "Para two"]);
         assert!(all_blocks_have_ids(&doc_v2));
 
-        // Third edit: export v2 and replace again.
-        let chapter_v2 = crate::models::Chapter {
-            content: doc_v2.clone(),
-            ..chapter_v1.clone()
-        };
-        let exported_v2 =
-            export_chapter_to_markdown(&chapter_v2, 2, "h2".to_string(), true).unwrap();
-        let md_v3 = exported_v2.markdown.replace("Changed", "Final");
+        let exported_v2 = format!(
+            "<!-- @block:id={id_1} type=paragraph -->\nChanged\n\n<!-- @block:id={id_2} type=paragraph -->\nPara two"
+        );
+        let md_v3 = exported_v2.replace("Changed", "Final");
         let (blocks_v3, _) = parse_markdown_to_blocks(&md_v3).unwrap();
         let doc_v3 = build_doc_from_markdown_blocks(&blocks_v3);
 
@@ -357,33 +322,8 @@ mod tests {
 
     #[test]
     fn str_replace_preserves_unchanged_block_ids() {
-        let base_doc = serde_json::json!({
-            "type": "doc",
-            "content": [
-                {"type": "heading", "attrs": {"id": "h1", "level": 1}, "content": [{"type": "text", "text": "Title"}]},
-                {"type": "paragraph", "attrs": {"id": "p1"}, "content": [{"type": "text", "text": "Keep me"}]},
-                {"type": "paragraph", "attrs": {"id": "p2"}, "content": [{"type": "text", "text": "Change me"}]}
-            ]
-        });
-
-        let chapter = crate::models::Chapter {
-            schema_version: 1,
-            id: "ch1".to_string(),
-            title: "T".to_string(),
-            content: base_doc,
-            counts: Default::default(),
-            target_words: None,
-            status: None,
-            summary: None,
-            tags: None,
-            pinned_assets: None,
-            last_cursor_position: None,
-            created_at: 0,
-            updated_at: 0,
-        };
-
-        let exported = export_chapter_to_markdown(&chapter, 1, "h".to_string(), true).unwrap();
-        let replaced = exported.markdown.replace("Change me", "Changed");
+        let exported = "<!-- @block:id=h1 type=heading -->\n# Title\n\n<!-- @block:id=p1 type=paragraph -->\nKeep me\n\n<!-- @block:id=p2 type=paragraph -->\nChange me";
+        let replaced = exported.replace("Change me", "Changed");
 
         let (blocks, _) = parse_markdown_to_blocks(&replaced).unwrap();
         let new_doc = build_doc_from_markdown_blocks(&blocks);

@@ -5,16 +5,28 @@ function has(content, ...needles) {
   return needles.every((needle) => content.includes(needle))
 }
 
+function lacks(content, ...needles) {
+  return needles.every((needle) => !content.includes(needle))
+}
+
 async function main() {
   const projectRoot = resolve(import.meta.dirname, '..')
   const typesPath = resolve(projectRoot, 'src/lib/tool-gateway/types.ts')
+  const gatewayPath = resolve(projectRoot, 'src/lib/tool-gateway/gateway.ts')
   const runtimeClientPath = resolve(projectRoot, 'src/platform/tauri/clients/tool-runtime-client.ts')
   const runtimePath = resolve(projectRoot, 'src/lib/agent-test/runtime.ts')
+  const scenarioV2Path = resolve(projectRoot, 'src/lib/agent-test/tool-agent-scenario-v2.ts')
+  const workerToolContractPath = resolve(projectRoot, 'src/features/global-config/worker-tool-contract.ts')
+  const workerManagementPath = resolve(projectRoot, 'src/components/workers/worker-management.ts')
 
-  const [typesCode, runtimeClientCode, runtimeCode] = await Promise.all([
+  const [typesCode, gatewayCode, runtimeClientCode, runtimeCode, scenarioV2Code, workerToolContractCode, workerManagementCode] = await Promise.all([
     readFile(typesPath, 'utf-8'),
+    readFile(gatewayPath, 'utf-8'),
     readFile(runtimeClientPath, 'utf-8'),
     readFile(runtimePath, 'utf-8'),
+    readFile(scenarioV2Path, 'utf-8'),
+    readFile(workerToolContractPath, 'utf-8'),
+    readFile(workerManagementPath, 'utf-8'),
   ])
 
   const checks = [
@@ -104,6 +116,106 @@ async function main() {
         "target: 'chapter_content'",
       ),
       reason: 'agent test runtime call sites switched to canonical fields',
+    },
+    {
+      name: 'gateway_interface_and_runtime_gateway_share_same_callable_surface',
+      pass: has(
+        typesCode,
+        'create(input: ToolCreateInput)',
+        'read(input: ToolReadInput)',
+        'edit(input: ToolEditInput)',
+        'delete(input: ToolDeleteInput)',
+        'move(input: ToolMoveInput)',
+        'ls(input: ToolLsInput)',
+        'grep(input: ToolGrepInput)',
+      ) && has(
+        gatewayCode,
+        'class RuntimeToolGateway implements ToolGateway',
+        'create(input: ToolCreateInput)',
+        'read(input: ToolReadInput)',
+        'edit(input: ToolEditInput)',
+        'delete(input: ToolDeleteInput)',
+        'move(input: ToolMoveInput)',
+        'ls(input: ToolLsInput)',
+        'grep(input: ToolGrepInput)',
+      ),
+      reason: 'runtime gateway only exposes the canonical callable tool surface',
+    },
+    {
+      name: 'tool_gateway_names_are_scoped_to_runtime_gateway_only',
+      pass: has(
+        typesCode,
+        'export const TOOL_GATEWAY_NAMES = [',
+        "'create'",
+        "'read'",
+        "'edit'",
+        "'delete'",
+        "'move'",
+        "'ls'",
+        "'grep'",
+        'export type ToolGatewayName = typeof TOOL_GATEWAY_NAMES[number]',
+        'tool: ToolGatewayName',
+      )
+        && lacks(
+          typesCode,
+          "'askuser'",
+          "'outline'",
+          "'character_sheet'",
+          "'search_knowledge'",
+        ),
+      reason: 'tool-gateway types only own the runtime callable create/read/edit/delete/move/ls/grep surface',
+    },
+    {
+      name: 'scenario_v2_uses_current_gateway_tools_only',
+      pass: has(
+        scenarioV2Code,
+        "'ls'",
+        "'read'",
+        "'grep'",
+        "'edit'",
+        'toolGateway.ls({',
+        'toolGateway.read({',
+        'toolGateway.grep({',
+        'toolGateway.edit({',
+        "target: 'chapter_content'",
+        "view: 'snapshot'",
+      )
+        && lacks(
+          scenarioV2Code,
+          'workspace_map',
+          'context_read',
+          'context_search',
+          'draft_write',
+          'knowledge_write',
+          'knowledge_read',
+      ),
+      reason: 'scenario v2 is pinned to the current ls/read/grep/edit gateway contract',
+    },
+    {
+      name: 'builtin_worker_tools_are_owned_by_global_config_contract',
+      pass: has(
+        workerToolContractCode,
+        'export const BUILTIN_WORKER_TOOL_NAMES = [',
+        "'workspace_map'",
+        "'context_read'",
+        "'context_search'",
+        "'knowledge_read'",
+        "'knowledge_write'",
+        "'draft_write'",
+        "'structure_edit'",
+        "'review_check'",
+        "'skill'",
+        "'todowrite'",
+        'export const DEFAULT_WORKER_TOOL_WHITELIST: string[] = [...BUILTIN_WORKER_TOOL_NAMES]',
+      )
+        && has(
+          workerManagementCode,
+          'BUILTIN_WORKER_TOOL_NAMES',
+          'DEFAULT_WORKER_TOOL_WHITELIST',
+          'export const AVAILABLE_WORKER_TOOLS = BUILTIN_WORKER_TOOL_NAMES',
+          'tool_whitelist: [...DEFAULT_WORKER_TOOL_WHITELIST]',
+        ),
+      reason: 'worker-management uses a shared worker tool contract instead of duplicating agent tool ids inline',
     },
   ]
 

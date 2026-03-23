@@ -31,7 +31,9 @@ async function main() {
     emitter: await readFile(resolve(root, 'src-tauri/src/agent_engine/emitter.rs'), 'utf-8'),
     agentTypes: await readFile(resolve(root, 'src-tauri/src/agent_engine/types.rs'), 'utf-8'),
     runtime: await readFile(resolve(root, 'src/lib/agent-chat/runtime.ts'), 'utf-8'),
-    runtimeEvents: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events.ts'), 'utf-8'),
+    runtimeTurnHandler: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/turn.ts'), 'utf-8'),
+    runtimeToolHandler: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/tool.ts'), 'utf-8'),
+    runtimeAskUserHandler: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/askuser.ts'), 'utf-8'),
     turnCard: await readFile(resolve(root, 'src/components/ai/turn-card.tsx'), 'utf-8'),
     chatStore: await readFile(resolve(root, 'src/lib/agent-chat/store.ts'), 'utf-8'),
     engineClient: await readFile(resolve(root, 'src/platform/tauri/clients/agent-engine-client.ts'), 'utf-8'),
@@ -41,19 +43,19 @@ async function main() {
   }
 
   const waitingConfirmationCase = extractSection(
-    files.runtimeEvents,
-    "case 'WAITING_FOR_CONFIRMATION': {",
-    "case 'ASKUSER_REQUESTED': {",
+    files.runtimeToolHandler,
+    'function handleWaitingForConfirmation',
+    '',
   )
   const askUserRequestedCase = extractSection(
-    files.runtimeEvents,
-    "case 'ASKUSER_REQUESTED': {",
-    "case 'ASKUSER_ANSWERED': {",
+    files.runtimeAskUserHandler,
+    'function handleAskUserRequested',
+    'function handleAskUserAnswered',
   )
   const turnCompletedCase = extractSection(
-    files.runtimeEvents,
-    "case 'TURN_COMPLETED': {",
-    "case 'TURN_FAILED': {",
+    files.runtimeTurnHandler,
+    'function handleTurnCompleted',
+    'function handleTurnCancelled',
   )
   const resolveAskUserSection = extractSection(
     files.chatStore,

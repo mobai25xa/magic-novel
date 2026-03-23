@@ -1,8 +1,7 @@
 import { BookOpen, FileText, MapPin, Package, User, X } from 'lucide-react'
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/magic-ui/components'
-
 import { useAiTranslations } from '../ai-hooks'
+import { StandardAiModelSelect } from '../shared/StandardAiModelSelect'
 import type { ChatContext, ChatContextType } from './chat-context-types'
 
 type ContextBarProps = {
@@ -54,18 +53,14 @@ export function ContextBar(input: ContextBarProps) {
       )}
 
       <div className={`${hasContexts ? '' : 'ml-auto'} shrink-0`}>
-        <Select value={input.selectedModel} onValueChange={input.onSelectModel}>
-          <SelectTrigger size="xs" variant="ghost" className="w-32">
-            <SelectValue placeholder={ai.panel.modelPlaceholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {input.models.map((model) => (
-              <SelectItem key={model} value={model}>
-                {model}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <StandardAiModelSelect
+          models={input.models}
+          selectedModel={input.selectedModel}
+          onSelectModel={input.onSelectModel}
+          size="xs"
+          variant="ghost"
+          className="w-32"
+        />
       </div>
     </div>
   )

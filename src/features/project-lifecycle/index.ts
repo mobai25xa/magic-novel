@@ -16,7 +16,11 @@ export type CreateProjectInput = {
 }
 
 export async function createProjectLifecycle(input: CreateProjectInput) {
-  const snapshot = await createProject(input.projectPath, input.name, input.author)
+  const snapshot = await createProject({
+    path: input.projectPath,
+    name: input.name,
+    author: input.author,
+  })
   return {
     snapshot,
     tree: snapshot.tree.map(mapBackendTreeNode),
@@ -67,4 +71,3 @@ export async function importAssetLifecycle(
 ) {
   return importAsset(projectPath, inputPath, kind)
 }
-

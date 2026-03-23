@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { ChevronLeft, ChevronRight, File, FileText, FolderPlus, Plus } from 'lucide-react'
 
 import { InputDialog } from '@/components/common/InputDialog'
@@ -7,6 +7,7 @@ import { ContentTree } from '@/components/tree/ContentTree'
 import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { useEditorUiStore, type LeftPanelTab } from '@/stores/editor-ui-store'
 import { TooltipProvider } from '@/magic-ui/components'
 
 import {
@@ -14,8 +15,6 @@ import {
   LeftPanelPinnedAssetsDialog,
   LeftPanelSelectVolumeDialog,
 } from './left-panel-dialogs'
-
-type LeftPanelTab = 'outline' | 'knowledge'
 
 type LeftPanelTreeNode = {
   kind: 'dir' | 'chapter' | 'knowledge' | 'asset_dir' | 'asset_file'
@@ -90,21 +89,10 @@ export type LeftPanelViewProps = {
       }
     | {
         open: true
-        kind: 'file-type'
-        title: string
-        label: string
-        targetDir: string
-        options: { value: string; label: string }[]
-        defaultValue: string
-        onConfirm: (assetKind: 'worldview' | 'outline' | 'character' | 'lore' | 'prompt') => void
-      }
-    | {
-        open: true
-        kind: 'file-title'
+        kind: 'file'
         title: string
         placeholder: string
         targetDir: string
-        assetKind: 'worldview' | 'outline' | 'character' | 'lore' | 'prompt'
         onConfirm: (name: string) => Promise<void>
       }
     | null
@@ -191,15 +179,20 @@ function OutlineVolumeBlock({
   onSelectChapter,
   onSelectAsset,
 }: OutlineVolumeBlockProps) {
-  const [open, setOpen] = useState(true)
+  const open = useEditorUiStore((state) => !state.sidebarTreeCollapsedDirPaths[node.path])
+  const toggleCollapsed = useEditorUiStore((state) => state.toggleSidebarTreeDirCollapsed)
   const chapterChildren = (node.children || []).filter((child) => child.kind === 'chapter' || child.kind === 'asset_file')
+
+  useEffect(() => {
+    useEditorUiStore.getState().registerSidebarTreeDirPath(node.path)
+  }, [node.path])
 
   return (
     <div className="editor-shell-volume-group">
       <button
         type="button"
         className="editor-shell-volume-header"
-        onClick={() => setOpen((prev) => !prev)}
+        onClick={() => toggleCollapsed(node.path)}
       >
         {open ? <ChevronRight size={12} className="editor-shell-volume-arrow is-open" /> : <ChevronRight size={12} className="editor-shell-volume-arrow" />}
         <span className="editor-shell-volume-title">{node.title || node.name}</span>
@@ -414,24 +407,6 @@ function KnowledgeContent(input: LeftPanelViewProps) {
 function LeftPanelKnowledgeDialogs(input: LeftPanelViewProps) {
   if (!input.knowledgeDialog) return null
 
-  if (input.knowledgeDialog.kind === 'file-type') {
-    return (
-      <SelectDialog
-        open={input.knowledgeDialog.open}
-        title={input.knowledgeDialog.title}
-        label={input.knowledgeDialog.label}
-        options={input.knowledgeDialog.options}
-        defaultValue={input.knowledgeDialog.defaultValue}
-        closeOnConfirm={false}
-        onClose={input.onCloseKnowledgeDialog}
-        onConfirm={(value) => {
-          if (input.knowledgeDialog?.kind !== 'file-type') return
-          input.knowledgeDialog.onConfirm(value as 'worldview' | 'outline' | 'character' | 'lore' | 'prompt')
-        }}
-      />
-    )
-  }
-
   if (input.knowledgeDialog.kind === 'folder') {
     return (
       <InputDialog
@@ -454,7 +429,7 @@ function LeftPanelKnowledgeDialogs(input: LeftPanelViewProps) {
       placeholder={input.knowledgeDialog.placeholder}
       onClose={input.onCloseKnowledgeDialog}
       onConfirm={(value) => {
-        if (input.knowledgeDialog?.kind !== 'file-title') return
+        if (input.knowledgeDialog?.kind !== 'file') return
         void input.knowledgeDialog.onConfirm(value)
       }}
     />
@@ -491,7 +466,8 @@ function LeftPanelDialogs(input: LeftPanelViewProps) {
 }
 
 export function LeftPanelView(input: LeftPanelViewProps) {
-  const [activeTab, setActiveTab] = useState<LeftPanelTab>('outline')
+  const activeTab = useEditorUiStore((state) => state.leftPanelTab)
+  const setActiveTab = useEditorUiStore((state) => state.setLeftPanelTab)
 
   return (
     <TooltipProvider>

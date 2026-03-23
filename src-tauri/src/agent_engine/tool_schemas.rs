@@ -1,9 +1,10 @@
 //! OpenAI-compatible tool schema builder for the agent engine.
 
+use crate::agent_engine::exposure_policy::ExposureContext;
 use crate::agent_tools::definition::ToolSchemaContext;
 use crate::agent_tools::registry::{
-    build_filtered_openai_tool_schema_report, build_openai_tool_schema_report,
-    ToolSchemaSkipDiagnostic,
+    build_openai_tool_schema_report, build_openai_tool_schema_report_for_exposure,
+    ToolHiddenDiagnostic, ToolSchemaSkipDiagnostic,
 };
 
 use super::types::{AgentMode, ClarificationMode};
@@ -12,6 +13,7 @@ use super::types::{AgentMode, ClarificationMode};
 pub(crate) struct BuiltToolSchemas {
     pub schemas: serde_json::Value,
     pub exposed_tools: Vec<String>,
+    pub hidden_tools: Vec<ToolHiddenDiagnostic>,
     pub skipped_tools: Vec<ToolSchemaSkipDiagnostic>,
 }
 
@@ -24,33 +26,32 @@ fn build_schema_context(
         .filter(|s| s.enabled)
         .map(|s| s.name.to_string())
         .collect();
-    let available_workers: Vec<String> = crate::services::global_config::load_worker_definitions()
-        .iter()
-        .map(|w| w.name.clone())
-        .collect();
 
     ToolSchemaContext {
         semantic_retrieval_enabled,
         clarification_mode,
         available_skills,
-        available_workers,
     }
 }
 
-/// Build filtered tool schemas based on a whitelist.
-pub(crate) fn build_filtered_tool_schema_bundle(
-    whitelist: &[String],
-    clarification_mode: ClarificationMode,
-    semantic_retrieval_enabled: bool,
-    mode: AgentMode,
+fn build_schema_context_from_exposure(exposure: &ExposureContext) -> ToolSchemaContext {
+    build_schema_context(
+        exposure.clarification_mode,
+        exposure.semantic_retrieval_enabled,
+    )
+}
+
+pub(crate) fn build_tool_schema_bundle_for_exposure(
+    exposure: &ExposureContext,
 ) -> BuiltToolSchemas {
-    let context = build_schema_context(clarification_mode, semantic_retrieval_enabled);
-    let filtered = build_filtered_openai_tool_schema_report(whitelist, mode, &context);
+    let context = build_schema_context_from_exposure(exposure);
+    let report = build_openai_tool_schema_report_for_exposure(exposure, &context);
 
     BuiltToolSchemas {
-        schemas: serde_json::Value::Array(filtered.tools),
-        exposed_tools: filtered.exposed_tools,
-        skipped_tools: filtered.skipped_tools,
+        schemas: serde_json::Value::Array(report.tools),
+        exposed_tools: report.exposed_tools,
+        hidden_tools: report.hidden_tools,
+        skipped_tools: report.skipped_tools,
     }
 }
 
@@ -66,24 +67,9 @@ pub(crate) fn build_tool_schema_bundle(
     BuiltToolSchemas {
         schemas: serde_json::Value::Array(report.tools),
         exposed_tools: report.exposed_tools,
+        hidden_tools: report.hidden_tools,
         skipped_tools: report.skipped_tools,
     }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn build_filtered_tool_schemas(
-    whitelist: &[String],
-    clarification_mode: ClarificationMode,
-    semantic_retrieval_enabled: bool,
-    mode: AgentMode,
-) -> serde_json::Value {
-    build_filtered_tool_schema_bundle(
-        whitelist,
-        clarification_mode,
-        semantic_retrieval_enabled,
-        mode,
-    )
-    .schemas
 }
 
 /// Build OpenAI-compatible tool schemas (aligned to TS agent prompt contract).
@@ -114,6 +100,23 @@ mod tests {
             .collect()
     }
 
+    fn tool_parameters(value: serde_json::Value, tool_name: &str) -> serde_json::Value {
+        value
+            .as_array()
+            .expect("tool schemas should be an array")
+            .iter()
+            .find_map(|tool| {
+                let function = tool.get("function")?;
+                let name = function.get("name")?.as_str()?;
+                if name == tool_name {
+                    function.get("parameters").cloned()
+                } else {
+                    None
+                }
+            })
+            .expect("tool parameters should exist")
+    }
+
     #[test]
     fn interactive_mode_exposes_askuser_even_without_write_tools() {
         let tools = tool_names(build_tool_schemas(
@@ -122,10 +125,9 @@ mod tests {
             AgentMode::Planning,
         ));
         assert!(tools.contains(&"askuser".to_string()));
-        assert!(!tools.contains(&"edit".to_string()));
-        assert!(!tools.contains(&"create".to_string()));
-        assert!(!tools.contains(&"delete".to_string()));
-        assert!(!tools.contains(&"move".to_string()));
+        assert!(!tools.contains(&"draft_write".to_string()));
+        assert!(!tools.contains(&"structure_edit".to_string()));
+        assert!(!tools.contains(&"knowledge_write".to_string()));
     }
 
     #[test]
@@ -136,36 +138,17 @@ mod tests {
             AgentMode::Writing,
         ));
         assert!(!tools.contains(&"askuser".to_string()));
-        assert!(tools.contains(&"edit".to_string()));
+        assert!(tools.contains(&"draft_write".to_string()));
     }
 
     #[test]
-    fn filtered_schemas_preserve_mode_constraints() {
-        let whitelist = vec![
-            "read".to_string(),
-            "edit".to_string(),
-            "askuser".to_string(),
-        ];
-        let tools = tool_names(build_filtered_tool_schemas(
-            &whitelist,
-            ClarificationMode::Interactive,
-            false,
-            AgentMode::Planning,
-        ));
-        assert!(tools.contains(&"read".to_string()));
-        assert!(tools.contains(&"askuser".to_string()));
-        assert!(!tools.contains(&"edit".to_string()));
-    }
-
-    #[test]
-    fn writing_mode_exposes_delete_and_move() {
+    fn writing_mode_exposes_structure_edit() {
         let tools = tool_names(build_tool_schemas(
             ClarificationMode::Interactive,
             false,
             AgentMode::Writing,
         ));
-        assert!(tools.contains(&"delete".to_string()));
-        assert!(tools.contains(&"move".to_string()));
+        assert!(tools.contains(&"structure_edit".to_string()));
     }
 
     #[test]
@@ -173,8 +156,32 @@ mod tests {
         let bundle =
             build_tool_schema_bundle(ClarificationMode::Interactive, false, AgentMode::Writing);
 
-        assert_eq!(bundle.exposed_tools.len(), 14);
+        assert_eq!(bundle.exposed_tools.len(), 10);
+        assert!(!bundle.hidden_tools.is_empty());
         assert!(bundle.skipped_tools.is_empty());
-        assert!(tool_names(bundle.schemas).contains(&"edit".to_string()));
+        assert!(tool_names(bundle.schemas).contains(&"draft_write".to_string()));
+        assert!(bundle
+            .hidden_tools
+            .iter()
+            .any(|tool| tool.tool_name == "skill"));
+    }
+
+    #[test]
+    fn todowrite_live_schema_hides_legacy_worker_field() {
+        let parameters = tool_parameters(
+            build_tool_schemas(ClarificationMode::Interactive, false, AgentMode::Writing),
+            "todowrite",
+        );
+        let item_properties = parameters
+            .get("properties")
+            .and_then(|value| value.get("todos"))
+            .and_then(|value| value.get("items"))
+            .and_then(|value| value.get("properties"))
+            .and_then(|value| value.as_object())
+            .expect("todowrite item properties");
+
+        assert!(item_properties.contains_key("status"));
+        assert!(item_properties.contains_key("text"));
+        assert!(!item_properties.contains_key("worker"));
     }
 }

@@ -16,7 +16,7 @@ const iconMap = {
 function resolveIcon(path: string): keyof typeof iconMap {
   const normalized = path.replace(/\\/g, '/')
   const first = normalized.split('/').filter(Boolean)[0]
-  if (first === 'magic_assets' || first === 'assets') {
+  if (first === 'assets') {
     return 'folder'
   }
   return 'book'

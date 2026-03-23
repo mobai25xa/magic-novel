@@ -1,10 +1,13 @@
 import type {
   Chapter,
+  CreateProjectInput,
   FileNode as ProjectFileNode,
   ProjectMetadata,
+  ProjectBootstrapStatus,
   ProjectSnapshot,
   ProjectType,
   RecycleItem,
+  StartProjectBootstrapInput,
   VolumeMetadata,
 } from '@/platform/tauri/clients/project-client'
 import {
@@ -31,28 +34,27 @@ import {
   permanentlyDeleteRecycledProjectClient,
   readChapterClient,
   readVolumeClient,
+  resumeProjectBootstrapClient,
   restoreRecycleItemClient,
   restoreRecycledProjectClient,
   saveChapterClient,
   saveChapterMarkdownClient,
   scanProjectsDirectoryClient,
   setChapterWordGoalClient,
+  startProjectBootstrapClient,
   trashChapterClient,
   trashProjectClient,
   trashVolumeClient,
   updateChapterMetadataClient,
   updateProjectMetadataClient,
   updateVolumeClient,
+  getProjectBootstrapStatusClient,
 } from '@/platform/tauri/clients/project-client'
 
 export async function createProject(
-  path: string,
-  name: string,
-  author: string,
-  projectType?: string[],
-  coverImage?: string,
+  input: CreateProjectInput,
 ): Promise<ProjectSnapshot> {
-  return createProjectClient(path, name, author, projectType, coverImage)
+  return createProjectClient(input)
 }
 
 export async function openProject(path: string): Promise<ProjectSnapshot> {
@@ -247,12 +249,28 @@ export async function exportTreeMulti(projectPath: string, outputDir: string, fo
   return exportTreeMultiClient(projectPath, outputDir, format)
 }
 
+export async function startProjectBootstrap(
+  input: StartProjectBootstrapInput,
+): Promise<ProjectBootstrapStatus> {
+  return startProjectBootstrapClient(input)
+}
+
+export async function getProjectBootstrapStatus(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return getProjectBootstrapStatusClient(projectPath)
+}
+
+export async function resumeProjectBootstrap(projectPath: string): Promise<ProjectBootstrapStatus> {
+  return resumeProjectBootstrapClient(projectPath)
+}
+
 export type {
   Chapter,
+  CreateProjectInput,
   ProjectMetadata,
+  ProjectBootstrapStatus,
   ProjectSnapshot,
   ProjectType,
   RecycleItem,
+  StartProjectBootstrapInput,
   VolumeMetadata,
 }
-

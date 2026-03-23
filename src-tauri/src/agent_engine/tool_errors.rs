@@ -134,41 +134,53 @@ pub(crate) fn tool_timeout_error(
 
 pub(crate) fn write_resource_key(tc: &ToolCallInfo, project_path: &str) -> Option<String> {
     match tc.tool_name.as_str() {
-        "edit" => {
-            let path = tc.args.get("path").and_then(|v| v.as_str())?.trim();
-            if path.is_empty() {
+        "draft_write" => {
+            let target_ref = tc.args.get("target_ref").and_then(|v| v.as_str())?.trim();
+            if target_ref.is_empty() {
                 None
             } else {
                 Some(format!(
                     "{}::{}",
                     project_path,
-                    normalize_resource_segment(path)
+                    normalize_resource_segment(target_ref)
                 ))
             }
         }
-        "create" => {
-            let volume = tc
+        "structure_edit" => {
+            let target_ref = tc
                 .args
-                .get("volume_path")
+                .get("target_ref")
                 .and_then(|v| v.as_str())
-                .unwrap_or(".")
-                .trim();
-            let title = tc
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+            let parent_ref = tc
                 .args
-                .get("title")
+                .get("parent_ref")
                 .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .trim();
-            if title.is_empty() {
-                None
-            } else {
-                Some(format!(
-                    "{}::{}::{}",
-                    project_path,
-                    normalize_resource_segment(volume),
-                    normalize_resource_segment(title)
-                ))
-            }
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            let key = target_ref
+                .or(parent_ref)
+                .map(normalize_resource_segment)
+                .unwrap_or_else(|| "structure_edit".to_string());
+            Some(format!("{project_path}::{key}"))
+        }
+        "knowledge_write" => {
+            let target_ref = tc
+                .args
+                .get("changes")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+                .and_then(|v| v.get("target_ref"))
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
+
+            let key = target_ref
+                .map(normalize_resource_segment)
+                .unwrap_or_else(|| "knowledge_write".to_string());
+            Some(format!("{project_path}::{key}"))
         }
         _ => None,
     }
@@ -199,47 +211,53 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn test_write_resource_key_for_edit() {
+    fn test_write_resource_key_for_draft_write() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "edit".to_string(),
-            args: json!({ "path": "vol_1/ch_1.json" }),
+            tool_name: "draft_write".to_string(),
+            args: json!({ "target_ref": "chapter:manuscripts/vol_1/ch_1.json" }),
         };
         let key = write_resource_key(&tc, "D:/p").expect("key");
-        assert_eq!(key, "D:/p::vol_1/ch_1.json");
+        assert_eq!(key, "D:/p::chapter:manuscripts/vol_1/ch_1.json");
     }
 
     #[test]
-    fn test_write_resource_key_for_create() {
+    fn test_write_resource_key_for_structure_edit_uses_parent_ref_when_present() {
         let tc = ToolCallInfo {
             llm_call_id: "c1".to_string(),
-            tool_name: "create".to_string(),
-            args: json!({ "volume_path": "vol_1", "title": "Chapter A" }),
+            tool_name: "structure_edit".to_string(),
+            args: json!({
+                "op": "create",
+                "node_type": "chapter",
+                "parent_ref": "volume:manuscripts/vol_1",
+                "title": "Chapter A",
+                "position": 0
+            }),
         };
         let key = write_resource_key(&tc, "D:/p").expect("key");
-        assert_eq!(key, "D:/p::vol_1::Chapter A");
+        assert_eq!(key, "D:/p::volume:manuscripts/vol_1");
     }
 
     #[test]
-    fn test_write_resource_key_normalizes_path() {
+    fn test_write_resource_key_normalizes_ref_separators() {
         let tc = ToolCallInfo {
             llm_call_id: "c2".to_string(),
-            tool_name: "edit".to_string(),
-            args: json!({ "path": "\\vol_1\\ch_1.json" }),
+            tool_name: "draft_write".to_string(),
+            args: json!({ "target_ref": "chapter:manuscripts\\vol_1\\ch_1.json" }),
         };
         let key = write_resource_key(&tc, "D:/p").expect("key");
-        assert_eq!(key, "D:/p::vol_1/ch_1.json");
+        assert_eq!(key, "D:/p::chapter:manuscripts/vol_1/ch_1.json");
     }
 
     #[test]
     fn test_get_tool_timeout_returns_manifest_value() {
-        let dur = get_tool_timeout("read");
+        let dur = get_tool_timeout("workspace_map");
         assert_eq!(dur, std::time::Duration::from_millis(30_000));
 
-        let dur = get_tool_timeout("edit");
+        let dur = get_tool_timeout("context_search");
         assert_eq!(dur, std::time::Duration::from_millis(60_000));
 
-        let dur = get_tool_timeout("grep");
+        let dur = get_tool_timeout("draft_write");
         assert_eq!(dur, std::time::Duration::from_millis(60_000));
 
         let dur = get_tool_timeout("skill");
@@ -259,7 +277,7 @@ mod tests {
     #[test]
     fn test_tool_timeout_error_format() {
         let timeout = std::time::Duration::from_millis(30_000);
-        let result = tool_timeout_error("read", "call_1", timeout);
+        let result = tool_timeout_error("context_read", "call_1", timeout);
         assert!(!result.ok);
         let err = result.error.as_ref().unwrap();
         assert_eq!(err.code, "E_TOOL_TIMEOUT");

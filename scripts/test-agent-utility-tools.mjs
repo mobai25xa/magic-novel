@@ -15,7 +15,12 @@ async function main() {
     sessionReplay: await readFile(resolve(root, 'src/lib/agent-chat/session/session-replay.ts'), 'utf-8'),
     sessionReducer: await readFile(resolve(root, 'src/lib/agent-chat/session/session-reducer.ts'), 'utf-8'),
     runtime: await readFile(resolve(root, 'src/lib/agent-chat/runtime.ts'), 'utf-8'),
-    runtimeEvents: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events.ts'), 'utf-8'),
+    runtimeEvents: [
+      await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/askuser.ts'), 'utf-8'),
+      await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/handlers/tool.ts'), 'utf-8'),
+      await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/tool-refresh.ts'), 'utf-8'),
+    ].join('\n'),
+    toolRefresh: await readFile(resolve(root, 'src/lib/agent-chat/runtime-backend-events/tool-refresh.ts'), 'utf-8'),
     toolStepUtils: await readFile(resolve(root, 'src/lib/agent-chat/tool-step-utils.ts'), 'utf-8'),
     store: await readFile(resolve(root, 'src/lib/agent-chat/store.ts'), 'utf-8'),
     timelineAskUser: await readFile(resolve(root, 'src/components/ai/timeline/TimelineBlockToolCall.tsx'), 'utf-8'),
@@ -158,8 +163,11 @@ async function main() {
     {
       name: 'runtime_events_do_not_drop_delete_move',
       pass:
-        has(files.runtimeEvents,
-          "toolName !== 'create' && toolName !== 'edit' && toolName !== 'delete' && toolName !== 'move'",
+        has(files.toolRefresh,
+          "toolName !== 'create'",
+          "toolName !== 'edit'",
+          "toolName !== 'delete'",
+          "toolName !== 'move'",
           "toolName === 'move' && Boolean(chapterPath)",
           'extractToolPreviewRefs',
         ),

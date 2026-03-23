@@ -1,37 +1,46 @@
 import {
-  createMagicAssetFile as createMagicAssetFileCommand,
-  createMagicAssetFolder as createMagicAssetFolderCommand,
-  deleteMagicAssetPath as deleteMagicAssetPathCommand,
+  createKnowledgeDocument as createKnowledgeDocumentCommand,
+  createKnowledgeFolder as createKnowledgeFolderCommand,
+  deleteKnowledgeEntry as deleteKnowledgeEntryCommand,
+  createAssetFile as createAssetFileCommand,
+  createAssetFolder as createAssetFolderCommand,
+  deleteAssetPath as deleteAssetPathCommand,
+  getKnowledgeTree as getKnowledgeTreeCommand,
   trashChapter as trashChapterCommand,
   trashVolume as trashVolumeCommand,
   exportChapter as exportChapterCommand,
   exportVolume as exportVolumeCommand,
-  getMagicAssetsTree as getMagicAssetsTreeCommand,
+  getAssetsTree as getAssetsTreeCommand,
   getProjectTree as getProjectTreeCommand,
   importChapter as importChapterCommand,
   importManuscriptIntoVolume as importManuscriptIntoVolumeCommand,
   moveChapter as moveChapterCommand,
   updateChapterMetadata as updateChapterMetadataCommand,
-  updateMagicAssetFolderTitle as updateMagicAssetFolderTitleCommand,
-  updateMagicAssetTitle as updateMagicAssetTitleCommand,
+  updateAssetFolderTitle as updateAssetFolderTitleCommand,
+  updateAssetFileTitle as updateAssetFileTitleCommand,
   updateVolume as updateVolumeCommand,
   type AssetKind,
+  type AssetLibraryNode,
   type FileNode,
-  type MagicAssetNode,
+  type KnowledgeTreeNode,
 } from '@/lib/tauri-commands'
 
 type ProjectTreeNodeKind = 'dir' | 'chapter'
 type AssetTreeNodeKind = 'asset_dir' | 'asset_file'
 type VolumeImportKind = 'manuscript' | 'chapter'
 
-export type { AssetKind, FileNode, MagicAssetNode }
+export type { AssetKind, AssetLibraryNode, FileNode, KnowledgeTreeNode }
 
 export async function loadProjectTree(projectPath: string): Promise<FileNode[]> {
   return getProjectTreeCommand(projectPath)
 }
 
-export async function loadMagicAssetsTree(projectPath: string): Promise<MagicAssetNode[]> {
-  return getMagicAssetsTreeCommand(projectPath)
+export async function loadAssetsTree(projectPath: string): Promise<AssetLibraryNode[]> {
+  return getAssetsTreeCommand(projectPath)
+}
+
+export async function loadKnowledgeTree(projectPath: string): Promise<KnowledgeTreeNode[]> {
+  return getKnowledgeTreeCommand(projectPath)
 }
 
 export async function renameProjectTreeNode(
@@ -97,37 +106,57 @@ export async function exportProjectTreeNode(
   await exportVolumeCommand(projectPath, input.path, input.outputPath, input.format)
 }
 
-export async function renameMagicAssetNode(
+export async function renameAssetNode(
   projectPath: string,
   input: { kind: AssetTreeNodeKind; relativePath: string; title: string },
 ): Promise<void> {
   if (input.kind === 'asset_file') {
-    await updateMagicAssetTitleCommand(projectPath, input.relativePath, input.title)
+    await updateAssetFileTitleCommand(projectPath, input.relativePath, input.title)
     return
   }
 
-  await updateMagicAssetFolderTitleCommand(projectPath, input.relativePath, input.title)
+  await updateAssetFolderTitleCommand(projectPath, input.relativePath, input.title)
 }
 
-export async function createMagicAssetFolderNode(
+export async function createAssetFolderNode(
   projectPath: string,
   parentRelativeDir: string,
   title: string,
 ): Promise<string> {
-  return createMagicAssetFolderCommand(projectPath, parentRelativeDir, title)
+  return createAssetFolderCommand(projectPath, parentRelativeDir, title)
 }
 
-export async function createMagicAssetFileNode(
+export async function createAssetFileNode(
   projectPath: string,
   parentRelativeDir: string,
   assetKind: AssetKind,
   title: string,
 ): Promise<string> {
-  return createMagicAssetFileCommand(projectPath, parentRelativeDir, assetKind, title)
+  return createAssetFileCommand(projectPath, parentRelativeDir, assetKind, title)
 }
 
-export async function deleteMagicAssetNode(projectPath: string, relativePath: string): Promise<void> {
-  await deleteMagicAssetPathCommand(projectPath, relativePath)
+export async function deleteAssetNode(projectPath: string, relativePath: string): Promise<void> {
+  await deleteAssetPathCommand(projectPath, relativePath)
+}
+
+export async function createKnowledgeFolderNode(
+  projectPath: string,
+  parentVirtualDir: string,
+  name: string,
+): Promise<string> {
+  return createKnowledgeFolderCommand(projectPath, parentVirtualDir, name)
+}
+
+export async function createKnowledgeDocumentNode(
+  projectPath: string,
+  parentVirtualDir: string,
+  name: string,
+): Promise<string> {
+  return createKnowledgeDocumentCommand(projectPath, parentVirtualDir, name)
+}
+
+export async function deleteKnowledgeNode(projectPath: string, virtualPath: string): Promise<void> {
+  await deleteKnowledgeEntryCommand(projectPath, virtualPath)
 }
 
 export {
@@ -141,10 +170,14 @@ export {
   importChapterCommand as importChapter,
   exportChapterCommand as exportChapter,
   exportVolumeCommand as exportVolume,
-  getMagicAssetsTreeCommand as getMagicAssetsTree,
-  createMagicAssetFolderCommand as createMagicAssetFolder,
-  createMagicAssetFileCommand as createMagicAssetFile,
-  updateMagicAssetTitleCommand as updateMagicAssetTitle,
-  updateMagicAssetFolderTitleCommand as updateMagicAssetFolderTitle,
-  deleteMagicAssetPathCommand as deleteMagicAssetPath,
+  getKnowledgeTreeCommand as getKnowledgeTree,
+  getAssetsTreeCommand as getAssetsTree,
+  createKnowledgeFolderCommand as createKnowledgeFolder,
+  createKnowledgeDocumentCommand as createKnowledgeDocument,
+  createAssetFolderCommand as createAssetFolder,
+  createAssetFileCommand as createAssetFile,
+  deleteKnowledgeEntryCommand as deleteKnowledgeEntry,
+  updateAssetFileTitleCommand as updateAssetFileTitle,
+  updateAssetFolderTitleCommand as updateAssetFolderTitle,
+  deleteAssetPathCommand as deleteAssetPath,
 }

@@ -27,92 +27,115 @@ pub(super) fn build_result_data_preview(
             let todo_state = data.get("todo_state").cloned().unwrap_or(Value::Null);
             json!({ "todo_state": todo_state })
         }
-        "read" => json!({
-            "path": data.get("path").cloned(),
+        "workspace_map" => {
+            let tree_count = data
+                .get("tree")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            json!({
+                "tree_count": tree_count,
+                "summary": data.get("summary").cloned(),
+                "truncated": data.get("truncated").cloned(),
+                "next_cursor": data.get("next_cursor").cloned(),
+            })
+        }
+        "context_read" => json!({
+            "ref": data.get("ref").cloned(),
             "kind": data.get("kind").cloned(),
-            "revision": data.get("revision").cloned(),
-            "hash": data.get("hash").cloned(),
             "content_chars": data
                 .get("content")
                 .and_then(|v| v.as_str())
                 .map(|s| s.chars().count())
                 .unwrap_or(0),
-            "has_content_json": data.get("content_json").is_some(),
+            "truncated": data.get("truncated").cloned(),
         }),
-        "edit" => json!({
-            "mode": data.get("mode").cloned(),
-            "accepted": data.get("accepted").cloned(),
-            "path": data.get("path").cloned(),
-            "revision_before": data.get("revision_before").cloned(),
-            "revision_after": data.get("revision_after").cloned(),
-            "diagnostics_count": data
-                .get("diagnostics")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(0),
-            "diff_summary_count": data
-                .get("diff_summary")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(0),
-            "tx_id": data.get("tx_id").cloned(),
-        }),
-        "create" => json!({
-            "created_kind": data.get("created_kind").cloned(),
-            "path": data.get("path").cloned(),
-            "id": data.get("id").cloned(),
-            "revision_after": data.get("revision_after").cloned(),
-            "created_at": data.get("created_at").cloned(),
-        }),
-        "delete" => json!({
-            "mode": data.get("mode").cloned(),
-            "kind": data.get("kind").cloned(),
-            "path": data.get("path").cloned(),
-            "impact": data.get("impact").cloned(),
-        }),
-        "move" => json!({
-            "mode": data.get("mode").cloned(),
-            "accepted": data.get("accepted").cloned(),
-            "chapter_path": data.get("chapter_path").cloned(),
-            "target_volume_path": data.get("target_volume_path").cloned(),
-            "target_index": data.get("target_index").cloned(),
-            "new_chapter_path": data.get("new_chapter_path").cloned(),
-        }),
-        "ls" => {
-            let items_count = data
-                .get("items")
-                .and_then(|v| v.as_array())
-                .map(|arr| arr.len())
-                .unwrap_or(0);
-            json!({
-                "cwd": data.get("cwd").cloned(),
-                "items_count": items_count,
-            })
-        }
-        "grep" => {
+        "context_search" => {
             let hits_count = data
                 .get("hits")
                 .and_then(|v| v.as_array())
                 .map(|arr| arr.len())
                 .unwrap_or(0);
             json!({
+                "mode": data.get("mode").cloned(),
                 "hits_count": hits_count,
-                "semantic_notice": data.get("semantic_notice").cloned(),
+                "degraded": data.get("degraded").cloned(),
+                "degraded_reason": data.get("degraded_reason").cloned(),
             })
         }
-        "outline" => json!({
-            "outline_chars": data
-                .get("outline")
+        "knowledge_read" => {
+            let items_count = data
+                .get("items")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            json!({
+                "items_count": items_count,
+                "truncated": data.get("truncated").cloned(),
+            })
+        }
+        "knowledge_write" => {
+            let conflicts_count = data
+                .get("conflicts")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            json!({
+                "delta_id": data.get("delta_id").cloned(),
+                "status": data.get("status").cloned(),
+                "conflicts_count": conflicts_count,
+                "next_action": data.get("next_action").cloned(),
+            })
+        }
+        "draft_write" => {
+            let diff_summary_count = data
+                .get("diff_summary")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            let snippet_after_chars = data
+                .get("snippet_after")
                 .and_then(|v| v.as_str())
                 .map(|s| s.chars().count())
-                .unwrap_or(0),
-        }),
-        "character_sheet" | "search_knowledge" => json!({
-            "result_chars": data
-                .get("result")
-                .and_then(|v| v.as_str())
-                .map(|s| s.chars().count())
-                .unwrap_or(0),
+                .unwrap_or(0);
+            json!({
+                "accepted": data.get("accepted").cloned(),
+                "mode": data.get("mode").cloned(),
+                "diff_summary_count": diff_summary_count,
+                "tx_id": data.get("tx_id").cloned(),
+                "snippet_after_chars": snippet_after_chars,
+            })
+        }
+        "structure_edit" => {
+            let impact_summary_count = data
+                .get("impact_summary")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            json!({
+                "accepted": data.get("accepted").cloned(),
+                "mode": data.get("mode").cloned(),
+                "impact_summary_count": impact_summary_count,
+                "refs": data.get("refs").cloned(),
+                "tx_id": data.get("tx_id").cloned(),
+            })
+        }
+        "review_check" => {
+            let issues_count = data
+                .get("issues")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .unwrap_or(0);
+            json!({
+                "overall_status": data.get("overall_status").cloned(),
+                "recommended_action": data.get("recommended_action").cloned(),
+                "issues_count": issues_count,
+            })
+        }
+        "skill" => json!({
+            "ok": data.get("ok").cloned(),
+            "summary": data.get("summary").cloned(),
+            "skill_name": data.get("skill_name").cloned(),
         }),
         _ => Value::Null,
     }
@@ -132,44 +155,26 @@ pub(super) fn build_result_error(result: &ToolResult<serde_json::Value>) -> Valu
 }
 
 pub(super) fn build_result_refs(tool_name: &str, result: &ToolResult<serde_json::Value>) -> Value {
-    let Some(data) = result.data.as_ref() else {
-        return Value::Null;
-    };
-
     let mut refs = serde_json::Map::new();
 
-    for key in [
-        "path",
-        "chapter_path",
-        "volume_path",
-        "chapter_id",
-        "tx_id",
-        "hash",
-        "hash_after",
-        "json_hash",
-        "json_hash_after",
-        "revision",
-        "revision_before",
-        "revision_after",
-        "target",
-        "mode",
-        "accepted",
-        "snapshot_id",
-    ] {
-        if let Some(value) = data.get(key).cloned() {
-            refs.insert(key.to_string(), value);
-        }
+    if let Some(read_set) = result.meta.read_set.as_ref() {
+        refs.insert("read_set".to_string(), json!(read_set));
+    }
+    if let Some(write_set) = result.meta.write_set.as_ref() {
+        refs.insert("write_set".to_string(), json!(write_set));
     }
 
-    if tool_name == "create" {
-        if let Some(value) = data.get("created_kind").cloned() {
-            refs.insert("created_kind".to_string(), value);
+    if let Some(data) = result.data.as_ref() {
+        for key in ["ref", "delta_id", "status", "mode"] {
+            if let Some(value) = data.get(key).cloned() {
+                refs.insert(key.to_string(), value);
+            }
         }
-    }
 
-    if tool_name == "delete" {
-        if let Some(value) = data.get("kind").cloned() {
-            refs.insert("deleted_kind".to_string(), value);
+        if tool_name == "structure_edit" {
+            if let Some(value) = data.get("refs").cloned() {
+                refs.insert("refs".to_string(), value);
+            }
         }
     }
 
