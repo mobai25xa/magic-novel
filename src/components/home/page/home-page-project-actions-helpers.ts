@@ -1,5 +1,6 @@
 import { open } from '@tauri-apps/plugin-dialog'
 
+import { isTauriCommandUnavailableError } from '@/lib/tauri-command-errors'
 import {
   buildCreateProjectCommandInput,
   buildStartProjectBootstrapInput,
@@ -11,6 +12,7 @@ import {
   importProjectManuscript,
   moveProjectToRecycle,
   openProjectEntry,
+  refreshPlanningManifestEntry,
   removeRecycledProject,
   resumeProjectBootstrapEntry,
   restoreProjectFromRecycle,
@@ -37,7 +39,7 @@ type ProjectStoreState = ReturnType<
 
 type ProjectStore = Pick<
   ProjectStoreState,
-  'projectList' | 'setProjectPath' | 'setProject' | 'setTree' | 'addToProjectList'
+  'projectList' | 'setProjectPath' | 'setProject' | 'setTree' | 'setPlanningManifest' | 'addToProjectList'
 >
 
 export async function pickProjectPath(path?: string) {
@@ -101,6 +103,8 @@ export function syncCurrentProject(
     name: snapshot.project.name,
     author: snapshot.project.author,
     description: snapshot.project.description,
+    bootstrapState: snapshot.project.bootstrap_state,
+    bootstrapUpdatedAt: snapshot.project.bootstrap_updated_at,
     createdAt: snapshot.project.created_at,
     updatedAt: snapshot.project.updated_at,
   })
@@ -124,11 +128,7 @@ function getErrorMessage(error: unknown) {
 }
 
 function isBootstrapUnsupportedError(error: unknown) {
-  const message = getErrorMessage(error).toLowerCase()
-  return (
-    message.includes('start_project_bootstrap')
-    && (message.includes('not found') || message.includes('unknown') || message.includes('missing'))
-  )
+  return isTauriCommandUnavailableError(error, 'start_project_bootstrap')
 }
 
 export async function createProjectFlow(input: {
@@ -217,9 +217,11 @@ export async function openProjectFlow(input: {
   selectedPath: string
 }) {
   const snapshot = await openProjectEntry(input.selectedPath)
+  const planningManifest = await refreshPlanningManifestEntry(snapshot.path)
 
   syncCurrentProject(input.projectStore, snapshot)
   input.projectStore.setTree(snapshot.tree.map(convertFileNode))
+  input.projectStore.setPlanningManifest(snapshot.path, planningManifest)
   input.projectStore.addToProjectList({
     path: snapshot.path,
     name: snapshot.project.name,

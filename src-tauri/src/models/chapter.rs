@@ -67,7 +67,24 @@ pub struct Chapter {
 }
 
 #[derive(Debug, Deserialize)]
-struct ChapterDe {
+struct ChapterV1De {
+    schema_version: i32,
+    id: String,
+    title: String,
+    content: serde_json::Value,
+    counts: ChapterCounts,
+    target_words: Option<i32>,
+    status: Option<ChapterStatus>,
+    summary: Option<String>,
+    tags: Option<Vec<String>>,
+    pinned_assets: Option<Vec<ChapterAssetRef>>,
+    last_cursor_position: Option<i32>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChapterV2De {
     schema_version: i32,
     id: String,
     title: String,
@@ -90,31 +107,28 @@ impl<'de> Deserialize<'de> for Chapter {
     where
         D: serde::Deserializer<'de>,
     {
-        let raw = ChapterDe::deserialize(deserializer)?;
-        if raw.schema_version != CHAPTER_SCHEMA_VERSION {
-            return Err(serde::de::Error::custom(format!(
-                "unsupported chapter schema_version {}; expected {}",
-                raw.schema_version, CHAPTER_SCHEMA_VERSION
-            )));
-        }
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let schema_version = raw
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| serde::de::Error::missing_field("schema_version"))?;
 
-        Ok(Self {
-            schema_version: raw.schema_version,
-            id: raw.id,
-            title: raw.title,
-            content: raw.content,
-            counts: raw.counts,
-            target_words: raw.target_words,
-            status: raw.status,
-            summary: raw.summary,
-            plot_goal: raw.plot_goal,
-            emotional_goal: raw.emotional_goal,
-            tags: raw.tags,
-            pinned_assets: raw.pinned_assets,
-            last_cursor_position: raw.last_cursor_position,
-            created_at: raw.created_at,
-            updated_at: raw.updated_at,
-        })
+        match schema_version {
+            1 => {
+                let legacy: ChapterV1De =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::from_v1(legacy))
+            }
+            version if version == i64::from(CHAPTER_SCHEMA_VERSION) => {
+                let current: ChapterV2De =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::from_v2(current))
+            }
+            _ => Err(serde::de::Error::custom(format!(
+                "unsupported chapter schema_version {}; expected 1 or {}",
+                schema_version, CHAPTER_SCHEMA_VERSION
+            ))),
+        }
     }
 }
 
@@ -142,6 +156,47 @@ impl Chapter {
             updated_at: now,
         }
     }
+
+    fn from_v1(raw: ChapterV1De) -> Self {
+        debug_assert_eq!(raw.schema_version, 1);
+        Self {
+            schema_version: CHAPTER_SCHEMA_VERSION,
+            id: raw.id,
+            title: raw.title,
+            content: raw.content,
+            counts: raw.counts,
+            target_words: raw.target_words,
+            status: raw.status,
+            summary: raw.summary,
+            plot_goal: None,
+            emotional_goal: None,
+            tags: raw.tags,
+            pinned_assets: raw.pinned_assets,
+            last_cursor_position: raw.last_cursor_position,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+        }
+    }
+
+    fn from_v2(raw: ChapterV2De) -> Self {
+        Self {
+            schema_version: raw.schema_version,
+            id: raw.id,
+            title: raw.title,
+            content: raw.content,
+            counts: raw.counts,
+            target_words: raw.target_words,
+            status: raw.status,
+            summary: raw.summary,
+            plot_goal: raw.plot_goal,
+            emotional_goal: raw.emotional_goal,
+            tags: raw.tags,
+            pinned_assets: raw.pinned_assets,
+            last_cursor_position: raw.last_cursor_position,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -149,9 +204,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_legacy_chapter_schema() {
+    fn upgrades_legacy_chapter_schema_with_defaults() {
         let raw = serde_json::json!({
             "schema_version": 1,
+            "id": "chapter-1",
+            "title": "第一章",
+            "content": { "type": "doc", "content": [] },
+            "counts": {
+                "text_length_no_whitespace": 0,
+                "word_count": null,
+                "algorithm_version": 1,
+                "last_calculated_at": 100
+            },
+            "status": "draft",
+            "created_at": 100,
+            "updated_at": 200
+        });
+
+        let chapter = serde_json::from_value::<Chapter>(raw).expect("legacy chapter");
+
+        assert_eq!(chapter.schema_version, CHAPTER_SCHEMA_VERSION);
+        assert_eq!(chapter.status, Some(ChapterStatus::Draft));
+        assert_eq!(chapter.plot_goal, None);
+        assert_eq!(chapter.emotional_goal, None);
+    }
+
+    #[test]
+    fn rejects_unknown_chapter_schema() {
+        let raw = serde_json::json!({
+            "schema_version": 99,
             "id": "chapter-1",
             "title": "第一章",
             "content": { "type": "doc", "content": [] },
@@ -165,7 +246,7 @@ mod tests {
             "updated_at": 200
         });
 
-        let err = serde_json::from_value::<Chapter>(raw).expect_err("legacy chapter");
+        let err = serde_json::from_value::<Chapter>(raw).expect_err("unknown chapter schema");
         assert!(err
             .to_string()
             .contains("unsupported chapter schema_version"));

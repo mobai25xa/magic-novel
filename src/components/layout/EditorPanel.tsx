@@ -35,6 +35,7 @@ export function EditorPanel() {
         <NovelEditor
           initialContent={content as Parameters<typeof NovelEditor>[0]['initialContent']}
           onContentChange={setContent}
+          documentKind={isKnowledgeDoc ? 'knowledge' : isAssetDoc ? 'asset' : 'chapter'}
         />
       </div>
       {!isFullscreen && (isChapterDoc || isAssetDoc || isKnowledgeDoc) ? <StatusBar editor={editor} /> : null}

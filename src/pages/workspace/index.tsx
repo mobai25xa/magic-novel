@@ -14,7 +14,7 @@ export function WorkspacePage({ onOpenSettings }: WorkspacePageProps) {
   const handleOpenProject = async (path: string) => {
     try {
       await openProjectFlow({ projectStore, selectedPath: path })
-      navigate('editor')
+      navigate('project_home')
     } catch (error) {
       console.error('Failed to open project:', error)
     }

@@ -799,6 +799,7 @@ fn classify_turn_failure(
             "server" => "provider_server",
             "network" => "provider_network",
             "context_limit" => "context_limit",
+            "tool_stream" => "tool_stream",
             "cancelled" => "cancelled",
             _ => "runtime",
         };
@@ -821,6 +822,9 @@ fn classify_turn_failure(
     }
     if error_code == "E_CONTEXT_LIMIT" {
         return "context_limit";
+    }
+    if error_code == "E_STREAM_TOOL_ARGS_INVALID" {
+        return "tool_stream";
     }
     if error_code == "E_CANCELLED" {
         return "cancelled";

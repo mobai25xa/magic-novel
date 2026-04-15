@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import {
   AiPanelCardShell,
@@ -11,9 +11,7 @@ import { AgentChatPanelInputShell } from './message/agent-chat-panel-input-shell
 import { MissionPanel } from './mission-panel/MissionPanel'
 import { useDroppedFramesMetric } from './panel/agent-chat-panel-hooks'
 import {
-  createInitialChatScrollState,
-  handleIncomingContent,
-  updateScrollLockState,
+  useChatTranscriptScroll,
 } from './panel/agent-chat-panel-scroll'
 import {
   AgentChatPanelHeader,
@@ -25,28 +23,26 @@ import { useAgentChatStore } from '@/state/agent'
 import { useAiTranslations } from './ai-hooks'
 
 export function AgentChatPanelView(input: AgentChatPanelViewProps) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const [scrollState, setScrollState] = useState(() => createInitialChatScrollState())
   const [deleteDialogSessionId, setDeleteDialogSessionId] = useState<string | null>(null)
   const todoState = useAgentChatStore((state) => state.todoState)
   const ai = useAiTranslations()
   const hasProject = Boolean(input.projectPath)
+  const {
+    scrollRef,
+    scrollState,
+    handleScroll,
+    jumpToLatest,
+  } = useChatTranscriptScroll({
+    contentSignature: input.latestTurnSignature,
+    itemCount: input.turnIds.length,
+    streaming: input.running,
+    sessionKey: input.sessionId,
+  })
 
   useDroppedFramesMetric({
     sessionId: input.sessionId,
     enabled: input.running,
   })
-
-  useEffect(() => {
-    setScrollState((prev) => handleIncomingContent(prev, scrollRef, Boolean(input.latestTurnSignature)))
-  }, [input.latestTurnSignature])
-
-  useEffect(() => {
-    if (!scrollRef.current) {
-      return
-    }
-    setScrollState((prev) => updateScrollLockState(prev, scrollRef.current!))
-  }, [input.running])
 
   const handleOpenHistoryPage = () => {
     input.onOpenHistoryPage()
@@ -93,8 +89,10 @@ export function AgentChatPanelView(input: AgentChatPanelViewProps) {
         sessionReadonlyReason={input.sessionReadonlyReason}
         onRetryStep={input.onRetryStep}
         scrollRef={scrollRef}
-        scrollState={scrollState}
-        setScrollState={setScrollState}
+        onScroll={handleScroll}
+        autoScrollLocked={scrollState.autoScrollLocked}
+        unseenCount={scrollState.unseenCount}
+        onJumpToLatest={jumpToLatest}
       />
 
       <AgentChatPanelInputShell

@@ -114,19 +114,8 @@ export function KnowledgeToolView({ step }: KnowledgeToolViewProps) {
     () => coerceKnowledgeWriteDelta(parsed ?? step.outputPreview),
     [parsed, step.outputPreview],
   )
-
-  if (!delta) {
-    return <GenericToolView step={step} />
-  }
-
-  const pills = [
-    delta.scope_ref ? { value: delta.scope_ref, title: 'Copy scope_ref' } : null,
-    delta.target_ref ? { value: delta.target_ref, title: 'Copy target_ref' } : null,
-    delta.path ? { value: delta.path, title: 'Copy path' } : null,
-  ].filter(Boolean) as Array<{ value: string; title: string }>
-
   const openCandidate = useMemo(() => {
-    const fromDelta = delta.target_ref || delta.path
+    const fromDelta = delta?.target_ref || delta?.path
     if (typeof fromDelta === 'string' && fromDelta.trim() && parseEditorTargetRef(fromDelta)) {
       return fromDelta.trim()
     }
@@ -137,9 +126,18 @@ export function KnowledgeToolView({ step }: KnowledgeToolViewProps) {
     }
 
     return ''
-  }, [delta.path, delta.target_ref, step])
-
+  }, [delta?.path, delta?.target_ref, step])
   const canOpen = Boolean(openCandidate)
+
+  if (!delta) {
+    return <GenericToolView step={step} />
+  }
+
+  const pills = [
+    delta.scope_ref ? { value: delta.scope_ref, title: 'Copy scope_ref' } : null,
+    delta.target_ref ? { value: delta.target_ref, title: 'Copy target_ref' } : null,
+    delta.path ? { value: delta.path, title: 'Copy path' } : null,
+  ].filter(Boolean) as Array<{ value: string; title: string }>
 
   return (
     <AiToolContent className="space-y-2">

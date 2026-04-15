@@ -41,9 +41,9 @@ export function createDefaultProjectDraft(): CreateProjectDraft {
     coverImage: '',
     selectedGenres: [],
     customGenres: '',
-    targetTotalWords: '300000',
-    plannedVolumes: '4',
-    targetWordsPerChapter: '3000',
+    targetTotalWords: '',
+    plannedVolumes: '',
+    targetWordsPerChapter: '',
     narrativePov: DEFAULT_POV,
     tone: '',
     audience: '',
@@ -51,16 +51,12 @@ export function createDefaultProjectDraft(): CreateProjectDraft {
     counterpartSeed: '',
     worldSeed: '',
     endingDirection: '',
-    aiAssist: true,
+    aiAssist: false,
   }
 }
 
 export function validateCreateProjectDraft(draft: CreateProjectDraft): CreateProjectFormErrors {
   const errors: CreateProjectFormErrors = {}
-  const projectType = unique([
-    ...draft.selectedGenres,
-    ...splitCommaSeparated(draft.customGenres),
-  ])
 
   if (!draft.name.trim()) {
     errors.name = 'name'
@@ -72,15 +68,6 @@ export function validateCreateProjectDraft(draft: CreateProjectDraft): CreatePro
 
   if (!draft.description.trim()) {
     errors.description = 'description'
-  }
-
-  if (projectType.length === 0) {
-    errors.projectType = 'projectType'
-  }
-
-  const targetTotalWords = parseOptionalPositiveInteger(draft.targetTotalWords)
-  if (targetTotalWords == null) {
-    errors.targetTotalWords = 'targetTotalWords'
   }
 
   return errors

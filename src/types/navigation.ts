@@ -6,6 +6,7 @@ export type AppPage =
   | 'workers'      // AI Workers
   | 'recycle'      // 回收站
   | 'create'       // 创建小说
+  | 'project_home' // 项目首页 — 需要 projectPath
   | 'editor'       // 编辑器 — 需要 projectPath
   | 'settings'     // 设置 — 全页面
 

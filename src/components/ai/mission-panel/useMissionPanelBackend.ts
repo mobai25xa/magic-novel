@@ -16,8 +16,8 @@ import {
   missionReviewGetLatestFeature,
   missionReviewGetPendingDecisionFeature,
   missionReviewListFeature,
+  missionStatusToJobSnapshot,
 } from '@/features/agent-chat'
-import { missionStatusToJobSnapshot } from '@/lib/tauri-commands/mission'
 import type { JobSnapshot } from '@/types/agent-job'
 
 import { loadKnowledgeTimelineFromArtifacts, type KnowledgeTimelineEntry } from './knowledge/timeline'

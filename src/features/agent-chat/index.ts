@@ -46,9 +46,20 @@ import {
   type MissionResumeWithConfigInput,
 } from '@/lib/tauri-commands/mission-lifecycle'
 import type {
+  ActiveCast,
+  ChapterCard,
   MissionGetStatusOutput,
+  MissionRecoveryEntry,
   MissionReviewAnswerInput,
+  MissionResultEntry,
   MissionKnowledgeDecideInput,
+  RecentFacts,
+} from '@/lib/tauri-commands/mission'
+import {
+  getMissionRecoveryEntries,
+  getMissionResultEntries,
+  getMissionResultEntriesFromJobSnapshot,
+  missionStatusToJobSnapshot,
 } from '@/lib/tauri-commands/mission'
 import type {
   MacroCreateInput,
@@ -333,4 +344,20 @@ export async function missionMacroGetStateFeature(
   missionId: string,
 ): Promise<MacroGetStateOutput> {
   return missionMacroGetStateCommand(projectPath, missionId)
+}
+
+export {
+  getMissionRecoveryEntries,
+  getMissionResultEntries,
+  getMissionResultEntriesFromJobSnapshot,
+  missionStatusToJobSnapshot,
+}
+
+export type {
+  ActiveCast,
+  ChapterCard,
+  MissionGetStatusOutput,
+  MissionRecoveryEntry,
+  MissionResultEntry,
+  RecentFacts,
 }

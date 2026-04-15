@@ -70,10 +70,6 @@ impl ToolDefinition for WorkspaceMapTool {
                 "limit": {
                     "type": "number",
                     "description": "Max nodes per page (default: 200)."
-                },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
                 }
             },
             "required": [],

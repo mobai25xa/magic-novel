@@ -385,4 +385,30 @@ mod tests {
 
         assert_eq!(schema_fields, parser_fields);
     }
+
+    #[test]
+    fn execute_tool_call_rejects_invalid_askuser_questions_at_parse_boundary() {
+        let tc = crate::agent_engine::types::ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "askuser".to_string(),
+            args: json!({
+                "questions": [{
+                    "question": "Pick one",
+                    "topic": "style",
+                    "options": ["Only one"]
+                }]
+            }),
+        };
+
+        let result = super::execute_tool_call(&tc, "D:/p", "tool_askuser_invalid", None, None);
+        assert!(!result.ok);
+        assert_eq!(
+            result.error.as_ref().map(|error| error.code.as_str()),
+            Some("E_TOOL_SCHEMA_INVALID")
+        );
+        assert_eq!(
+            result.error.as_ref().map(|error| error.message.as_str()),
+            Some("askuser questions[0].options must contain between 2 and 4 items")
+        );
+    }
 }

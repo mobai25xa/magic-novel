@@ -1,4 +1,4 @@
-type KnowledgeProposalItem = {
+export type KnowledgeProposalItem = {
   item_id: string
   kind: string
   op: string

@@ -32,21 +32,41 @@ function normalizeModelList(models: string[]) {
   return normalized
 }
 
-function getVisibleProviderModels(temp: TempState) {
-  const fetched = normalizeModelList(temp.tempFetchedModels)
-  const enabled = normalizeModelList(temp.tempOpenAiEnabledModels)
+function getVisibleModels(input: {
+  fetchedModels: string[]
+  enabledModels: string[]
+  selectedModel: string
+}) {
+  const fetched = normalizeModelList(input.fetchedModels)
+  const enabled = normalizeModelList(input.enabledModels)
 
   if (fetched.length === 0) {
     if (enabled.length > 0) return enabled
-    const fallback = String(temp.tempOpenAiModel || '').trim()
+    const fallback = String(input.selectedModel || '').trim()
     return fallback ? [fallback] : []
   }
 
   const visible = enabled.filter((model) => fetched.includes(model))
   if (visible.length > 0) return visible
 
-  const fallback = [temp.tempOpenAiModel, fetched[0]].find((value) => value && fetched.includes(value))
+  const fallback = [input.selectedModel, fetched[0]].find((value) => value && fetched.includes(value))
   return fallback ? [fallback] : []
+}
+
+function getVisibleProviderModels(temp: TempState) {
+  return getVisibleModels({
+    fetchedModels: temp.tempFetchedModels,
+    enabledModels: temp.tempOpenAiEnabledModels,
+    selectedModel: temp.tempOpenAiModel,
+  })
+}
+
+function getVisiblePlanningModels(temp: TempState) {
+  return getVisibleModels({
+    fetchedModels: temp.tempPlanningFetchedModels,
+    enabledModels: temp.tempPlanningEnabledModels,
+    selectedModel: temp.tempPlanningModel,
+  })
 }
 
 function renderModelItems(models: string[]) {
@@ -202,30 +222,71 @@ function renderEmbeddingEndpointSettings(translations: SettingsDialogTranslation
   )
 }
 
-function handleProviderTypeChange(temp: TempState, nextType: ProviderType) {
-  const config = getProviderConfig(nextType)
-  temp.setTempProviderType(nextType)
+function applyProviderTypePreset(input: {
+  nextType: ProviderType
+  currentBaseUrl: string
+  currentEnabledModels: string[]
+  currentModel: string
+  setBaseUrl: (value: string) => void
+  setEnabledModels: (value: string[]) => void
+  setModel: (value: string) => void
+  setFetchedModels: (value: string[]) => void
+}) {
+  const config = getProviderConfig(input.nextType)
 
-  if (config.defaultBaseUrl && !temp.tempOpenAiBaseUrl.trim()) {
-    temp.setTempOpenAiBaseUrl(config.defaultBaseUrl)
+  if (config.defaultBaseUrl && !input.currentBaseUrl.trim()) {
+    input.setBaseUrl(config.defaultBaseUrl)
   }
 
-  if (config.presetModels.length > 0 && temp.tempOpenAiEnabledModels.length <= 1) {
-    temp.setTempOpenAiEnabledModels(config.presetModels)
-    if (!config.presetModels.includes(temp.tempOpenAiModel)) {
-      temp.setTempOpenAiModel(config.presetModels[0])
+  if (config.presetModels.length > 0 && input.currentEnabledModels.length <= 1) {
+    input.setEnabledModels(config.presetModels)
+    if (!config.presetModels.includes(input.currentModel)) {
+      input.setModel(config.presetModels[0])
     }
-    temp.setTempFetchedModels(config.presetModels)
+    input.setFetchedModels(config.presetModels)
   }
 }
 
-function renderProviderTypeSelector(translations: SettingsDialogTranslations, temp: TempState) {
+function handleProviderTypeChange(temp: TempState, nextType: ProviderType) {
+  temp.setTempProviderType(nextType)
+  applyProviderTypePreset({
+    nextType,
+    currentBaseUrl: temp.tempOpenAiBaseUrl,
+    currentEnabledModels: temp.tempOpenAiEnabledModels,
+    currentModel: temp.tempOpenAiModel,
+    setBaseUrl: temp.setTempOpenAiBaseUrl,
+    setEnabledModels: temp.setTempOpenAiEnabledModels,
+    setModel: temp.setTempOpenAiModel,
+    setFetchedModels: temp.setTempFetchedModels,
+  })
+}
+
+function handlePlanningProviderTypeChange(temp: TempState, nextType: ProviderType) {
+  temp.setTempPlanningProviderType(nextType)
+  applyProviderTypePreset({
+    nextType,
+    currentBaseUrl: temp.tempPlanningBaseUrl,
+    currentEnabledModels: temp.tempPlanningEnabledModels,
+    currentModel: temp.tempPlanningModel,
+    setBaseUrl: temp.setTempPlanningBaseUrl,
+    setEnabledModels: temp.setTempPlanningEnabledModels,
+    setModel: temp.setTempPlanningModel,
+    setFetchedModels: temp.setTempPlanningFetchedModels,
+  })
+}
+
+function renderProviderTypeSelector(input: {
+  label: string
+  value: ProviderType
+  onValueChange: (value: ProviderType) => void
+  translations: SettingsDialogTranslations
+}) {
   return (
     <div className="space-y-2">
-      <div className="text-xs text-muted-foreground">{translations.settings.providerType}</div>
+      <div className="text-xs text-muted-foreground">{input.label}</div>
       <Select
-        value={temp.tempProviderType}
-        onValueChange={(value) => handleProviderTypeChange(temp, value as ProviderType)}
+        value={input.value}
+        onValueChange={(value) => input.onValueChange(value as ProviderType)}
       >
         <SelectTrigger className="w-full">
           <SelectValue />
@@ -233,7 +294,7 @@ function renderProviderTypeSelector(translations: SettingsDialogTranslations, te
         <SelectContent>
           {PROVIDER_TYPE_OPTIONS.map((opt) => (
             <SelectItem key={opt.value} value={opt.value}>
-              {translations.settings[opt.labelKey] || opt.value}
+              {input.translations.settings[opt.labelKey] || opt.value}
             </SelectItem>
           ))}
         </SelectContent>
@@ -253,7 +314,12 @@ function renderLlmServiceSection(
         <h4 className="text-sm font-medium">{translations.settings.providers}</h4>
         <p className="text-xs text-muted-foreground">{translations.settings.providerDescription}</p>
       </div>
-      {renderProviderTypeSelector(translations, temp)}
+      {renderProviderTypeSelector({
+        label: translations.settings.providerType,
+        value: temp.tempProviderType,
+        onValueChange: (value) => handleProviderTypeChange(temp, value),
+        translations,
+      })}
       {renderProviderCredentials(translations, temp)}
       <ProviderModelSelector
         title={translations.settings.providerEmbeddingForChat || 'Chat Models'}
@@ -267,6 +333,137 @@ function renderLlmServiceSection(
         tempModelFetchError={temp.tempModelFetchError}
         onFetchModels={onFetchChatModels}
       />
+    </div>
+  )
+}
+
+function renderPlanningGenerationModeSelector(
+  translations: SettingsDialogTranslations,
+  temp: TempState,
+) {
+  return (
+    <div className="space-y-2">
+      <div className="text-xs text-muted-foreground">
+        {translations.settings.planningGenerationModeLabel || 'Planning Generation Mode'}
+      </div>
+      <Select
+        value={temp.tempPlanningGenerationMode}
+        onValueChange={(value) => temp.setTempPlanningGenerationMode(value as 'follow_primary' | 'dedicated')}
+      >
+        <SelectTrigger className="w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="follow_primary">
+            {translations.settings.planningGenerationModeFollowPrimary || 'Follow Primary'}
+          </SelectItem>
+          <SelectItem value="dedicated">
+            {translations.settings.planningGenerationModeDedicated || 'Dedicated'}
+          </SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}
+
+function renderPlanningProviderCredentials(
+  translations: SettingsDialogTranslations,
+  temp: TempState,
+  onFetchPlanningModels: () => Promise<void>,
+) {
+  const config = getProviderConfig(temp.tempPlanningProviderType)
+  const visibleModels = getVisiblePlanningModels(temp)
+
+  return (
+    <>
+      {renderProviderTypeSelector({
+        label: translations.settings.planningProviderType || translations.settings.providerType,
+        value: temp.tempPlanningProviderType,
+        onValueChange: (value) => handlePlanningProviderTypeChange(temp, value),
+        translations,
+      })}
+      <div className="space-y-2">
+        <div className="text-xs text-muted-foreground">
+          {translations.settings.planningBaseUrl || translations.settings.providerBaseUrl}
+        </div>
+        <Input
+          value={temp.tempPlanningBaseUrl}
+          onChange={(e) => temp.setTempPlanningBaseUrl(e.target.value)}
+          placeholder={config.baseUrlPlaceholder}
+        />
+      </div>
+      <div className="space-y-2">
+        <div className="text-xs text-muted-foreground">
+          {translations.settings.planningApiKey || translations.settings.providerApiKey}
+        </div>
+        <Input
+          type="password"
+          value={temp.tempPlanningApiKey}
+          onChange={(e) => temp.setTempPlanningApiKey(e.target.value)}
+          placeholder={config.apiKeyPlaceholder}
+        />
+      </div>
+      <div className="space-y-2">
+        <div className="text-xs text-muted-foreground">
+          {translations.settings.planningModel || translations.settings.providerModel}
+        </div>
+        <Select
+          value={temp.tempPlanningModel || ''}
+          onValueChange={temp.setTempPlanningModel}
+          disabled={visibleModels.length === 0}
+        >
+          <SelectTrigger className="w-full">
+            <SelectValue placeholder={translations.settings.providerNoModels} />
+          </SelectTrigger>
+          <SelectContent>{renderModelItems(visibleModels)}</SelectContent>
+        </Select>
+      </div>
+      <ProviderModelSelector
+        title={translations.settings.planningEnabledModels || translations.settings.providerEnabledModels}
+        translations={translations}
+        candidateModels={temp.tempPlanningFetchedModels}
+        enabledModels={temp.tempPlanningEnabledModels}
+        selectedModel={temp.tempPlanningModel}
+        onSelectModel={temp.setTempPlanningModel}
+        onEnabledModelsChange={(models) => temp.setTempPlanningEnabledModels(models)}
+        tempFetchingModels={temp.tempPlanningFetchingModels}
+        tempModelFetchError={temp.tempPlanningModelFetchError}
+        onFetchModels={onFetchPlanningModels}
+      />
+    </>
+  )
+}
+
+function renderPlanningServiceSection(
+  translations: SettingsDialogTranslations,
+  temp: TempState,
+  onFetchPlanningModels: () => Promise<void>,
+) {
+  return (
+    <div className="settings-section space-y-3">
+      <div>
+        <h4 className="text-sm font-medium">
+          {translations.settings.planningGenerationTitle || 'Planning Generation'}
+        </h4>
+        <p className="text-xs text-muted-foreground">
+          {translations.settings.planningGenerationDescription || translations.settings.providerDescription}
+        </p>
+      </div>
+      {renderPlanningGenerationModeSelector(translations, temp)}
+      {temp.tempPlanningGenerationMode === 'dedicated' ? (
+        <>
+          <p className="text-xs text-muted-foreground">
+            {translations.settings.planningGenerationDedicatedHint
+              || 'Use a dedicated provider configuration only for create-time planning.'}
+          </p>
+          {renderPlanningProviderCredentials(translations, temp, onFetchPlanningModels)}
+        </>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          {translations.settings.planningGenerationFollowPrimaryHint
+            || 'Create-time planning will follow the primary chat provider settings.'}
+        </p>
+      )}
     </div>
   )
 }
@@ -323,6 +520,7 @@ export function renderProvidersContent(
   temp: TempState,
   onFetchChatModels: () => Promise<void>,
   onFetchEmbeddingModels: () => Promise<void>,
+  onFetchPlanningModels: () => Promise<void>,
 ) {
   return (
     <div className="space-y-6">
@@ -332,6 +530,7 @@ export function renderProvidersContent(
       </div>
 
       {renderLlmServiceSection(translations, temp, onFetchChatModels)}
+      {renderPlanningServiceSection(translations, temp, onFetchPlanningModels)}
       {renderEmbeddingServiceSection(translations, temp, onFetchEmbeddingModels)}
     </div>
   )

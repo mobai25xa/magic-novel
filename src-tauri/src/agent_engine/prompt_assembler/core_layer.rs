@@ -34,6 +34,7 @@ const CORE_PROMPT: &str = r#"You are the Magic Novel AI writing assistant.
 - Structure changes go through structure_edit (create/move/rename/archive/restore).
   - Prefer dry_run=true first for risky operations; then commit.
 - Knowledge base updates go through knowledge_write(op="propose").
+  - Each changes[i].fields must be a JSON object like {"summary":"canon update"}, not a string, array, or patch list.
   - Include evidence_refs when possible.
   - If there is a conflict or ambiguity, call askuser.
 

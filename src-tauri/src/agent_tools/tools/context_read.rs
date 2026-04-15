@@ -37,6 +37,8 @@ pub struct ContextReadArgs {
     pub view_mode: Option<ContextReadViewMode>,
     pub budget_chars: Option<u32>,
     pub span: Option<ContextReadSpanHead>,
+    #[serde(default)]
+    pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -488,6 +490,7 @@ mod tests {
                     kind: ContextReadSpanKind::Head,
                     chars: Some(10),
                 }),
+                timeout_ms: None,
             },
         )
         .expect("run");
@@ -509,6 +512,7 @@ mod tests {
                 view_mode: Some(ContextReadViewMode::Full),
                 budget_chars: Some(200),
                 span: None,
+                timeout_ms: None,
             },
         )
         .expect("run");
@@ -532,6 +536,7 @@ mod tests {
                 view_mode: Some(ContextReadViewMode::Compact),
                 budget_chars: Some(5000),
                 span: None,
+                timeout_ms: None,
             },
         )
         .expect("run");

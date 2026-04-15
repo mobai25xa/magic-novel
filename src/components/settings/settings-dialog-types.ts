@@ -4,6 +4,7 @@ import type {
   EditorFontPresetKey,
   EditorTextAlign,
   EmbeddingSource,
+  PlanningGenerationMode,
 } from '@/state/settings'
 import type { ProviderType } from '@/stores/settings-types'
 import type { Language, ThemeMode } from '@/types/theme'
@@ -29,6 +30,15 @@ export type TempSettingsState = {
   tempFetchedModels: string[]
   tempFetchingModels: boolean
   tempModelFetchError: string
+  tempPlanningGenerationMode: PlanningGenerationMode
+  tempPlanningProviderType: ProviderType
+  tempPlanningBaseUrl: string
+  tempPlanningApiKey: string
+  tempPlanningModel: string
+  tempPlanningEnabledModels: string[]
+  tempPlanningFetchedModels: string[]
+  tempPlanningFetchingModels: boolean
+  tempPlanningModelFetchError: string
   tempGoal: number
   tempTheme: ThemeMode
   tempLanguage: Language
@@ -63,6 +73,15 @@ export type TempSettingsSetters = {
   setTempFetchedModels: (value: string[]) => void
   setTempFetchingModels: (value: boolean) => void
   setTempModelFetchError: (value: string) => void
+  setTempPlanningGenerationMode: (value: PlanningGenerationMode) => void
+  setTempPlanningProviderType: (value: ProviderType) => void
+  setTempPlanningBaseUrl: (value: string) => void
+  setTempPlanningApiKey: (value: string) => void
+  setTempPlanningModel: (value: string) => void
+  setTempPlanningEnabledModels: React.Dispatch<React.SetStateAction<string[]>>
+  setTempPlanningFetchedModels: (value: string[]) => void
+  setTempPlanningFetchingModels: (value: boolean) => void
+  setTempPlanningModelFetchError: (value: string) => void
   setTempGoal: (value: number) => void
   setTempTheme: (value: ThemeMode) => void
   setTempLanguage: (value: Language) => void
@@ -95,6 +114,18 @@ export type SettingsDialogTranslations = {
     providerEmbeddingForChat?: string
     providerEmbeddingForSearch?: string
     providerEmbeddingForChatAndSearch?: string
+    planningGenerationTitle?: string
+    planningGenerationDescription?: string
+    planningGenerationModeLabel?: string
+    planningGenerationModeFollowPrimary?: string
+    planningGenerationModeDedicated?: string
+    planningGenerationFollowPrimaryHint?: string
+    planningGenerationDedicatedHint?: string
+    planningProviderType?: string
+    planningBaseUrl?: string
+    planningApiKey?: string
+    planningModel?: string
+    planningEnabledModels?: string
   }
   common: Record<string, string>
   home: Record<string, string>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import { missionMacroCreateFeature } from '@/features/agent-chat'
 
@@ -34,16 +34,12 @@ function useMacroCreateForm(input: { statusDetail: MissionStatusPayload | null }
     autoFixOnBlock: true,
     targetsText: DEFAULT_TARGETS_TEXT,
   })
-
-  useEffect(() => {
-    if (form.objective.trim()) return
+  const suggestedObjective = useMemo(() => {
     const title = input.statusDetail?.features?.title
-    if (typeof title === 'string' && title.trim()) {
-      setForm((prev) => ({ ...prev, objective: title.trim() }))
-    }
-  }, [form.objective, input.statusDetail?.features?.title])
+    return typeof title === 'string' ? title.trim() : ''
+  }, [input.statusDetail?.features?.title])
 
-  return { createOpen, setCreateOpen, creating, setCreating, createError, setCreateError, form, setForm }
+  return { createOpen, setCreateOpen, creating, setCreating, createError, setCreateError, form, setForm, suggestedObjective }
 }
 
 export function MacroCreatePanel({
@@ -53,13 +49,23 @@ export function MacroCreatePanel({
   onRefresh,
   onOpenDetails,
 }: MacroCreatePanelProps) {
-  const { createOpen, setCreateOpen, creating, setCreating, createError, setCreateError, form, setForm } = useMacroCreateForm({ statusDetail })
+  const {
+    createOpen,
+    setCreateOpen,
+    creating,
+    setCreating,
+    createError,
+    setCreateError,
+    form,
+    setForm,
+    suggestedObjective,
+  } = useMacroCreateForm({ statusDetail })
 
   const handleCreate = useCallback(async () => {
     setCreateError(null)
     setCreating(true)
     try {
-      const objective = form.objective.trim() || (statusDetail?.features?.title ?? '').trim()
+      const objective = form.objective.trim() || suggestedObjective
       if (!objective) {
         setCreateError('Objective is required')
         return
@@ -100,7 +106,7 @@ export function MacroCreatePanel({
     projectPath,
     setCreateError,
     setCreating,
-    statusDetail?.features?.title,
+    suggestedObjective,
   ])
 
   return (

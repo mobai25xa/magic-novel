@@ -41,8 +41,6 @@ export type CreateProjectFormErrors = Partial<Record<
 >>
 
 export type CreateProjectWorkflowStage =
-  | 'inspiration_chat'
-  | 'variant_review'
-  | 'create_form'
-  | 'progress'
-  | 'result'
+  | 'ideation'
+  | 'launch_sheet'
+  | 'generating_contract'

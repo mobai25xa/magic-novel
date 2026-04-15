@@ -5,7 +5,9 @@ import { useProjectStore } from '@/state/project'
 import { useSettingsStore } from '@/state/settings'
 
 import {
+  fetchPlanningModelsAction,
   fetchEmbeddingModelsAction,
+  syncPlanningDraftFromStore,
   fetchProviderModelsAction,
   syncProviderDraftFromStore,
 } from './settings-provider-model-actions'
@@ -38,6 +40,7 @@ async function saveProviderSettings(input: { temp: TempState; settingsStore: Set
     const embeddingEnabled = input.temp.tempOpenAiEmbeddingEnabled && embeddingDetected
 
     const savedProvider = await saveOpenAiProviderSettingsFeature({
+      provider_type: input.temp.tempProviderType,
       openai_base_url: input.temp.tempOpenAiBaseUrl.trim(),
       openai_api_key: input.temp.tempOpenAiApiKey.trim(),
       openai_model: input.temp.tempOpenAiModel.trim() || 'gpt-4o-mini',
@@ -53,8 +56,15 @@ async function saveProviderSettings(input: { temp: TempState; settingsStore: Set
         ? ''
         : (input.temp.tempOpenAiEmbeddingDetectionReason || 'embedding_model_unavailable'),
       openai_enabled_models: input.temp.tempOpenAiEnabledModels,
+      planning_generation_mode: input.temp.tempPlanningGenerationMode,
+      planning_provider_type: input.temp.tempPlanningProviderType,
+      planning_base_url: input.temp.tempPlanningBaseUrl.trim(),
+      planning_api_key: input.temp.tempPlanningApiKey.trim(),
+      planning_model: input.temp.tempPlanningModel.trim(),
+      planning_enabled_models: input.temp.tempPlanningEnabledModels,
     })
 
+    input.settingsStore.setProviderType(savedProvider.provider_type)
     input.settingsStore.setOpenAiProviderSettings({
       baseUrl: savedProvider.openai_base_url,
       apiKey: savedProvider.openai_api_key,
@@ -72,6 +82,14 @@ async function saveProviderSettings(input: { temp: TempState; settingsStore: Set
         reason: savedProvider.openai_embedding_detection_reason,
       },
       enabledModels: savedProvider.openai_enabled_models,
+    })
+    input.settingsStore.setPlanningProviderSettings({
+      generationMode: savedProvider.planning_generation_mode,
+      providerType: savedProvider.planning_provider_type,
+      baseUrl: savedProvider.planning_base_url,
+      apiKey: savedProvider.planning_api_key,
+      model: savedProvider.planning_model,
+      enabledModels: savedProvider.planning_enabled_models,
     })
 
     if (!savedProvider.openai_enabled_models.includes(savedProvider.openai_embedding_model)) {
@@ -95,8 +113,6 @@ async function handleSaveAction(input: DialogActionInput) {
   if (nextDir) {
     settingsStore.setProjectsRootDir(nextDir)
   }
-
-  settingsStore.setProviderType(temp.tempProviderType)
 
   await saveProviderSettings({ temp, settingsStore })
 
@@ -160,6 +176,17 @@ function handleCancelAction(input: Pick<DialogActionInput, 'onClose' | 'settings
     },
     temp,
   })
+  syncPlanningDraftFromStore({
+    settings: {
+      planningGenerationMode: settingsStore.planningGenerationMode,
+      planningProviderType: settingsStore.planningProviderType,
+      planningBaseUrl: settingsStore.planningBaseUrl,
+      planningApiKey: settingsStore.planningApiKey,
+      planningModel: settingsStore.planningModel,
+      planningEnabledModels: settingsStore.planningEnabledModels,
+    },
+    temp,
+  })
 
   temp.setTempGoal(settingsStore.dailyWordGoal)
   temp.setTempTheme(settingsStore.theme)
@@ -181,6 +208,7 @@ export function useDialogActions(input: DialogActionInput) {
   const handleSelectDirectory = async (title: string) => handleSelectDirectoryAction(input.temp, title)
   const handleFetchModels = async () => fetchProviderModelsAction(input.temp)
   const handleFetchEmbeddingModels = async () => fetchEmbeddingModelsAction(input.temp)
+  const handleFetchPlanningModels = async () => fetchPlanningModelsAction(input.temp)
   const handleSave = async () => handleSaveAction(input)
   const handleCancel = () => handleCancelAction(input)
 
@@ -188,6 +216,7 @@ export function useDialogActions(input: DialogActionInput) {
     handleSelectDirectory,
     handleFetchModels,
     handleFetchEmbeddingModels,
+    handleFetchPlanningModels,
     handleSave,
     handleCancel,
   }

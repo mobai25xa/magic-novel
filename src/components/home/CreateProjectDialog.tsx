@@ -1,11 +1,9 @@
-import { Button, Modal, ModalContent, ModalDescription, ModalHeader, ModalTitle } from '@/magic-ui/components'
+import { Modal, ModalContent, ModalDescription, ModalHeader, ModalTitle } from '@/magic-ui/components'
 import { useTranslation } from '@/hooks/use-translation'
 import { useNavigationStore } from '@/stores/navigation-store'
 
-import { CreateProjectBootstrapPanel } from '@/components/create/CreateProjectBootstrapPanel'
-import { CreateProjectForm } from '@/components/create/CreateProjectForm'
-import { CreateProjectResultPanel } from '@/components/create/CreateProjectResultPanel'
-import { InspirationVariantReview } from '@/components/create/inspiration/InspirationVariantReview'
+import { CreateProjectGeneratingPanel } from '@/components/create/CreateProjectGeneratingPanel'
+import { CreateProjectLaunchSheet } from '@/components/create/CreateProjectLaunchSheet'
 import { InspirationWorkspace } from '@/components/create/inspiration/InspirationWorkspace'
 import { useCreateProjectWorkflow } from '@/components/create/use-create-project-workflow'
 
@@ -23,7 +21,7 @@ export function CreateProjectDialog({ open, onClose }: CreateProjectDialogProps)
     onOpenSettings: () => navigate('settings'),
     onClose,
     onProjectReady: () => {
-      navigate('editor')
+      navigate('project_home')
       onClose()
     },
   })
@@ -37,7 +35,7 @@ export function CreateProjectDialog({ open, onClose }: CreateProjectDialogProps)
         </ModalHeader>
 
         <div className="max-h-[80vh] overflow-y-auto p-6">
-          {workflow.stage === 'inspiration_chat' ? (
+          {workflow.stage === 'ideation' ? (
             <InspirationWorkspace
               data={workflow.inspiration}
               preserveInspirationSession={workflow.preserveInspirationSession}
@@ -49,65 +47,23 @@ export function CreateProjectDialog({ open, onClose }: CreateProjectDialogProps)
             />
           ) : null}
 
-          {workflow.stage === 'variant_review' ? (
-            <InspirationVariantReview
-              data={workflow.inspiration}
-              onBack={workflow.handleBackToInspiration}
-              onContinue={workflow.handleContinueToCreateForm}
-              onRegenerate={() => {
-                void workflow.handleGenerateVariants()
+          {workflow.stage === 'launch_sheet' ? (
+            <CreateProjectLaunchSheet
+              draft={workflow.draft}
+              errors={workflow.errors}
+              createHandoff={workflow.inspiration.finalCreateHandoffDraft ?? null}
+              submitting={workflow.submitting}
+              onChange={workflow.updateDraft}
+              onBack={workflow.handleBackFromCreateForm}
+              onSubmit={() => {
+                void workflow.handleSubmit()
               }}
             />
           ) : null}
 
-          {workflow.stage === 'create_form' ? (
-            <div className="space-y-4">
-              <div className="flex flex-wrap justify-between gap-3 rounded-2xl border border-[var(--border-primary)] bg-[var(--bg-panel)] px-4 py-3">
-                <div>
-                  <div className="text-sm font-semibold">{translations.createPage.inspirationContinueToForm}</div>
-                  <p className="mt-1 text-xs opacity-70">{translations.createPage.inspirationFormHint}</p>
-                </div>
-                <Button variant="outline" onClick={workflow.handleBackFromCreateForm} disabled={workflow.submitting}>
-                  {translations.createPage.inspirationBackToWorkspaceFlow}
-                </Button>
-              </div>
-
-              <CreateProjectForm
-                mode="dialog"
-                draft={workflow.draft}
-                errors={workflow.errors}
-                projectGenres={workflow.projectGenres}
-                submitting={workflow.submitting}
-                onChange={workflow.updateDraft}
-                onToggleGenre={workflow.toggleGenre}
-                onCancel={workflow.handleClose}
-                onSubmit={() => {
-                  void workflow.handleSubmit()
-                }}
-              />
-            </div>
-          ) : null}
-
-          {workflow.stage === 'progress' ? (
-            <CreateProjectBootstrapPanel
+          {workflow.stage === 'generating_contract' ? (
+            <CreateProjectGeneratingPanel
               projectName={workflow.draft.name || translations.home.createProject}
-              status={workflow.bootstrapStatus}
-              onCancel={workflow.handleClose}
-            />
-          ) : null}
-
-          {workflow.stage === 'result' && workflow.result ? (
-            <CreateProjectResultPanel
-              mode="dialog"
-              result={workflow.result}
-              onEnterProject={() => {
-                void workflow.handleEnterProject()
-              }}
-              onRetryBootstrap={() => {
-                void workflow.handleRetryBootstrap()
-              }}
-              onCreateAnother={workflow.resetWorkflow}
-              onClose={workflow.handleClose}
             />
           ) : null}
         </div>

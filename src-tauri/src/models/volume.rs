@@ -36,7 +36,19 @@ pub struct VolumeMetadata {
 }
 
 #[derive(Debug, Deserialize)]
-struct VolumeMetadataDe {
+struct VolumeMetadataV1De {
+    schema_version: i32,
+    volume_id: String,
+    title: String,
+    summary: Option<String>,
+    #[serde(default)]
+    chapter_order: Vec<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct VolumeMetadataV2De {
     schema_version: i32,
     volume_id: String,
     title: String,
@@ -54,26 +66,28 @@ impl<'de> Deserialize<'de> for VolumeMetadata {
     where
         D: serde::Deserializer<'de>,
     {
-        let raw = VolumeMetadataDe::deserialize(deserializer)?;
-        if raw.schema_version != VOLUME_SCHEMA_VERSION {
-            return Err(serde::de::Error::custom(format!(
-                "unsupported volume schema_version {}; expected {}",
-                raw.schema_version, VOLUME_SCHEMA_VERSION
-            )));
-        }
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let schema_version = raw
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| serde::de::Error::missing_field("schema_version"))?;
 
-        Ok(Self {
-            schema_version: raw.schema_version,
-            volume_id: raw.volume_id,
-            title: raw.title,
-            summary: raw.summary,
-            target_words: raw.target_words,
-            dramatic_goal: raw.dramatic_goal,
-            status: raw.status,
-            chapter_order: raw.chapter_order,
-            created_at: raw.created_at,
-            updated_at: raw.updated_at,
-        })
+        match schema_version {
+            1 => {
+                let legacy: VolumeMetadataV1De =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::from_v1(legacy))
+            }
+            version if version == i64::from(VOLUME_SCHEMA_VERSION) => {
+                let current: VolumeMetadataV2De =
+                    serde_json::from_value(raw).map_err(serde::de::Error::custom)?;
+                Ok(Self::from_v2(current))
+            }
+            _ => Err(serde::de::Error::custom(format!(
+                "unsupported volume schema_version {}; expected 1 or {}",
+                schema_version, VOLUME_SCHEMA_VERSION
+            ))),
+        }
     }
 }
 
@@ -93,6 +107,37 @@ impl VolumeMetadata {
             updated_at: now,
         }
     }
+
+    fn from_v1(raw: VolumeMetadataV1De) -> Self {
+        debug_assert_eq!(raw.schema_version, 1);
+        Self {
+            schema_version: VOLUME_SCHEMA_VERSION,
+            volume_id: raw.volume_id,
+            title: raw.title,
+            summary: raw.summary,
+            target_words: default_volume_target_words(),
+            dramatic_goal: default_dramatic_goal(),
+            status: VolumeStatus::Planned,
+            chapter_order: raw.chapter_order,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+        }
+    }
+
+    fn from_v2(raw: VolumeMetadataV2De) -> Self {
+        Self {
+            schema_version: raw.schema_version,
+            volume_id: raw.volume_id,
+            title: raw.title,
+            summary: raw.summary,
+            target_words: raw.target_words,
+            dramatic_goal: raw.dramatic_goal,
+            status: raw.status,
+            chapter_order: raw.chapter_order,
+            created_at: raw.created_at,
+            updated_at: raw.updated_at,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -100,20 +145,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rejects_legacy_volume_schema() {
+    fn upgrades_legacy_volume_schema_with_defaults() {
         let raw = serde_json::json!({
             "schema_version": 1,
             "volume_id": "volume-1",
             "title": "卷一",
-            "target_words": DEFAULT_VOLUME_TARGET_WORDS,
-            "dramatic_goal": "",
-            "status": "planned",
-            "chapter_order": [],
             "created_at": 100,
             "updated_at": 200
         });
 
-        let err = serde_json::from_value::<VolumeMetadata>(raw).expect_err("legacy volume");
+        let volume = serde_json::from_value::<VolumeMetadata>(raw).expect("legacy volume");
+
+        assert_eq!(volume.schema_version, VOLUME_SCHEMA_VERSION);
+        assert_eq!(volume.target_words, DEFAULT_VOLUME_TARGET_WORDS);
+        assert_eq!(volume.dramatic_goal, "");
+        assert_eq!(volume.status, VolumeStatus::Planned);
+        assert!(volume.chapter_order.is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_volume_schema() {
+        let raw = serde_json::json!({
+            "schema_version": 99,
+            "volume_id": "volume-1",
+            "title": "卷一",
+            "created_at": 100,
+            "updated_at": 200
+        });
+
+        let err = serde_json::from_value::<VolumeMetadata>(raw).expect_err("unknown schema");
         assert!(err
             .to_string()
             .contains("unsupported volume schema_version"));

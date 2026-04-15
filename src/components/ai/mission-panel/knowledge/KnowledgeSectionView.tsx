@@ -1,6 +1,12 @@
 import { Button } from '@/magic-ui/components'
+import type { KnowledgeConflict, KnowledgeDelta, KnowledgeDeltaChange, KnowledgeProposalBundle } from '@/types/knowledge'
+
+import type { KnowledgeLatestPayload } from '../types'
 import type { KnowledgeTimelineEntry } from './timeline'
-import { KnowledgeProposalsList } from './KnowledgeProposalsList'
+import { KnowledgeProposalsList, type KnowledgeProposalItem } from './KnowledgeProposalsList'
+
+type KnowledgeBundle = KnowledgeProposalBundle | NonNullable<KnowledgeLatestPayload>['bundle']
+type KnowledgeDeltaPayload = KnowledgeDelta | NonNullable<KnowledgeLatestPayload>['delta']
 
 type KnowledgeSectionViewProps = {
   knowledgeError: string | null
@@ -11,8 +17,8 @@ type KnowledgeSectionViewProps = {
   conflictCount: number
   acceptedCount: number
   rejectedCount: number
-  bundle: any | null
-  delta: any | null
+  bundle: KnowledgeBundle | null
+  delta: KnowledgeDeltaPayload | null
   knowledgeTimeline: KnowledgeTimelineEntry[] | null
   knowledgeTimelineError: string | null
   canDecide: boolean
@@ -26,11 +32,11 @@ type KnowledgeSectionViewProps = {
   onAcceptSafe: () => void
   onAcceptAll: () => void
   onRejectAll: () => void
-  proposalItems: any[]
+  proposalItems: KnowledgeProposalItem[]
   acceptedByItemId: Record<string, boolean>
-  onToggleProposal: (item: any) => void
+  onToggleProposal: (item: KnowledgeProposalItem) => void
 }
-function KnowledgeIds({ bundle, delta }: { bundle: any | null; delta: any | null }) {
+function KnowledgeIds({ bundle, delta }: { bundle: KnowledgeBundle | null; delta: KnowledgeDeltaPayload | null }) {
   return (
     <>
       {bundle?.bundle_id ? (
@@ -51,8 +57,8 @@ function KnowledgeIds({ bundle, delta }: { bundle: any | null; delta: any | null
 function KnowledgeStatsRow(input: {
   acceptedCount: number
   rejectedCount: number
-  bundle: any | null
-  delta: any | null
+  bundle: KnowledgeBundle | null
+  delta: KnowledgeDeltaPayload | null
 }) {
   const appliedAt = typeof input.delta?.applied_at === 'number' ? input.delta.applied_at : null
   const generatedAt = typeof input.bundle?.generated_at === 'number' ? input.bundle.generated_at : null
@@ -114,8 +120,8 @@ function KnowledgeTimelineDetails(input: {
   )
 }
 
-function KnowledgeConflictsCard({ delta }: { delta: any | null }) {
-  const conflicts = Array.isArray(delta?.conflicts) ? delta.conflicts : []
+function KnowledgeConflictsCard({ delta }: { delta: KnowledgeDeltaPayload | null }) {
+  const conflicts: KnowledgeConflict[] = Array.isArray(delta?.conflicts) ? delta.conflicts : []
   if (conflicts.length === 0) {
     return null
   }
@@ -126,7 +132,7 @@ function KnowledgeConflictsCard({ delta }: { delta: any | null }) {
         {`Blocked by conflicts (${conflicts.length})`}
       </div>
       <ul className="mt-1 space-y-1 text-muted-foreground">
-        {conflicts.map((conflict: any, idx: number) => (
+        {conflicts.map((conflict, idx) => (
           <li key={idx} className="break-words">
             <span className="font-mono">{String(conflict?.type ?? '')}</span>
             {': '}
@@ -188,8 +194,8 @@ function KnowledgeActionsBar(input: {
   )
 }
 
-function KnowledgeDeltaChangesDetails({ delta }: { delta: any | null }) {
-  const changes = Array.isArray(delta?.changes) ? delta.changes : []
+function KnowledgeDeltaChangesDetails({ delta }: { delta: KnowledgeDeltaPayload | null }) {
+  const changes: KnowledgeDeltaChange[] = Array.isArray(delta?.changes) ? delta.changes : []
   if (changes.length === 0) {
     return null
   }
@@ -200,7 +206,7 @@ function KnowledgeDeltaChangesDetails({ delta }: { delta: any | null }) {
         {`Delta changes (${changes.length})`}
       </summary>
       <ul className="mt-2 space-y-1 text-muted-foreground">
-        {changes.slice(0, 12).map((change: any, idx: number) => (
+        {changes.slice(0, 12).map((change, idx) => (
           <li key={idx} className="break-words">
             <span className="font-mono">{String(change?.kind ?? '')}</span>
             {': '}

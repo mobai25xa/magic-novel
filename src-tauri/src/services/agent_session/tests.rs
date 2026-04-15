@@ -11,11 +11,13 @@ mod tests {
         hydrate_runtime_state, AgentSessionHydrateOutput,
     };
     use crate::application::command_usecases::agent_session_support::delete_session;
-    use crate::application::command_usecases::agent_session_support::save_session_meta;
+    use crate::application::command_usecases::agent_session_support::{
+        load_session_meta as load_session_meta_from_support, save_session_meta,
+    };
     use crate::services::agent_session::types::session_event_types;
     use crate::services::agent_session::{
         append_events_jsonl, append_session_events, find_meta, load_index, read_events_jsonl,
-        recover_stream_file, runtime_snapshot_path, save_runtime_snapshot_from_input,
+        recover_stream_file, runtime_snapshot_path, save_index, save_runtime_snapshot_from_input,
         session_index_path, session_stream_path, AgentSessionEvent, AgentSessionMeta,
         RuntimeSnapshotUpsertInput, SessionRuntimeState, AGENT_SESSION_SCHEMA_VERSION,
     };
@@ -696,5 +698,60 @@ mod tests {
         assert_eq!(meta.last_turn, Some(3));
         assert_eq!(meta.last_stop_reason.as_deref(), Some("success"));
         assert_eq!(meta.active_chapter_path.as_deref(), Some("chapters/ch3.md"));
+    }
+
+    #[test]
+    fn test_missing_meta_is_recovered_from_persisted_files() {
+        let project = setup_temp_project();
+        let session_id = "test_recover_missing_meta";
+
+        let start_event = AgentSessionEvent {
+            schema_version: AGENT_SESSION_SCHEMA_VERSION,
+            event_type: session_event_types::SESSION_START.to_string(),
+            session_id: session_id.to_string(),
+            ts: chrono::Utc::now().timestamp_millis(),
+            event_id: Some(format!("evt_{}", uuid::Uuid::new_v4())),
+            event_seq: Some(1),
+            dedupe_key: Some("session_start".to_string()),
+            turn: None,
+            payload: Some(json!({
+                "project_path": project.to_string_lossy().to_string(),
+                "active_chapter_path": "manuscripts/ch1.json",
+            })),
+        };
+
+        append_events_jsonl(&session_stream_path(&project, session_id), &[start_event]).unwrap();
+        ensure_meta(&project, session_id);
+
+        save_runtime_snapshot_from_input(
+            project.as_path(),
+            RuntimeSnapshotUpsertInput::readonly(
+                session_id.to_string(),
+                "recovery_test".to_string(),
+                Some(3),
+            ),
+        )
+        .unwrap();
+
+        let index_path = session_index_path(project.as_path());
+        let mut index = load_index(&index_path).unwrap();
+        index.sessions.clear();
+        save_index(&index_path, &index).unwrap();
+
+        let recovered = load_session_meta_from_support(project.as_path(), session_id)
+            .unwrap()
+            .expect("recovered meta");
+        assert_eq!(recovered.session_id, session_id);
+        assert_eq!(recovered.last_turn, Some(3));
+        assert_eq!(
+            recovered.active_chapter_path.as_deref(),
+            Some("manuscripts/ch1.json")
+        );
+
+        let persisted_index = load_index(&index_path).unwrap();
+        assert!(
+            find_meta(&persisted_index, session_id).is_some(),
+            "recovered meta should be written back to index"
+        );
     }
 }

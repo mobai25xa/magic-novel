@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::mission::contextpack_types::ContextPack;
 use crate::writing_rules::types::{
@@ -9,9 +9,8 @@ use crate::models::{AppError, Chapter};
 use crate::services::word_count::count_text;
 
 use super::llm_multi_gate::{self, ReviewLlmConfig};
+use super::target_ref::resolve_review_target_path;
 use super::types::*;
-
-const MANUSCRIPTS_DIR: &str = "manuscripts";
 
 pub struct ReviewRuntimeOptions<'a> {
     pub contextpack: Option<&'a ContextPack>,
@@ -602,36 +601,7 @@ struct ReviewTarget {
 }
 
 fn load_target(project_path: &Path, target_ref: &str) -> Result<ReviewTarget, AppError> {
-    let normalized = target_ref.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return Err(AppError::invalid_argument("empty target_ref"));
-    }
-    if normalized.starts_with('/') || normalized.split('/').any(|seg| seg == "..") {
-        return Err(AppError::invalid_argument(format!(
-            "invalid target_ref: {normalized}"
-        )));
-    }
-
-    let candidates: [PathBuf; 2] = [
-        PathBuf::from(project_path)
-            .join(MANUSCRIPTS_DIR)
-            .join(&normalized),
-        PathBuf::from(project_path).join(&normalized),
-    ];
-
-    let full = candidates
-        .iter()
-        .find(|p| p.exists())
-        .cloned()
-        .ok_or_else(|| AppError {
-            code: crate::models::ErrorCode::NotFound,
-            message: format!("review target not found: {normalized}"),
-            details: Some(serde_json::json!({
-                "code": "REVIEW_INPUT_MISSING",
-                "target_ref": normalized,
-            })),
-            recoverable: Some(true),
-        })?;
+    let (_normalized, full) = resolve_review_target_path(project_path, target_ref)?;
 
     if full.extension().and_then(|s| s.to_str()) == Some("json") {
         let raw = std::fs::read_to_string(&full)?;
@@ -849,6 +819,30 @@ mod tests {
         let report = run_review(&project, input).unwrap();
         assert_eq!(report.overall_status, ReviewOverallStatus::Pass);
         assert_eq!(report.issues.len(), 0);
+
+        let _ = fs::remove_dir_all(&project);
+    }
+
+    #[test]
+    fn full_chapter_ref_target_is_supported() {
+        let project = temp_project_dir();
+        write_global_word_count_ruleset(&project, 10, 20, Some(15));
+        write_chapter(&project, "vol1/ch1.json", 9, None);
+
+        let input = ReviewRunInput {
+            scope_ref: "chapter:manuscripts/vol1/ch1.json".to_string(),
+            target_refs: vec!["chapter:manuscripts/vol1/ch1.json".to_string()],
+            branch_id: None,
+            review_types: vec![ReviewType::WordCount],
+            task_card_ref: None,
+            context_pack_ref: None,
+            effective_rules_fingerprint: None,
+            severity_threshold: None,
+        };
+
+        let report = run_review(&project, input).unwrap();
+        assert_eq!(report.overall_status, ReviewOverallStatus::Block);
+        assert_eq!(report.issues.len(), 1);
 
         let _ = fs::remove_dir_all(&project);
     }

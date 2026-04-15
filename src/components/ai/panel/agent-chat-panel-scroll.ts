@@ -1,4 +1,4 @@
-import type { RefObject } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 
 const NEAR_BOTTOM_THRESHOLD = 80
 
@@ -62,44 +62,6 @@ export function createScrollHandler(
   }
 }
 
-// Module-level pending flag for auto-scroll coalescing
-let pendingAutoScroll = false
-
-function scheduleAutoScroll(el: HTMLElement) {
-  if (pendingAutoScroll) return
-  pendingAutoScroll = true
-
-  requestAnimationFrame(() => {
-    el.scrollTo({ top: el.scrollHeight, behavior: 'auto' })
-    pendingAutoScroll = false
-  })
-}
-
-export function handleIncomingContent(
-  previous: ChatScrollState,
-  containerRef: RefObject<HTMLElement | null>,
-  hasIncomingContent: boolean,
-): ChatScrollState {
-  if (!hasIncomingContent) {
-    return previous
-  }
-
-  const el = containerRef.current
-  if (!el) {
-    return previous
-  }
-
-  if (!previous.autoScrollLocked) {
-    scheduleAutoScroll(el)
-    return { ...previous, unseenCount: 0 }
-  }
-
-  return {
-    ...previous,
-    unseenCount: previous.unseenCount + 1,
-  }
-}
-
 export function jumpToLatest(containerRef: RefObject<HTMLElement | null>): ChatScrollState {
   const el = containerRef.current
   if (el) {
@@ -112,5 +74,151 @@ export function jumpToLatest(containerRef: RefObject<HTMLElement | null>): ChatS
     autoScrollLocked: false,
     unseenCount: 0,
     lastScrollTop: el?.scrollHeight ?? 0,
+  }
+}
+
+type UseChatTranscriptScrollInput = {
+  contentSignature: string
+  itemCount: number
+  streaming: boolean
+  sessionKey?: string | null
+}
+
+export function useChatTranscriptScroll(input: UseChatTranscriptScrollInput) {
+  const sessionKey = input.sessionKey ?? null
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [sessionScrollState, setSessionScrollState] = useState(() => ({
+    sessionKey,
+    value: createInitialChatScrollState(),
+  }))
+  const autoScrollRafRef = useRef<number | null>(null)
+  const pinBottomRafRef = useRef<number | null>(null)
+  const prevItemCountRef = useRef<number>(input.itemCount)
+
+  const cancelScrollRaf = useCallback((rafRef: React.MutableRefObject<number | null>) => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  }, [])
+
+  const scheduleScrollToBottom = useCallback((rafRef: React.MutableRefObject<number | null>) => {
+    cancelScrollRaf(rafRef)
+    rafRef.current = requestAnimationFrame(() => {
+      const element = scrollRef.current
+      if (element) {
+        element.scrollTo({ top: element.scrollHeight, behavior: 'auto' })
+      }
+      rafRef.current = null
+    })
+  }, [cancelScrollRaf])
+
+  const setActiveScrollState = useCallback((next: React.SetStateAction<ChatScrollState>) => {
+    setSessionScrollState((prev) => {
+      const current = prev.sessionKey === sessionKey
+        ? prev.value
+        : createInitialChatScrollState()
+      const value = typeof next === 'function'
+        ? next(current)
+        : next
+
+      return { sessionKey, value }
+    })
+  }, [sessionKey])
+
+  const scrollState = useMemo(() => (
+    sessionScrollState.sessionKey === sessionKey
+      ? sessionScrollState.value
+      : createInitialChatScrollState()
+  ), [sessionKey, sessionScrollState])
+  const handleScroll = useMemo(() => createScrollHandler(setActiveScrollState), [setActiveScrollState])
+
+  const jumpToLatestAction = useCallback(() => {
+    setActiveScrollState(jumpToLatest(scrollRef))
+  }, [setActiveScrollState])
+
+  useEffect(() => {
+    return () => {
+      cancelScrollRaf(autoScrollRafRef)
+      cancelScrollRaf(pinBottomRafRef)
+    }
+  }, [cancelScrollRaf])
+
+  useEffect(() => {
+    cancelScrollRaf(autoScrollRafRef)
+    cancelScrollRaf(pinBottomRafRef)
+    prevItemCountRef.current = input.itemCount
+  }, [cancelScrollRaf, input.itemCount, sessionKey])
+
+  useEffect(() => {
+    if (!input.contentSignature) {
+      return
+    }
+
+    setActiveScrollState((previous) => {
+      const element = scrollRef.current
+      if (!element) {
+        return previous
+      }
+
+      if (!previous.autoScrollLocked) {
+        scheduleScrollToBottom(autoScrollRafRef)
+        return { ...previous, unseenCount: 0 }
+      }
+
+      return {
+        ...previous,
+        unseenCount: previous.unseenCount + 1,
+      }
+    })
+  }, [input.contentSignature, scheduleScrollToBottom, setActiveScrollState])
+
+  useEffect(() => {
+    if (!scrollRef.current) {
+      return
+    }
+    setActiveScrollState((previous) => updateScrollLockState(previous, scrollRef.current!))
+  }, [input.streaming, setActiveScrollState])
+
+  useEffect(() => {
+    if (!input.streaming) {
+      cancelScrollRaf(pinBottomRafRef)
+      prevItemCountRef.current = input.itemCount
+      return
+    }
+
+    const element = scrollRef.current
+    if (!element || scrollState.autoScrollLocked) {
+      prevItemCountRef.current = input.itemCount
+      return
+    }
+
+    const nearBottom = element.scrollHeight - (element.scrollTop + element.clientHeight) <= 120
+    const newItemAppended = input.itemCount > prevItemCountRef.current
+
+    if (!nearBottom && !newItemAppended) {
+      prevItemCountRef.current = input.itemCount
+      return
+    }
+
+    scheduleScrollToBottom(pinBottomRafRef)
+    prevItemCountRef.current = input.itemCount
+
+    return () => {
+      cancelScrollRaf(pinBottomRafRef)
+    }
+  }, [
+    cancelScrollRaf,
+    input.itemCount,
+    input.streaming,
+    scheduleScrollToBottom,
+    scrollState.autoScrollLocked,
+  ])
+
+  return {
+    scrollRef,
+    scrollState,
+    handleScroll,
+    jumpToLatest: jumpToLatestAction,
   }
 }

@@ -32,6 +32,7 @@ type ProjectStore = Pick<
   | 'setProjectPath'
   | 'setProject'
   | 'setTree'
+  | 'setPlanningManifest'
   | 'addToProjectList'
   | 'removeProjectFromList'
   | 'removeRecycledProjectById'

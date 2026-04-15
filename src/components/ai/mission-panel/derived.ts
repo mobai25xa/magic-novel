@@ -5,7 +5,7 @@ import {
   type MissionRecoveryEntry,
   type MissionGetStatusOutput,
   type MissionResultEntry,
-} from '@/lib/tauri-commands/mission'
+} from '@/features/agent-chat'
 import type { JobBlocker, JobSnapshot } from '@/types/agent-job'
 import type { Layer1SnapshotPayload } from './types'
 

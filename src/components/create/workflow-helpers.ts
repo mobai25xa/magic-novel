@@ -48,7 +48,7 @@ export type CreatePageRecommendedActionTranslationKey =
   | 'recommendedStartChapterOne'
   | 'recommendedContinuePlanning'
 
-export const DEFAULT_CREATE_PROJECT_TARGET_REF = 'knowledge:.magic_novel/task/current_bootstrap_task.md'
+export const DEFAULT_CREATE_PROJECT_TARGET_REF = 'knowledge:.magic_novel/planning/story_blueprint.md'
 
 const BOOTSTRAP_PHASE_TRANSLATION_KEYS: Record<BootstrapPhase, CreatePagePhaseTranslationKey> = {
   pending: 'phasePending',
@@ -224,6 +224,7 @@ export function resolveBootstrapRecommendedActionTranslationKey(
 
 export function resolveBootstrapRecommendedTargetRef(action?: string) {
   switch (action) {
+    case 'wait_for_bootstrap':
     case 'review_blueprint':
       return 'knowledge:.magic_novel/planning/story_blueprint.md'
     case 'review_protagonist':
@@ -232,9 +233,8 @@ export function resolveBootstrapRecommendedTargetRef(action?: string) {
     case 'adjust_volume_plan':
       return 'knowledge:.magic_novel/planning/volume_plan.md'
     case 'expand_first_five_chapters':
-      return 'knowledge:.magic_novel/planning/chapter_backlog.md'
     case 'start_chapter_one':
-      return 'chapter:bootstrap-v01/bootstrap-v01-c01.json'
+      return 'knowledge:.magic_novel/planning/chapter_backlog.md'
     default:
       return null
   }
@@ -252,7 +252,7 @@ export function resolveCreateProjectTargetRef(result: CreateProjectResultLike) {
     case 'ready_for_review':
       return 'knowledge:.magic_novel/planning/story_blueprint.md'
     case 'ready_to_write':
-      return 'chapter:bootstrap-v01/bootstrap-v01-c01.json'
+      return 'knowledge:.magic_novel/planning/chapter_backlog.md'
     default:
       return DEFAULT_CREATE_PROJECT_TARGET_REF
   }

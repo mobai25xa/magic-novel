@@ -1,9 +1,10 @@
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tauri::command;
 
-use crate::models::AppError;
+use crate::models::{AppError, PlanningDocId};
 use crate::services::jvm::{
     build_doc_from_markdown_blocks, ensure_doc_block_ids, parse_markdown_to_blocks,
 };
@@ -64,7 +65,7 @@ pub async fn read_knowledge_document(
 
     Ok(KnowledgeDocument {
         path: normalized.clone(),
-        title: file_title(&normalized),
+        title: resolve_document_title(&normalized, Some(&markdown)),
         markdown,
         content,
     })
@@ -85,6 +86,10 @@ pub async fn save_knowledge_document(
         crate::services::knowledge_paths::resolve_knowledge_root_for_write(&project_path)?
             .join(rel);
     write_file(&full_path, &markdown)?;
+    crate::application::command_usecases::planning_status::mark_planning_doc_saved(
+        &project_path,
+        &normalized,
+    )?;
     Ok(())
 }
 
@@ -198,7 +203,7 @@ fn build_knowledge_tree(
                 continue;
             }
             out.push(KnowledgeTreeNode::Dir {
-                title: Some(name.clone()),
+                title: Some(resolve_directory_title(&virtual_path, &name)),
                 name,
                 path: virtual_path,
                 children,
@@ -208,7 +213,7 @@ fn build_knowledge_tree(
 
         if file_type.is_file() && name.ends_with(".md") {
             out.push(KnowledgeTreeNode::File {
-                title: Some(file_title(&virtual_path)),
+                title: Some(resolve_tree_file_title(&virtual_path, &path)),
                 name,
                 path: virtual_path,
                 modified_at: modified_at(&path),
@@ -287,12 +292,73 @@ fn sanitize_path_segment(raw: &str) -> Result<String, AppError> {
     Ok(sanitized)
 }
 
+fn resolve_document_title(virtual_path: &str, markdown: Option<&str>) -> String {
+    crate::services::knowledge_paths::builtin_knowledge_display_name(virtual_path)
+        .map(str::to_string)
+        .or_else(|| markdown.and_then(extract_markdown_title))
+        .unwrap_or_else(|| file_title(virtual_path))
+}
+
+fn resolve_directory_title(virtual_path: &str, fallback_name: &str) -> String {
+    crate::services::knowledge_paths::builtin_knowledge_display_name(virtual_path)
+        .unwrap_or(fallback_name)
+        .to_string()
+}
+
+fn resolve_tree_file_title(virtual_path: &str, path: &Path) -> String {
+    crate::services::knowledge_paths::builtin_knowledge_display_name(virtual_path)
+        .map(str::to_string)
+        .or_else(|| read_markdown_title_from_file(path))
+        .unwrap_or_else(|| file_title(virtual_path))
+}
+
 fn file_title(path: &str) -> String {
     Path::new(path)
         .file_stem()
         .and_then(|stem| stem.to_str())
         .map(|stem| stem.to_string())
         .unwrap_or_else(|| path.to_string())
+}
+
+fn read_markdown_title_from_file(path: &Path) -> Option<String> {
+    let file = std::fs::File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line.ok()?;
+        if let Some(title) = parse_markdown_heading(&line) {
+            return Some(title);
+        }
+        if !line.trim().is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+fn extract_markdown_title(markdown: &str) -> Option<String> {
+    for line in markdown.lines() {
+        if let Some(title) = parse_markdown_heading(line) {
+            return Some(title);
+        }
+        if !line.trim().is_empty() {
+            break;
+        }
+    }
+    None
+}
+
+fn parse_markdown_heading(line: &str) -> Option<String> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let content = trimmed.trim_start_matches('#').trim();
+    if content.is_empty() {
+        None
+    } else {
+        Some(content.to_string())
+    }
 }
 
 fn join_virtual_path(base: &str, name: &str) -> String {
@@ -319,14 +385,126 @@ fn sort_knowledge_nodes(nodes: &mut [KnowledgeTreeNode]) {
         match (a_is_dir, b_is_dir) {
             (true, false) => std::cmp::Ordering::Less,
             (false, true) => std::cmp::Ordering::Greater,
-            _ => node_name(a).cmp(node_name(b)),
+            _ => node_sort_rank(a)
+                .cmp(&node_sort_rank(b))
+                .then_with(|| node_title(a).cmp(node_title(b)))
+                .then_with(|| node_name(a).cmp(node_name(b))),
         }
     });
+}
+
+fn node_sort_rank(node: &KnowledgeTreeNode) -> usize {
+    match node_path(node)
+        .and_then(PlanningDocId::from_relative_path)
+        .map(PlanningDocId::sort_index)
+    {
+        Some(rank) => rank,
+        None => usize::MAX,
+    }
 }
 
 fn node_name(node: &KnowledgeTreeNode) -> &str {
     match node {
         KnowledgeTreeNode::Dir { name, .. } => name,
         KnowledgeTreeNode::File { name, .. } => name,
+    }
+}
+
+fn node_title(node: &KnowledgeTreeNode) -> &str {
+    match node {
+        KnowledgeTreeNode::Dir { title, name, .. } => title.as_deref().unwrap_or(name),
+        KnowledgeTreeNode::File { title, name, .. } => title.as_deref().unwrap_or(name),
+    }
+}
+
+fn node_path(node: &KnowledgeTreeNode) -> Option<&str> {
+    match node {
+        KnowledgeTreeNode::Dir { path, .. } => Some(path),
+        KnowledgeTreeNode::File { path, .. } => Some(path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    use crate::services::{ensure_dir, write_file};
+
+    #[test]
+    fn built_in_planning_docs_keep_stable_chinese_titles() {
+        let dir = tempdir().expect("temp dir");
+        let planning_dir = dir.path().join(".magic_novel").join("planning");
+        ensure_dir(&planning_dir).expect("planning dir");
+        let doc_path = planning_dir.join("narrative_contract.md");
+        write_file(&doc_path, "# Narrative Contract\n\nlegacy").expect("write file");
+
+        let nodes = build_knowledge_tree(&planning_dir, ".magic_novel/planning").expect("tree");
+        let title = match nodes.first().expect("planning doc") {
+            KnowledgeTreeNode::File { title, .. } => title.clone(),
+            _ => None,
+        };
+
+        assert_eq!(title.as_deref(), Some("叙事合同"));
+        assert_eq!(
+            resolve_document_title(
+                ".magic_novel/planning/narrative_contract.md",
+                Some("# Narrative Contract\n")
+            ),
+            "叙事合同"
+        );
+    }
+
+    #[test]
+    fn generic_docs_use_first_markdown_heading_as_title() {
+        let dir = tempdir().expect("temp dir");
+        let characters_dir = dir.path().join(".magic_novel").join("characters");
+        ensure_dir(&characters_dir).expect("characters dir");
+        let doc_path = characters_dir.join("alice.md");
+        write_file(&doc_path, "# 阿离\n\n角色资料").expect("write file");
+
+        assert_eq!(
+            resolve_tree_file_title(".magic_novel/characters/alice.md", &doc_path),
+            "阿离"
+        );
+        assert_eq!(
+            resolve_document_title(".magic_novel/characters/alice.md", Some("# 阿离\n\n角色资料")),
+            "阿离"
+        );
+    }
+
+    #[test]
+    fn planning_docs_sort_by_contract_order() {
+        let dir = tempdir().expect("temp dir");
+        let planning_dir = dir.path().join(".magic_novel").join("planning");
+        ensure_dir(&planning_dir).expect("planning dir");
+
+        for doc_id in [
+            PlanningDocId::ChapterPlanning,
+            PlanningDocId::StoryBrief,
+            PlanningDocId::NarrativeContract,
+        ] {
+            let file_path = dir.path().join(doc_id.relative_path());
+            write_file(&file_path, format!("{}\n\ncontent", doc_id.markdown_h1()).as_str())
+                .expect("write file");
+        }
+
+        let nodes = build_knowledge_tree(&planning_dir, ".magic_novel/planning").expect("tree");
+        let ordered_paths: Vec<String> = nodes
+            .iter()
+            .filter_map(|node| match node {
+                KnowledgeTreeNode::File { path, .. } => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            ordered_paths,
+            vec![
+                ".magic_novel/planning/story_brief.md".to_string(),
+                ".magic_novel/planning/narrative_contract.md".to_string(),
+                ".magic_novel/planning/chapter_planning.md".to_string(),
+            ]
+        );
     }
 }

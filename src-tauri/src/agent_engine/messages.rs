@@ -97,6 +97,12 @@ impl AgentMessage {
             .join("")
     }
 
+    pub fn semantic_signature(&self) -> String {
+        let role = serde_json::to_string(&self.role).unwrap_or_else(|_| "\"unknown\"".to_string());
+        let blocks = serde_json::to_string(&self.blocks).unwrap_or_else(|_| "[]".to_string());
+        format!("{role}:{blocks}")
+    }
+
     /// Extract tool calls from all ToolCall blocks
     pub fn tool_calls(&self) -> Vec<super::types::ToolCallInfo> {
         self.blocks

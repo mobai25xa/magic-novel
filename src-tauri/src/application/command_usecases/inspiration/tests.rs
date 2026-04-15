@@ -1,11 +1,13 @@
 use crate::agent_engine::exposure_policy::{
     CapabilityPolicy, CapabilityPreset, ExposureContext, SessionSource,
 };
-use crate::agent_engine::messages::{AgentMessage, ConversationState};
+use crate::agent_engine::messages::{AgentMessage, ContentBlock, ConversationState, Role};
 use crate::agent_engine::types::{AgentMode, ApprovalMode, ClarificationMode};
 use crate::services::agent_session::SessionRuntimeState;
 use crate::services::inspiration_session::{
-    load_runtime_snapshot, save_runtime_snapshot_from_input, InspirationRuntimeSnapshotUpsertInput,
+    append_session_events, load_runtime_snapshot, load_session_meta, remove_session_meta,
+    save_runtime_snapshot_from_input, session_event_types, InspirationRuntimeSnapshotUpsertInput,
+    InspirationSessionEvent, INSPIRATION_SESSION_SCHEMA_VERSION,
 };
 use crate::test_support::inspiration_env::with_temp_root;
 
@@ -84,6 +86,30 @@ fn inspiration_session_reload_keeps_independent_turn_counter() {
 }
 
 #[test]
+fn missing_meta_is_recovered_from_persisted_session_files() {
+    with_temp_root(|| {
+        let (session_id, _) =
+            create_inspiration_session(Some("会被修复的会话".to_string())).expect("create session");
+
+        remove_session_meta(&session_id).expect("remove only meta index entry");
+        let repaired =
+            load_inspiration_session_snapshot(&session_id).expect("load repaired snapshot");
+
+        assert_eq!(repaired.meta.session_id, session_id);
+        assert!(repaired.meta.title.is_none());
+        assert_eq!(repaired.events.len(), 1);
+        assert_eq!(repaired.events[0].event_type, "session_start");
+        ensure_inspiration_session_exists(&session_id).expect("repaired session should exist");
+
+        let persisted_meta = load_session_meta(&session_id)
+            .expect("reload repaired meta")
+            .expect("repaired meta should be persisted");
+        assert_eq!(persisted_meta.session_id, repaired.meta.session_id);
+        assert_eq!(persisted_meta.last_turn, repaired.meta.last_turn);
+    });
+}
+
+#[test]
 fn load_snapshot_derives_domain_state_from_conversation_when_snapshot_fields_are_missing() {
     with_temp_root(|| {
         let (session_id, _) = create_inspiration_session(None).expect("create session");
@@ -158,6 +184,167 @@ fn load_snapshot_derives_domain_state_from_conversation_when_snapshot_fields_are
         );
         assert_eq!(loaded.open_questions, vec![question]);
         assert!(loaded.final_create_handoff_draft.is_none());
+    });
+}
+
+#[test]
+fn load_snapshot_merges_newer_event_messages_ahead_of_stale_runtime_snapshot() {
+    with_temp_root(|| {
+        let (session_id, _) = create_inspiration_session(None).expect("create session");
+
+        let mut conversation = ConversationState::new(session_id.clone());
+        conversation.current_turn = 1;
+        conversation
+            .messages
+            .push(AgentMessage::user("先给我一个故事方向".to_string()));
+
+        let snapshot = save_runtime_snapshot_from_input(
+            InspirationRuntimeSnapshotUpsertInput::from_conversation(
+                session_id.clone(),
+                SessionRuntimeState::Running,
+                conversation,
+                Some(1),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+        )
+        .expect("save stale running snapshot");
+
+        append_session_events(
+            &session_id,
+            &[
+                InspirationSessionEvent {
+                    schema_version: INSPIRATION_SESSION_SCHEMA_VERSION,
+                    event_type: session_event_types::MESSAGE.to_string(),
+                    session_id: session_id.clone(),
+                    ts: snapshot.updated_at + 10,
+                    event_id: Some("evt_assistant_message".to_string()),
+                    event_seq: None,
+                    dedupe_key: None,
+                    turn: Some(1),
+                    payload: Some(serde_json::json!({
+                        "role": "assistant",
+                        "content": "这是已经写入事件流的最终回答。",
+                        "message_id": "msg_assistant_final",
+                    })),
+                },
+                InspirationSessionEvent {
+                    schema_version: INSPIRATION_SESSION_SCHEMA_VERSION,
+                    event_type: session_event_types::TURN_COMPLETED.to_string(),
+                    session_id: session_id.clone(),
+                    ts: snapshot.updated_at + 11,
+                    event_id: Some("evt_turn_completed".to_string()),
+                    event_seq: None,
+                    dedupe_key: None,
+                    turn: Some(1),
+                    payload: Some(serde_json::json!({
+                        "stop_reason": "success",
+                    })),
+                },
+            ],
+        )
+        .expect("append fresher persisted events");
+
+        let loaded = load_inspiration_session_snapshot(&session_id).expect("load merged snapshot");
+
+        assert_eq!(loaded.conversation.messages.len(), 2);
+        assert_eq!(
+            loaded.conversation.messages[0].text_content(),
+            "先给我一个故事方向"
+        );
+        assert_eq!(
+            loaded.conversation.messages[1].text_content(),
+            "这是已经写入事件流的最终回答。"
+        );
+        assert_eq!(loaded.runtime_state, SessionRuntimeState::Completed);
+        assert_eq!(loaded.last_turn, Some(1));
+        assert_eq!(loaded.next_turn_id, Some(2));
+    });
+}
+
+#[test]
+fn load_snapshot_dedupes_runtime_and_event_user_message_identity_mismatch() {
+    with_temp_root(|| {
+        let (session_id, _) = create_inspiration_session(None).expect("create session");
+
+        let user_text = "hi".to_string();
+        let conversation = ConversationState {
+            session_id: session_id.clone(),
+            messages: vec![AgentMessage {
+                id: "msg_user_runtime".to_string(),
+                role: Role::User,
+                blocks: vec![ContentBlock::Text {
+                    text: user_text.clone(),
+                }],
+                ts: 100,
+            }],
+            current_turn: 1,
+            total_tool_calls: 0,
+            last_compaction: None,
+            last_usage: None,
+        };
+
+        save_runtime_snapshot_from_input(InspirationRuntimeSnapshotUpsertInput::from_conversation(
+            session_id.clone(),
+            SessionRuntimeState::Running,
+            conversation,
+            Some(1),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .expect("save runtime snapshot");
+
+        append_session_events(
+            &session_id,
+            &[
+                InspirationSessionEvent {
+                    schema_version: INSPIRATION_SESSION_SCHEMA_VERSION,
+                    event_type: session_event_types::MESSAGE.to_string(),
+                    session_id: session_id.clone(),
+                    ts: 101,
+                    event_id: Some("evt_user_message".to_string()),
+                    event_seq: None,
+                    dedupe_key: None,
+                    turn: Some(1),
+                    payload: Some(serde_json::json!({
+                        "role": "user",
+                        "content": user_text,
+                        "message_id": "msg_user_event",
+                    })),
+                },
+                InspirationSessionEvent {
+                    schema_version: INSPIRATION_SESSION_SCHEMA_VERSION,
+                    event_type: session_event_types::MESSAGE.to_string(),
+                    session_id: session_id.clone(),
+                    ts: 102,
+                    event_id: Some("evt_assistant_message".to_string()),
+                    event_seq: None,
+                    dedupe_key: None,
+                    turn: Some(1),
+                    payload: Some(serde_json::json!({
+                        "role": "assistant",
+                        "content": "你好，我可以帮你一起完善故事构思。",
+                        "message_id": "msg_assistant_final",
+                    })),
+                },
+            ],
+        )
+        .expect("append runtime and event messages");
+
+        let loaded = load_inspiration_session_snapshot(&session_id).expect("load snapshot");
+
+        assert_eq!(loaded.conversation.messages.len(), 2);
+        assert_eq!(loaded.conversation.messages[0].text_content(), "hi");
+        assert_eq!(
+            loaded.conversation.messages[1].text_content(),
+            "你好，我可以帮你一起完善故事构思。"
+        );
     });
 }
 

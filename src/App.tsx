@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef } from 'react'
 
+import { openProjectFlow } from '@/components/home/page/home-page-project-actions-helpers'
 import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
 import { useSettingsStore } from '@/state/settings'
@@ -39,6 +40,18 @@ function App() {
   const sidebarCollapsed = useNavigationStore((s) => s.sidebarCollapsed)
   const navigate = useNavigationStore((s) => s.navigate)
   const toggleSidebar = useNavigationStore((s) => s.toggleSidebar)
+
+  const handleOpenProject = async (path: string) => {
+    try {
+      await openProjectFlow({
+        projectStore: useProjectStore.getState(),
+        selectedPath: path,
+      })
+      navigate('project_home')
+    } catch (error) {
+      console.error('Failed to open project from sidebar:', error)
+    }
+  }
 
   // 应用主题
   useTheme()
@@ -109,6 +122,7 @@ function App() {
           currentPage={currentPage}
           collapsed={sidebarCollapsed}
           onNavigate={navigate}
+          onOpenProject={handleOpenProject}
           onToggleCollapse={toggleSidebar}
         />
         <div className="main-wrapper">

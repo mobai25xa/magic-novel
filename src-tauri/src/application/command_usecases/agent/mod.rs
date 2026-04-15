@@ -14,9 +14,13 @@ use crate::models::{AppError, ErrorCode};
 
 pub const DEFAULT_OPENAI_MODEL: &str = "gpt-4o-mini";
 pub const DEFAULT_LOCAL_EMBEDDING_BASE_URL: &str = "http://127.0.0.1:11434/v1";
+pub const DEFAULT_PROVIDER_TYPE: &str = "openai-compatible";
+pub const DEFAULT_PLANNING_GENERATION_MODE: &str = "follow_primary";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenAiProviderSettings {
+    #[serde(default = "default_provider_type")]
+    pub provider_type: String,
     #[serde(default)]
     pub openai_base_url: String,
     #[serde(default)]
@@ -43,10 +47,24 @@ pub struct OpenAiProviderSettings {
     pub openai_embedding_detection_reason: String,
     #[serde(default)]
     pub openai_enabled_models: Vec<String>,
+    #[serde(default = "default_planning_generation_mode")]
+    pub planning_generation_mode: String,
+    #[serde(default = "default_provider_type")]
+    pub planning_provider_type: String,
+    #[serde(default)]
+    pub planning_base_url: String,
+    #[serde(default)]
+    pub planning_api_key: String,
+    #[serde(default)]
+    pub planning_model: String,
+    #[serde(default)]
+    pub planning_enabled_models: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaveOpenAiProviderSettingsInput {
+    #[serde(default)]
+    pub provider_type: Option<String>,
     pub openai_base_url: String,
     pub openai_api_key: String,
     #[serde(default)]
@@ -71,6 +89,18 @@ pub struct SaveOpenAiProviderSettingsInput {
     pub openai_embedding_detection_reason: Option<String>,
     #[serde(default)]
     pub openai_enabled_models: Vec<String>,
+    #[serde(default)]
+    pub planning_generation_mode: Option<String>,
+    #[serde(default)]
+    pub planning_provider_type: Option<String>,
+    #[serde(default)]
+    pub planning_base_url: Option<String>,
+    #[serde(default)]
+    pub planning_api_key: Option<String>,
+    #[serde(default)]
+    pub planning_model: Option<String>,
+    #[serde(default)]
+    pub planning_enabled_models: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +130,7 @@ pub struct OpenAiChatCompletionInput {
 impl Default for OpenAiProviderSettings {
     fn default() -> Self {
         Self {
+            provider_type: default_provider_type(),
             openai_base_url: String::new(),
             openai_api_key: String::new(),
             openai_model: DEFAULT_OPENAI_MODEL.to_string(),
@@ -113,6 +144,12 @@ impl Default for OpenAiProviderSettings {
             openai_embedding_detected: false,
             openai_embedding_detection_reason: default_embedding_detection_reason(),
             openai_enabled_models: vec![DEFAULT_OPENAI_MODEL.to_string()],
+            planning_generation_mode: default_planning_generation_mode(),
+            planning_provider_type: default_provider_type(),
+            planning_base_url: String::new(),
+            planning_api_key: String::new(),
+            planning_model: String::new(),
+            planning_enabled_models: Vec::new(),
         }
     }
 }
@@ -126,7 +163,8 @@ pub async fn get_openai_provider_settings() -> Result<OpenAiProviderSettings, Ap
 pub async fn save_openai_provider_settings(
     input: SaveOpenAiProviderSettingsInput,
 ) -> Result<OpenAiProviderSettings, AppError> {
-    let settings = normalize_save_input(input);
+    let existing = load_openai_provider_settings().unwrap_or_default();
+    let settings = normalize_save_input(input, &existing);
 
     write_openai_provider_settings(&settings)?;
     Ok(settings)
@@ -300,4 +338,12 @@ fn default_embedding_source() -> String {
 
 fn default_embedding_enabled() -> bool {
     false
+}
+
+fn default_provider_type() -> String {
+    DEFAULT_PROVIDER_TYPE.to_string()
+}
+
+fn default_planning_generation_mode() -> String {
+    DEFAULT_PLANNING_GENERATION_MODE.to_string()
 }

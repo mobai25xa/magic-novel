@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import { missionKnowledgeApplyFeature, missionKnowledgeDecideFeature, missionKnowledgeRollbackFeature } from '@/features/agent-chat'
 
@@ -100,46 +100,67 @@ export function useKnowledgeProposalSelection(input: {
   items: Array<{ item_id: string; accept_policy?: unknown }>
 }) {
   const { bundleId, items } = input
-  const lastBundleIdRef = useRef<string | null>(null)
-  const [acceptedByItemId, setAcceptedByItemId] = useState<Record<string, boolean>>({})
-
-  useEffect(() => {
-    if (bundleId === lastBundleIdRef.current) {
-      return
-    }
-
-    lastBundleIdRef.current = bundleId
+  const [selectionState, setSelectionState] = useState<{
+    bundleId: string | null
+    acceptedByItemId: Record<string, boolean>
+  }>({
+    bundleId: null,
+    acceptedByItemId: {},
+  })
+  const acceptedByItemId = useMemo(() => {
     if (!bundleId) {
-      setAcceptedByItemId({})
-      return
+      return {}
     }
-    setAcceptedByItemId(buildAcceptedMap(items, (policy) => policy === 'auto_if_pass'))
-  }, [bundleId, items])
+
+    if (selectionState.bundleId !== bundleId) {
+      return buildAcceptedMap(items, (policy) => policy === 'auto_if_pass')
+    }
+
+    return selectionState.acceptedByItemId
+  }, [bundleId, items, selectionState.acceptedByItemId, selectionState.bundleId])
 
   const onToggle = useCallback((item: { item_id: string; accept_policy?: unknown }) => {
     const policy = getAcceptPolicy(item)
     const canToggleToAccept = policy !== 'orchestrator_only'
 
-    setAcceptedByItemId((prev) => {
-      const checked = Boolean(prev[item.item_id])
+    setSelectionState((prev) => {
+      const base = !bundleId
+        ? {}
+        : prev.bundleId === bundleId
+          ? prev.acceptedByItemId
+          : buildAcceptedMap(items, (nextPolicy) => nextPolicy === 'auto_if_pass')
+      const checked = Boolean(base[item.item_id])
       if (!canToggleToAccept && !checked) {
         return prev
       }
-      return { ...prev, [item.item_id]: !prev[item.item_id] }
+
+      return {
+        bundleId,
+        acceptedByItemId: { ...base, [item.item_id]: !base[item.item_id] },
+      }
     })
-  }, [])
+  }, [bundleId, items])
 
   const onAcceptSafe = useCallback(() => {
-    setAcceptedByItemId(buildAcceptedMap(items, (policy) => policy === 'auto_if_pass'))
-  }, [items])
+    setSelectionState({
+      bundleId,
+      acceptedByItemId: bundleId ? buildAcceptedMap(items, (policy) => policy === 'auto_if_pass') : {},
+    })
+  }, [bundleId, items])
 
   const onAcceptAll = useCallback(() => {
-    setAcceptedByItemId(buildAcceptedMap(items, (policy) => policy !== 'orchestrator_only'))
-  }, [items])
+    setSelectionState({
+      bundleId,
+      acceptedByItemId: bundleId ? buildAcceptedMap(items, (policy) => policy !== 'orchestrator_only') : {},
+    })
+  }, [bundleId, items])
 
   const onRejectAll = useCallback(() => {
-    setAcceptedByItemId(buildAcceptedMap(items, () => false))
-  }, [items])
+    setSelectionState({
+      bundleId,
+      acceptedByItemId: bundleId ? buildAcceptedMap(items, () => false) : {},
+    })
+  }, [bundleId, items])
 
   return { acceptedByItemId, onToggle, onAcceptSafe, onAcceptAll, onRejectAll }
 }

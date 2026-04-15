@@ -10,6 +10,7 @@ pub(crate) const MAX_RECOVERY_ATTEMPTS: u8 = 2;
 pub(crate) struct ToolExecutionDiagnostic {
     pub tool_name: String,
     pub error_code: Option<String>,
+    pub error_message: Option<String>,
     pub retryable: bool,
     pub details: Option<Value>,
     pub args: Value,
@@ -101,6 +102,38 @@ impl RecoveryBudget {
 fn classify_recovery_issue(diagnostic: &ToolExecutionDiagnostic) -> Option<RecoveryIssue> {
     let error_code = diagnostic.error_code.as_deref()?;
     match error_code {
+        "E_TOOL_SCHEMA_INVALID" if diagnostic.tool_name == "knowledge_write" => {
+            let field_path = knowledge_write_fields_issue_path(diagnostic)?;
+            Some(RecoveryIssue {
+                key: format!("knowledge_write_fields:{field_path}"),
+                guidance: format!(
+                    "Fix `{field_path}` before retrying `knowledge_write`. It must be a JSON object such as {{\"summary\":\"canon update\"}}, not a string, array, or patch list"
+                ),
+                exhausted_guidance: format!(
+                    "`knowledge_write` is still failing on `{field_path}` after recovery attempts; stop retrying the same malformed payload"
+                ),
+            })
+        }
+        "E_TOOL_SCHEMA_INVALID" if diagnostic.tool_name == "askuser" => Some(RecoveryIssue {
+            key: format!("askuser_schema:{}", askuser_issue_key(diagnostic)),
+            guidance: "Fix `askuser` before retrying. Send an object with either `questionnaire` as a non-empty string, or `questions` as 1-4 items where each item includes non-empty `question`, `topic`, and `options` with 2-4 non-empty strings".to_string(),
+            exhausted_guidance: "`askuser` is still failing schema validation after recovery attempts; stop retrying the same malformed questionnaire payload".to_string(),
+        }),
+        "E_TOOL_SCHEMA_INVALID" if diagnostic.tool_name == "structure_edit" => {
+            if structure_edit_node_type_issue(diagnostic) {
+                return Some(RecoveryIssue {
+                    key: "structure_edit:node_type".to_string(),
+                    guidance: "Fix `structure_edit.node_type` before retrying. Only `volume` and `chapter` are supported; `knowledge_item` is not available".to_string(),
+                    exhausted_guidance: "`structure_edit` is still failing on `node_type`; stop retrying the same unsupported node type".to_string(),
+                });
+            }
+
+            Some(RecoveryIssue {
+                key: "structure_edit:schema".to_string(),
+                guidance: "Re-check `structure_edit` inputs before retrying. Use `op` + `node_type`, and include the required refs/title/position fields for that operation".to_string(),
+                exhausted_guidance: "`structure_edit` is still failing schema validation after recovery attempts; stop retrying the same malformed payload".to_string(),
+            })
+        }
         "E_TOOL_NOT_ALLOWED" => Some(RecoveryIssue {
             key: format!("tool_not_allowed:{}", diagnostic.tool_name),
             guidance: format!(
@@ -189,6 +222,22 @@ fn recovery_target(diagnostic: &ToolExecutionDiagnostic) -> String {
         }
     }
 
+    if diagnostic.tool_name == "knowledge_write" {
+        if let Some(value) = diagnostic
+            .args
+            .get("changes")
+            .and_then(Value::as_array)
+            .and_then(|changes| changes.first())
+            .and_then(|change| change.get("target_ref"))
+            .and_then(Value::as_str)
+        {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_string();
+            }
+        }
+    }
+
     diagnostic
         .details
         .as_ref()
@@ -197,6 +246,52 @@ fn recovery_target(diagnostic: &ToolExecutionDiagnostic) -> String {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
         .unwrap_or_else(|| diagnostic.tool_name.clone())
+}
+
+fn knowledge_write_fields_issue_path(diagnostic: &ToolExecutionDiagnostic) -> Option<String> {
+    let changes = diagnostic.args.get("changes")?.as_array()?;
+
+    for (idx, change) in changes.iter().enumerate() {
+        let change_obj = change.as_object()?;
+        match change_obj.get("fields") {
+            Some(fields) if fields.is_object() => {}
+            Some(_) | None => return Some(format!("changes[{idx}].fields")),
+        }
+    }
+
+    None
+}
+
+fn askuser_issue_key(diagnostic: &ToolExecutionDiagnostic) -> &'static str {
+    let message = diagnostic
+        .error_message
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if message.contains("questionnaire") {
+        "questionnaire"
+    } else {
+        "questions"
+    }
+}
+
+fn structure_edit_node_type_issue(diagnostic: &ToolExecutionDiagnostic) -> bool {
+    if diagnostic
+        .args
+        .get("node_type")
+        .and_then(Value::as_str)
+        .map(|value| value.eq_ignore_ascii_case("knowledge_item"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+
+    diagnostic
+        .error_message
+        .as_deref()
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .contains("knowledge_item")
 }
 
 #[cfg(test)]
@@ -209,6 +304,23 @@ mod tests {
         ToolExecutionDiagnostic {
             tool_name: tool_name.to_string(),
             error_code: Some(error_code.to_string()),
+            error_message: None,
+            retryable: true,
+            details: None,
+            args,
+        }
+    }
+
+    fn diagnostic_with_message(
+        tool_name: &str,
+        error_code: &str,
+        error_message: &str,
+        args: Value,
+    ) -> ToolExecutionDiagnostic {
+        ToolExecutionDiagnostic {
+            tool_name: tool_name.to_string(),
+            error_code: Some(error_code.to_string()),
+            error_message: Some(error_message.to_string()),
             retryable: true,
             details: None,
             args,
@@ -271,5 +383,77 @@ mod tests {
             .expect("recovery message")
             .text_content();
         assert!(content.contains("knowledge:.magic_novel"));
+    }
+
+    #[test]
+    fn knowledge_write_fields_issue_mentions_object_contract() {
+        let mut budget = RecoveryBudget::default();
+        let directive = budget.observe(&[diagnostic(
+            "knowledge_write",
+            "E_TOOL_SCHEMA_INVALID",
+            json!({
+                "changes": [{
+                    "target_ref": "knowledge:.magic_novel/terms/foo.json",
+                    "kind": "add",
+                    "fields": "summary = foo"
+                }]
+            }),
+        )]);
+
+        let content = directive
+            .system_message
+            .expect("recovery message")
+            .text_content();
+        assert!(content.contains("changes[0].fields"));
+        assert!(content.contains("JSON object"));
+        assert!(content.contains("patch list"));
+    }
+
+    #[test]
+    fn askuser_schema_issue_mentions_question_shape() {
+        let mut budget = RecoveryBudget::default();
+        let directive = budget.observe(&[diagnostic_with_message(
+            "askuser",
+            "E_TOOL_SCHEMA_INVALID",
+            "askuser questions[0].options must contain between 2 and 4 items",
+            json!({
+                "questions": [{
+                    "question": "Pick one",
+                    "topic": "style",
+                    "options": ["Only one"]
+                }]
+            }),
+        )]);
+
+        let content = directive
+            .system_message
+            .expect("recovery message")
+            .text_content();
+        assert!(content.contains("questionnaire"));
+        assert!(content.contains("questions"));
+        assert!(content.contains("2-4"));
+    }
+
+    #[test]
+    fn structure_edit_schema_issue_mentions_supported_node_types() {
+        let mut budget = RecoveryBudget::default();
+        let directive = budget.observe(&[diagnostic_with_message(
+            "structure_edit",
+            "E_TOOL_SCHEMA_INVALID",
+            "unknown variant `knowledge_item`, expected `volume` or `chapter`",
+            json!({
+                "op": "create",
+                "node_type": "knowledge_item",
+                "title": "Lore"
+            }),
+        )]);
+
+        let content = directive
+            .system_message
+            .expect("recovery message")
+            .text_content();
+        assert!(content.contains("volume"));
+        assert!(content.contains("chapter"));
+        assert!(content.contains("knowledge_item"));
     }
 }

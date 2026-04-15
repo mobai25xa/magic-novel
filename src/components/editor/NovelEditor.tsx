@@ -27,6 +27,7 @@ import {
 interface NovelEditorProps {
   initialContent?: unknown
   onContentChange?: (content: unknown) => void
+  documentKind?: 'chapter' | 'asset' | 'knowledge'
 }
 
 const DEFAULT_EDITOR_CONTENT = {
@@ -65,6 +66,7 @@ function buildEditorCssVars(input: {
 function useNovelTiptapEditor(input: {
   initialContent?: unknown
   firstLineIndent: boolean
+  documentKind: 'chapter' | 'asset' | 'knowledge'
   onContentChange?: (content: unknown) => void
   setIsDirty: (dirty: boolean) => void
 }) {
@@ -93,13 +95,13 @@ function useNovelTiptapEditor(input: {
     },
     editorProps: {
       attributes: {
-        class: `novel-editor-content max-w-none focus:outline-none min-h-full${input.firstLineIndent ? ' first-line-indent' : ''}`,
+        class: `novel-editor-content max-w-none focus:outline-none min-h-full editor-content-kind-${input.documentKind}${input.firstLineIndent ? ' first-line-indent' : ''}`,
       },
     },
   })
 }
 
-export function NovelEditor({ initialContent, onContentChange }: NovelEditorProps) {
+export function NovelEditor({ initialContent, onContentChange, documentKind = 'chapter' }: NovelEditorProps) {
   const { setEditor, setIsDirty } = useEditorStore()
   const { firstLineIndent, editorFontSize, editorLineHeight, editorContentWidth, editorFontFamily, editorTextAlign } = useSettingsStore()
   const { isLeftPanelVisible, isRightPanelVisible } = useLayoutStore()
@@ -131,6 +133,7 @@ export function NovelEditor({ initialContent, onContentChange }: NovelEditorProp
   const editor = useNovelTiptapEditor({
     initialContent,
     firstLineIndent,
+    documentKind,
     onContentChange,
     setIsDirty,
   })

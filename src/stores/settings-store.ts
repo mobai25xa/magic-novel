@@ -4,11 +4,18 @@ import type { CustomThemeColors } from '@/types/theme'
 import { applyThemeColors, removeThemeColors } from '@/lib/theme-utils'
 
 import { DEFAULT_PROJECT_GENRES } from './settings-constants'
-import type { SettingsState } from './settings-types'
+import type {
+  PlanningGenerationMode,
+  PlanningProviderSettingsInput,
+  ProviderType,
+  SettingsState,
+} from './settings-types'
 
 const DEFAULT_OPENAI_MODEL = 'gpt-4o-mini'
 const DEFAULT_LOCAL_EMBEDDING_BASE_URL = 'http://127.0.0.1:11434/v1'
 const DEFAULT_EMBEDDING_DETECTION_REASON = 'embedding_model_unavailable'
+const DEFAULT_PROVIDER_TYPE: ProviderType = 'openai-compatible'
+const DEFAULT_PLANNING_GENERATION_MODE: PlanningGenerationMode = 'follow_primary'
 
 function normalizeGenres(input: string[]) {
   const seen = new Set<string>()
@@ -30,6 +37,34 @@ function normalizeModels(input: string[]) {
       seen.add(item)
       return true
     })
+}
+
+function normalizeProviderType(input: unknown): ProviderType {
+  return input === 'openai' || input === 'anthropic' || input === 'gemini'
+    ? input
+    : DEFAULT_PROVIDER_TYPE
+}
+
+function normalizePlanningGenerationMode(input: unknown): PlanningGenerationMode {
+  return input === 'dedicated' ? 'dedicated' : DEFAULT_PLANNING_GENERATION_MODE
+}
+
+function resolvePlanningSettings(input: PlanningProviderSettingsInput) {
+  const enabledModels = normalizeModels(input.enabledModels)
+  const requestedModel = input.model.trim()
+  const selectedModel = requestedModel || enabledModels[0] || ''
+  const nextEnabledModels = enabledModels.length > 0
+    ? enabledModels
+    : (selectedModel ? [selectedModel] : [])
+
+  return {
+    planningGenerationMode: normalizePlanningGenerationMode(input.generationMode),
+    planningProviderType: normalizeProviderType(input.providerType),
+    planningBaseUrl: input.baseUrl.trim(),
+    planningApiKey: input.apiKey.trim(),
+    planningModel: selectedModel,
+    planningEnabledModels: nextEnabledModels,
+  }
 }
 
 const defaultCustomColors: CustomThemeColors = {
@@ -87,6 +122,12 @@ export const useSettingsStore = create<SettingsState>()(
       openaiEmbeddingDetected: false,
       openaiEmbeddingDetectionReason: 'embedding_model_unavailable',
       openaiEnabledModels: ['gpt-4o-mini'],
+      planningGenerationMode: 'follow_primary',
+      planningProviderType: 'openai-compatible',
+      planningBaseUrl: '',
+      planningApiKey: '',
+      planningModel: '',
+      planningEnabledModels: [],
       dailyWordGoal: 2000,
       theme: 'system',
       language: 'zh',
@@ -145,6 +186,9 @@ export const useSettingsStore = create<SettingsState>()(
           if (!state.openaiEnabledModels.includes(next)) return {}
           return { openaiModel: next }
         }),
+      setPlanningGenerationMode: (mode) =>
+        set({ planningGenerationMode: normalizePlanningGenerationMode(mode) }),
+      setPlanningProviderSettings: (input) => set(resolvePlanningSettings(input)),
       setOpenAiEmbeddingSource: (source) =>
         set({ openaiEmbeddingSource: source === 'local' ? 'local' : 'provider' }),
       setOpenAiEmbeddingEnabled: (enabled) =>
@@ -191,7 +235,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'magic-novel-settings',
-      version: 3,
+      version: 4,
       migrate: (persistedState: unknown) => {
         if (!persistedState || typeof persistedState !== 'object') {
           return persistedState as SettingsState
@@ -212,6 +256,18 @@ export const useSettingsStore = create<SettingsState>()(
         if (next.capabilityMode !== 'writing' && next.capabilityMode !== 'planning') {
           next.capabilityMode = 'writing'
         }
+
+        next.providerType = normalizeProviderType(next.providerType)
+        Object.assign(next, resolvePlanningSettings({
+          generationMode: normalizePlanningGenerationMode(next.planningGenerationMode),
+          providerType: normalizeProviderType(next.planningProviderType),
+          baseUrl: typeof next.planningBaseUrl === 'string' ? next.planningBaseUrl : '',
+          apiKey: typeof next.planningApiKey === 'string' ? next.planningApiKey : '',
+          model: typeof next.planningModel === 'string' ? next.planningModel : '',
+          enabledModels: Array.isArray(next.planningEnabledModels)
+            ? next.planningEnabledModels.filter((item): item is string => typeof item === 'string')
+            : [],
+        }))
 
         return next as unknown as SettingsState
       },

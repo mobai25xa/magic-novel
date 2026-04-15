@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::models::{DEFAULT_PLANNED_VOLUMES, DEFAULT_TARGET_WORDS_PER_CHAPTER};
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum BootstrapArtifactKind {
@@ -129,15 +131,27 @@ impl BootstrapPromptInput {
         world_seed: Option<String>,
         ending_direction: Option<String>,
     ) -> Self {
+        let planned_volumes = project
+            .planned_volumes
+            .unwrap_or(DEFAULT_PLANNED_VOLUMES)
+            .max(1);
+        let target_words_per_volume = project
+            .target_words_per_volume
+            .unwrap_or_else(|| (project.target_total_words / planned_volumes).max(15_000));
+        let target_words_per_chapter = project
+            .target_words_per_chapter
+            .unwrap_or(DEFAULT_TARGET_WORDS_PER_CHAPTER)
+            .max(1_000);
+
         Self {
             project_name: project.name.clone(),
             author: project.author.clone(),
             description: project.description.clone().unwrap_or_default(),
             genres: project.project_type.clone(),
             target_total_words: project.target_total_words,
-            planned_volumes: project.planned_volumes,
-            target_words_per_volume: project.target_words_per_volume,
-            target_words_per_chapter: project.target_words_per_chapter,
+            planned_volumes,
+            target_words_per_volume,
+            target_words_per_chapter,
             narrative_pov: project.narrative_pov.clone(),
             tone: project.tone.clone(),
             audience: project.audience.clone(),

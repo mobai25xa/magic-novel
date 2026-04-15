@@ -151,12 +151,12 @@ impl SessionPersistenceSink {
         self.append(&[event])
     }
 
-    /// Persist a user message.
-    pub fn persist_user_message(&self, text: &str, turn: u32) -> Result<(), AppError> {
+    /// Persist a user message using the same message identity as runtime state.
+    pub fn persist_user_message(&self, msg: &AgentMessage, turn: u32) -> Result<(), AppError> {
         let payload = json!({
             "role": "user",
-            "content": text,
-            "message_id": format!("msg_{}", uuid::Uuid::new_v4()),
+            "content": msg.text_content(),
+            "message_id": msg.id,
         });
         let payload = append_event_diagnostics(
             payload,
@@ -747,6 +747,33 @@ mod tests {
         assert_eq!(payload["role"], "assistant");
         assert_eq!(payload["content"], "Hello, I can help with that.");
         assert_eq!(payload["message_id"], "msg_test_1");
+    }
+
+    #[test]
+    fn test_persist_user_message_keeps_runtime_message_id() {
+        let project = setup_temp_project();
+        let sink = SessionPersistenceSink::new(&project, "test_session");
+
+        let msg = super::super::messages::AgentMessage {
+            id: "msg_user_1".to_string(),
+            role: super::super::messages::Role::User,
+            blocks: vec![super::super::messages::ContentBlock::Text {
+                text: "hi".to_string(),
+            }],
+            ts: chrono::Utc::now().timestamp_millis(),
+        };
+
+        sink.persist_user_message(&msg, 1).unwrap();
+
+        let events =
+            crate::services::agent_session::read_events_jsonl(&sink.stream_path()).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "message");
+
+        let payload = events[0].payload.as_ref().unwrap();
+        assert_eq!(payload["role"], "user");
+        assert_eq!(payload["content"], "hi");
+        assert_eq!(payload["message_id"], "msg_user_1");
     }
 
     #[test]

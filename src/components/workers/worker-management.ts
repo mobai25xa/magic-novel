@@ -1,13 +1,11 @@
 import {
+  type ApprovalMode,
+  type CapabilityMode,
+  type ClarificationMode,
   WORKER_CAPABILITY_PRESETS,
-  type WorkerDefinition,
   type CapabilityPreset,
+  type WorkerDefinition,
 } from '@/features/global-config'
-import type {
-  ApprovalMode,
-  CapabilityMode,
-  ClarificationMode,
-} from '@/platform/tauri/clients/agent-engine-client'
 
 export type WorkerFormValue = {
   name: string

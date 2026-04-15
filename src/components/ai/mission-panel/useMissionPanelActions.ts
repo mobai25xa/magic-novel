@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 
 import {
+  getMissionRecoveryEntries,
   loadAgentProviderSettings,
   missionCancelFeature,
   missionContextpackBuildFeature,
@@ -13,7 +14,6 @@ import {
   missionResumeFeature,
   missionStartFeature,
 } from '@/features/agent-chat'
-import { getMissionRecoveryEntries } from '@/lib/tauri-commands/mission'
 
 import { currentActiveChapterPath } from '@/lib/agent-chat/session/session-persistence-store'
 

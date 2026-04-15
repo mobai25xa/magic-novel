@@ -2,20 +2,10 @@ import { useEffect } from 'react'
 
 import { useProjectStore } from '@/state/project'
 
-import { getProjectBootstrapStatusEntry, type ProjectBootstrapStatus } from './index'
-
-const ACTIVE_BOOTSTRAP_PHASES = new Set<ProjectBootstrapStatus['phase']>([
-  'pending',
-  'assembling_prompt',
-  'llm_generating',
-  'writing_artifacts',
-])
+import { getProjectBootstrapStatusEntry } from './index'
+import { isActiveBootstrapStatus, shouldSyncBootstrapStatus } from './bootstrap-status-helpers'
 
 const BOOTSTRAP_STATUS_POLL_INTERVAL_MS = 1200
-
-function isActiveBootstrapStatus(status: ProjectBootstrapStatus) {
-  return ACTIVE_BOOTSTRAP_PHASES.has(status.phase)
-}
 
 function isMissingBootstrapStatusError(error: unknown) {
   const message = String(error).toLowerCase()
@@ -27,9 +17,24 @@ function isMissingBootstrapStatusError(error: unknown) {
 }
 
 export function useProjectBootstrapStatusSync(projectPath: string | null) {
+  const projectBootstrapState = useProjectStore((state) => state.project?.bootstrapState ?? null)
+  const bootstrapStatusProjectPath = useProjectStore((state) => state.bootstrapStatusProjectPath)
+
   useEffect(() => {
+    const store = useProjectStore.getState()
+
     if (!projectPath) {
-      useProjectStore.getState().clearBootstrapStatus()
+      store.clearBootstrapStatus()
+      return
+    }
+
+    if (!shouldSyncBootstrapStatus({
+      projectPath,
+      projectBootstrapState,
+      bootstrapStatus: store.bootstrapStatus,
+      bootstrapStatusProjectPath,
+    })) {
+      store.clearBootstrapStatus(projectPath)
       return
     }
 
@@ -67,7 +72,7 @@ export function useProjectBootstrapStatusSync(projectPath: string | null) {
           return
         }
 
-        console.warn('[project-bootstrap] Failed to fetch bootstrap status:', error)
+        console.warn('[legacy-bootstrap] Failed to fetch bootstrap status:', error)
 
         const store = useProjectStore.getState()
         if (
@@ -88,5 +93,5 @@ export function useProjectBootstrapStatusSync(projectPath: string | null) {
         window.clearTimeout(timerId)
       }
     }
-  }, [projectPath])
+  }, [bootstrapStatusProjectPath, projectBootstrapState, projectPath])
 }

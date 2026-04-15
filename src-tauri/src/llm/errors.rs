@@ -9,6 +9,18 @@ use serde_json::json;
 
 use crate::models::{AppError, ErrorCode};
 
+#[derive(Debug, Clone)]
+pub struct StreamToolCallError {
+    pub call_id: String,
+    pub tool_name: String,
+    pub raw_args_len: usize,
+    pub final_json_parse_failed: bool,
+    pub partial_fields_recovered: bool,
+    pub failure_kind: String,
+    pub json_error: Option<String>,
+    pub parsed_json_type: Option<String>,
+}
+
 /// LLM error with classification for retry/routing decisions
 #[derive(Debug, Clone)]
 pub enum LlmError {
@@ -52,6 +64,11 @@ pub enum LlmError {
         provider: String,
         status: Option<u16>,
     },
+    /// Streamed tool-call arguments were malformed or incomplete
+    StreamToolArgs {
+        provider: String,
+        tool_calls: Vec<StreamToolCallError>,
+    },
     /// Generic/unknown error
     Unknown { message: String, provider: String },
 }
@@ -66,6 +83,7 @@ impl LlmError {
                 | Self::Network { .. }
                 | Self::EmptyBody { .. }
                 | Self::EmptyResponse { .. }
+                | Self::StreamToolArgs { .. }
         )
     }
 
@@ -98,6 +116,7 @@ impl LlmError {
             Self::ParseError { provider, .. } => provider,
             Self::ProviderToolSchema { provider, .. } => provider,
             Self::ContentPolicy { provider, .. } => provider,
+            Self::StreamToolArgs { provider, .. } => provider,
             Self::Unknown { provider, .. } => provider,
         }
     }
@@ -113,6 +132,16 @@ impl LlmError {
             | Self::ProviderToolSchema { message, .. }
             | Self::ContentPolicy { message, .. }
             | Self::Unknown { message, .. } => message.clone(),
+            Self::StreamToolArgs { tool_calls, .. } => {
+                let count = tool_calls.len();
+                let first = tool_calls
+                    .first()
+                    .map(|tool| tool.tool_name.as_str())
+                    .unwrap_or("unknown");
+                format!(
+                    "streamed tool-call arguments were malformed for {count} call(s); first tool: {first}"
+                )
+            }
             Self::ServerError {
                 status, message, ..
             } => {
@@ -196,6 +225,7 @@ impl LlmError {
             Self::ParseError { .. } => "E_PARSE_ERROR",
             Self::ProviderToolSchema { .. } => "E_PROVIDER_TOOL_SCHEMA",
             Self::ContentPolicy { .. } => "E_MODEL_CONTENT_REJECTED",
+            Self::StreamToolArgs { .. } => "E_STREAM_TOOL_ARGS_INVALID",
             Self::Unknown { .. } => "E_LLM_UNKNOWN",
         }
     }
@@ -213,6 +243,7 @@ impl LlmError {
             Self::ParseError { .. } | Self::Unknown { .. } => "client",
             Self::ProviderToolSchema { .. } => "tool_schema",
             Self::ContentPolicy { .. } => "model_content",
+            Self::StreamToolArgs { .. } => "tool_stream",
             Self::Cancelled { .. } => "cancelled",
         }
     }
@@ -245,6 +276,33 @@ impl LlmError {
         }
         if let Self::ContentPolicy { status, .. } = self {
             detail["http_status"] = json!(status);
+        }
+        if let Self::StreamToolArgs { tool_calls, .. } = self {
+            detail["tool_calls"] = json!(tool_calls
+                .iter()
+                .map(|tool| json!({
+                    "call_id": tool.call_id,
+                    "tool_name": tool.tool_name,
+                    "raw_args_len": tool.raw_args_len,
+                    "final_json_parse_failed": tool.final_json_parse_failed,
+                    "partial_fields_recovered": tool.partial_fields_recovered,
+                    "failure_kind": tool.failure_kind,
+                    "json_error": tool.json_error,
+                    "parsed_json_type": tool.parsed_json_type,
+                    "downstream_error_code": serde_json::Value::Null,
+                }))
+                .collect::<Vec<_>>());
+            if let Some(first) = tool_calls.first() {
+                detail["tool_name"] = json!(first.tool_name);
+                detail["tool_call_id"] = json!(first.call_id);
+                detail["raw_args_len"] = json!(first.raw_args_len);
+                detail["final_json_parse_failed"] = json!(first.final_json_parse_failed);
+                detail["partial_fields_recovered"] = json!(first.partial_fields_recovered);
+                detail["failure_kind"] = json!(first.failure_kind);
+                detail["json_error"] = json!(first.json_error);
+                detail["parsed_json_type"] = json!(first.parsed_json_type);
+                detail["downstream_error_code"] = serde_json::Value::Null;
+            }
         }
 
         detail
@@ -289,6 +347,9 @@ impl fmt::Display for LlmError {
             Self::ContentPolicy { provider, .. } => {
                 write!(f, "[{provider}] content policy rejection")
             }
+            Self::StreamToolArgs { provider, .. } => {
+                write!(f, "[{provider}] malformed streamed tool-call arguments")
+            }
             Self::Unknown { provider, .. } => {
                 write!(f, "[{provider}] upstream error")
             }
@@ -317,7 +378,16 @@ impl From<LlmError> for AppError {
                 "http_status": event_detail.get("http_status"),
                 "retry_after_ms": event_detail.get("retry_after_ms"),
                 "tool_name": event_detail.get("tool_name"),
+                "tool_call_id": event_detail.get("tool_call_id"),
                 "schema_path": event_detail.get("schema_path"),
+                "raw_args_len": event_detail.get("raw_args_len"),
+                "final_json_parse_failed": event_detail.get("final_json_parse_failed"),
+                "partial_fields_recovered": event_detail.get("partial_fields_recovered"),
+                "failure_kind": event_detail.get("failure_kind"),
+                "json_error": event_detail.get("json_error"),
+                "parsed_json_type": event_detail.get("parsed_json_type"),
+                "downstream_error_code": event_detail.get("downstream_error_code"),
+                "tool_calls": event_detail.get("tool_calls"),
             })),
             recoverable: Some(recoverable),
         }
@@ -589,5 +659,35 @@ mod tests {
         assert!(matches!(err, LlmError::ContentPolicy { .. }));
         assert_eq!(err.error_code(), "E_MODEL_CONTENT_REJECTED");
         assert_eq!(err.category_hint(), "model_content");
+    }
+
+    #[test]
+    fn stream_tool_args_error_exposes_observability_fields() {
+        let err = LlmError::StreamToolArgs {
+            provider: "streaming".into(),
+            tool_calls: vec![StreamToolCallError {
+                call_id: "call_1".into(),
+                tool_name: "knowledge_write".into(),
+                raw_args_len: 41,
+                final_json_parse_failed: true,
+                partial_fields_recovered: true,
+                failure_kind: "invalid_json".into(),
+                json_error: Some("EOF while parsing an object".into()),
+                parsed_json_type: None,
+            }],
+        };
+
+        assert!(err.is_retryable());
+        assert_eq!(err.error_code(), "E_STREAM_TOOL_ARGS_INVALID");
+        assert_eq!(err.category_hint(), "tool_stream");
+
+        let detail = err.to_event_detail();
+        assert_eq!(detail["tool_name"], "knowledge_write");
+        assert_eq!(detail["tool_call_id"], "call_1");
+        assert_eq!(detail["raw_args_len"], 41);
+        assert_eq!(detail["final_json_parse_failed"], true);
+        assert_eq!(detail["partial_fields_recovered"], true);
+        assert_eq!(detail["failure_kind"], "invalid_json");
+        assert!(detail["tool_calls"].is_array());
     }
 }

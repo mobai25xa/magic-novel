@@ -24,6 +24,8 @@ pub struct WorkspaceMapArgs {
     pub include_children: Option<bool>,
     pub cursor: Option<String>,
     pub limit: Option<u32>,
+    #[serde(default)]
+    pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -367,6 +369,7 @@ mod tests {
             include_children: None,
             cursor: None,
             limit: None,
+            timeout_ms: None,
         };
 
         let err = run_workspace_map(&project_path, args).unwrap_err();
@@ -395,6 +398,7 @@ mod tests {
                 include_children: Some(true),
                 cursor: None,
                 limit: Some(2),
+                timeout_ms: None,
             },
         )
         .expect("run");
@@ -413,6 +417,7 @@ mod tests {
                 include_children: Some(true),
                 cursor: Some(cursor),
                 limit: Some(2),
+                timeout_ms: None,
             },
         )
         .expect("run");
@@ -445,6 +450,7 @@ mod tests {
                 include_children: Some(true),
                 cursor: None,
                 limit: Some(20),
+                timeout_ms: None,
             },
         )
         .expect("run");

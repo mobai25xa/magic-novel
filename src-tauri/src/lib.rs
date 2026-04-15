@@ -60,7 +60,8 @@ use commands::inspiration::{
 };
 use commands::knowledge_docs::{
     create_knowledge_document, create_knowledge_folder, delete_knowledge_entry, get_knowledge_tree,
-    read_knowledge_document, save_knowledge_document,
+    get_planning_manifest, read_knowledge_document, refresh_planning_manifest,
+    save_knowledge_document, update_planning_document_approval_state,
 };
 use commands::mission::{
     mission_cancel, mission_contextpack_build, mission_contextpack_get_latest,
@@ -73,8 +74,8 @@ use commands::mission::{
     mission_review_get_pending_decision, mission_review_list, mission_start,
 };
 use commands::project::{
-    create_project, get_project_tree, open_project, scan_projects_directory, trash_project,
-    update_project_metadata,
+    create_project, create_project_from_ideation, get_project_tree, open_project,
+    scan_projects_directory, trash_project, update_project_metadata,
 };
 use commands::project_bootstrap::{
     get_project_bootstrap_status, resume_project_bootstrap, start_project_bootstrap,
@@ -100,6 +101,7 @@ macro_rules! app_commands {
     () => {
         tauri::generate_handler![
             create_project,
+            create_project_from_ideation,
             open_project,
             get_project_tree,
             update_project_metadata,
@@ -169,6 +171,9 @@ macro_rules! app_commands {
             create_knowledge_folder,
             create_knowledge_document,
             delete_knowledge_entry,
+            get_planning_manifest,
+            refresh_planning_manifest,
+            update_planning_document_approval_state,
             get_openai_provider_settings,
             save_openai_provider_settings,
             fetch_openai_models,

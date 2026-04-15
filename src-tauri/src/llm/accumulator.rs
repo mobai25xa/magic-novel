@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use crate::agent_engine::messages::{AgentMessage, ContentBlock, Role};
 use crate::agent_engine::turn::{validate_turn_output, TurnOutput};
 use crate::agent_engine::types::{StopReason, ToolCallInfo, UsageInfo};
+use crate::llm::errors::{LlmError, StreamToolCallError};
 use crate::models::AppError;
 
 use super::types::{LlmStopReason, LlmStreamEvent};
@@ -27,6 +28,12 @@ pub struct ToolCallAccum {
     pub raw_args: String,
     /// Best-effort parsed args (last successful parse)
     pub parsed_args: serde_json::Value,
+    /// Fully parsed args from a complete JSON object, suitable for execution
+    pub final_args: Option<serde_json::Value>,
+    /// Final parse error observed when the tool call ended or the stream closed
+    pub final_parse_error: Option<String>,
+    /// Whether closed top-level fields were recovered from partial JSON for preview
+    pub partial_fields_recovered: bool,
     /// Whether the tool call is complete
     pub complete: bool,
 }
@@ -83,6 +90,9 @@ impl StreamAccumulator {
                     name: name.clone(),
                     raw_args: String::new(),
                     parsed_args: serde_json::Value::Object(serde_json::Map::new()),
+                    final_args: None,
+                    final_parse_error: None,
+                    partial_fields_recovered: false,
                     complete: false,
                 };
                 self.tool_calls.insert(id.clone(), accum);
@@ -93,47 +103,13 @@ impl StreamAccumulator {
             LlmStreamEvent::ToolCallArgsDelta { id, delta } => {
                 if let Some(accum) = self.tool_calls.get_mut(id) {
                     accum.raw_args.push_str(delta);
-                    // Best-effort parse: try to parse after each delta
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
-                        accum.parsed_args = parsed;
-                    } else {
-                        // Fallback: extract any closed fields from partial JSON so UI can show key args.
-                        let extracted = extract_closed_json_fields(&accum.raw_args);
-                        if !extracted.is_empty() {
-                            if !accum.parsed_args.is_object() {
-                                accum.parsed_args =
-                                    serde_json::Value::Object(serde_json::Map::new());
-                            }
-                            if let Some(obj) = accum.parsed_args.as_object_mut() {
-                                for (k, v) in extracted {
-                                    obj.insert(k, v);
-                                }
-                            }
-                        }
-                    }
-                    // If parse fails, keep last-good parsed_args
+                    update_tool_call_preview(accum);
                 }
             }
             LlmStreamEvent::ToolCallEnd { id } => {
                 if let Some(accum) = self.tool_calls.get_mut(id) {
                     accum.complete = true;
-                    // Final parse attempt
-                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
-                        accum.parsed_args = parsed;
-                    } else {
-                        let extracted = extract_closed_json_fields(&accum.raw_args);
-                        if !extracted.is_empty() {
-                            if !accum.parsed_args.is_object() {
-                                accum.parsed_args =
-                                    serde_json::Value::Object(serde_json::Map::new());
-                            }
-                            if let Some(obj) = accum.parsed_args.as_object_mut() {
-                                for (k, v) in extracted {
-                                    obj.insert(k, v);
-                                }
-                            }
-                        }
-                    }
+                    finalize_tool_call_args(accum);
                 }
             }
             LlmStreamEvent::Usage {
@@ -160,7 +136,31 @@ impl StreamAccumulator {
     }
 
     /// Convert accumulated state into a TurnOutput for the agent engine
-    pub fn into_turn_output(self) -> Result<TurnOutput, AppError> {
+    pub fn into_turn_output(mut self) -> Result<TurnOutput, AppError> {
+        let malformed_tool_calls = self.collect_malformed_tool_calls();
+        if !malformed_tool_calls.is_empty() {
+            for tool_call in &malformed_tool_calls {
+                tracing::warn!(
+                    target: "llm::accumulator",
+                    tool_name = %tool_call.tool_name,
+                    tool_call_id = %tool_call.call_id,
+                    raw_args_len = tool_call.raw_args_len,
+                    final_json_parse_failed = tool_call.final_json_parse_failed,
+                    partial_fields_recovered = tool_call.partial_fields_recovered,
+                    failure_kind = %tool_call.failure_kind,
+                    json_error = ?tool_call.json_error,
+                    downstream_error_code = "none",
+                    "malformed streamed tool-call arguments blocked before execution"
+                );
+            }
+
+            return Err(LlmError::StreamToolArgs {
+                provider: "streaming".to_string(),
+                tool_calls: malformed_tool_calls,
+            }
+            .into());
+        }
+
         // Build content blocks
         let mut blocks = Vec::new();
 
@@ -180,15 +180,19 @@ impl StreamAccumulator {
         let mut tool_calls = Vec::new();
         for id in &self.tool_call_order {
             if let Some(accum) = self.tool_calls.get(id) {
+                let input = accum
+                    .final_args
+                    .clone()
+                    .unwrap_or_else(|| accum.parsed_args.clone());
                 blocks.push(ContentBlock::ToolCall {
                     id: accum.id.clone(),
                     name: accum.name.clone(),
-                    input: accum.parsed_args.clone(),
+                    input: input.clone(),
                 });
                 tool_calls.push(ToolCallInfo {
                     llm_call_id: accum.id.clone(),
                     tool_name: accum.name.clone(),
-                    args: accum.parsed_args.clone(),
+                    args: input,
                 });
             }
         }
@@ -231,6 +235,117 @@ impl StreamAccumulator {
 impl Default for StreamAccumulator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl StreamAccumulator {
+    fn collect_malformed_tool_calls(&mut self) -> Vec<StreamToolCallError> {
+        let mut malformed = Vec::new();
+
+        for id in &self.tool_call_order {
+            let Some(accum) = self.tool_calls.get_mut(id) else {
+                continue;
+            };
+
+            if accum.final_args.is_none() && accum.final_parse_error.is_none() {
+                finalize_tool_call_args(accum);
+            }
+
+            if let Some(detail) = malformed_tool_call_detail(accum) {
+                malformed.push(detail);
+            }
+        }
+
+        malformed
+    }
+}
+
+fn update_tool_call_preview(accum: &mut ToolCallAccum) {
+    match serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
+        Ok(parsed) => {
+            accum.parsed_args = parsed.clone();
+            accum.final_args = Some(parsed);
+            accum.final_parse_error = None;
+        }
+        Err(_) => {
+            accum.final_args = None;
+            merge_partial_preview(accum);
+        }
+    }
+}
+
+fn finalize_tool_call_args(accum: &mut ToolCallAccum) {
+    match serde_json::from_str::<serde_json::Value>(&accum.raw_args) {
+        Ok(parsed) => {
+            accum.parsed_args = parsed.clone();
+            accum.final_args = Some(parsed);
+            accum.final_parse_error = None;
+        }
+        Err(error) => {
+            accum.final_args = None;
+            accum.final_parse_error = Some(error.to_string());
+            merge_partial_preview(accum);
+        }
+    }
+}
+
+fn merge_partial_preview(accum: &mut ToolCallAccum) {
+    let extracted = extract_closed_json_fields(&accum.raw_args);
+    if extracted.is_empty() {
+        return;
+    }
+
+    accum.partial_fields_recovered = true;
+    if !accum.parsed_args.is_object() {
+        accum.parsed_args = serde_json::Value::Object(serde_json::Map::new());
+    }
+    if let Some(obj) = accum.parsed_args.as_object_mut() {
+        for (k, v) in extracted {
+            obj.insert(k, v);
+        }
+    }
+}
+
+fn malformed_tool_call_detail(accum: &ToolCallAccum) -> Option<StreamToolCallError> {
+    match accum.final_args.as_ref() {
+        Some(args) if args.is_object() => None,
+        Some(args) => Some(StreamToolCallError {
+            call_id: accum.id.clone(),
+            tool_name: accum.name.clone(),
+            raw_args_len: accum.raw_args.len(),
+            final_json_parse_failed: false,
+            partial_fields_recovered: accum.partial_fields_recovered,
+            failure_kind: "top_level_non_object".to_string(),
+            json_error: None,
+            parsed_json_type: Some(json_value_type(args).to_string()),
+        }),
+        None => Some(StreamToolCallError {
+            call_id: accum.id.clone(),
+            tool_name: accum.name.clone(),
+            raw_args_len: accum.raw_args.len(),
+            final_json_parse_failed: true,
+            partial_fields_recovered: accum.partial_fields_recovered,
+            failure_kind: if accum.complete {
+                "invalid_json".to_string()
+            } else {
+                "stream_incomplete".to_string()
+            },
+            json_error: Some(accum.final_parse_error.clone().unwrap_or_else(|| {
+                "stream ended before tool-call args formed valid JSON".to_string()
+            })),
+            parsed_json_type: None,
+        }),
+    }
+}
+
+fn json_value_type(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
     }
 }
 
@@ -473,5 +588,81 @@ mod tests {
             .and_then(|d| d.get("code"))
             .and_then(|v| v.as_str());
         assert_eq!(code, Some("E_EMPTY_RESPONSE"));
+    }
+
+    #[test]
+    fn test_invalid_final_tool_json_returns_stream_tool_args_error() {
+        let mut acc = StreamAccumulator::new();
+
+        acc.apply(&LlmStreamEvent::ToolCallStart {
+            id: "call_1".to_string(),
+            name: "knowledge_write".to_string(),
+        });
+        acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
+            id: "call_1".to_string(),
+            delta: r#"{"changes":[{"target_ref":"knowledge:.magic_novel/terms/foo.json""#
+                .to_string(),
+        });
+        acc.apply(&LlmStreamEvent::ToolCallEnd {
+            id: "call_1".to_string(),
+        });
+        acc.apply(&LlmStreamEvent::Stop {
+            reason: LlmStopReason::ToolCalls,
+        });
+
+        let err = acc.into_turn_output().unwrap_err();
+        let details = err.details.expect("details");
+        assert_eq!(details["code"], "E_STREAM_TOOL_ARGS_INVALID");
+        assert_eq!(details["tool_name"], "knowledge_write");
+        assert_eq!(details["failure_kind"], "invalid_json");
+        assert_eq!(details["final_json_parse_failed"], true);
+        assert!(details["partial_fields_recovered"].is_boolean());
+        assert!(details["tool_calls"].is_array());
+    }
+
+    #[test]
+    fn test_non_object_tool_args_return_stream_tool_args_error() {
+        let mut acc = StreamAccumulator::new();
+
+        acc.apply(&LlmStreamEvent::ToolCallStart {
+            id: "call_1".to_string(),
+            name: "workspace_map".to_string(),
+        });
+        acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
+            id: "call_1".to_string(),
+            delta: r#"["book"]"#.to_string(),
+        });
+        acc.apply(&LlmStreamEvent::ToolCallEnd {
+            id: "call_1".to_string(),
+        });
+
+        let err = acc.into_turn_output().unwrap_err();
+        let details = err.details.expect("details");
+        assert_eq!(details["code"], "E_STREAM_TOOL_ARGS_INVALID");
+        assert_eq!(details["tool_name"], "workspace_map");
+        assert_eq!(details["failure_kind"], "top_level_non_object");
+        assert_eq!(details["parsed_json_type"], "array");
+        assert_eq!(details["final_json_parse_failed"], false);
+    }
+
+    #[test]
+    fn test_missing_tool_call_end_is_classified_as_stream_incomplete() {
+        let mut acc = StreamAccumulator::new();
+
+        acc.apply(&LlmStreamEvent::ToolCallStart {
+            id: "call_1".to_string(),
+            name: "context_read".to_string(),
+        });
+        acc.apply(&LlmStreamEvent::ToolCallArgsDelta {
+            id: "call_1".to_string(),
+            delta: r#"{"target_ref":"chapter:manuscripts/vol_1/"#.to_string(),
+        });
+
+        let err = acc.into_turn_output().unwrap_err();
+        let details = err.details.expect("details");
+        assert_eq!(details["code"], "E_STREAM_TOOL_ARGS_INVALID");
+        assert_eq!(details["tool_name"], "context_read");
+        assert_eq!(details["failure_kind"], "stream_incomplete");
+        assert_eq!(details["final_json_parse_failed"], true);
     }
 }

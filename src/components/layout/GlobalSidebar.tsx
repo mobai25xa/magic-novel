@@ -7,6 +7,7 @@ interface GlobalSidebarProps {
   currentPage: AppPage
   collapsed: boolean
   onNavigate: (page: AppPage) => void
+  onOpenProject?: (path: string) => void | Promise<void>
   onToggleCollapse: () => void
   recentItems?: { title: string; path: string }[]
 }
@@ -32,6 +33,7 @@ export function GlobalSidebar({
   currentPage,
   collapsed,
   onNavigate,
+  onOpenProject,
   onToggleCollapse,
   recentItems,
 }: GlobalSidebarProps) {
@@ -74,9 +76,14 @@ export function GlobalSidebar({
                 key={item.path}
                 className="recent-item"
                 onClick={() => {
+                  if (onOpenProject) {
+                    void onOpenProject(item.path)
+                    return
+                  }
+
                   const { setProjectPath } = useProjectStore.getState()
                   setProjectPath(item.path)
-                  onNavigate('editor')
+                  onNavigate('project_home')
                 }}
               >
                 <span className={`recent-item-dot dot-${index % 2 === 0 ? 'blue' : 'green'}`} />

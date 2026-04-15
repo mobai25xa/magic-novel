@@ -178,6 +178,51 @@ export function parseDelimitedItems(input: string): string[] {
     .filter((item, index, values) => values.indexOf(item) === index)
 }
 
+function compactTextSections(...sections: Array<string | undefined>) {
+  return sections
+    .map((section) => section?.trim())
+    .filter((section): section is string => Boolean(section))
+    .filter((section, index, values) => values.indexOf(section) === index)
+}
+
+export function buildCreateHandoffFromConsensus(
+  consensus: InspirationConsensusState,
+  currentDraft?: CreateProjectHandoffDraft,
+): CreateProjectHandoffDraft {
+  const projectType = currentDraft?.project_type?.length
+    ? currentDraft.project_type
+    : toConsensusItems(resolveConsensusValue(consensus.genre_tone))
+  const tone = currentDraft?.tone?.length
+    ? currentDraft.tone
+    : toConsensusItems(resolveConsensusValue(consensus.genre_tone))
+  const description = currentDraft?.description?.trim()
+    || compactTextSections(
+      formatConsensusValue(resolveConsensusValue(consensus.story_core)),
+      formatConsensusValue(resolveConsensusValue(consensus.premise)),
+      formatConsensusValue(resolveConsensusValue(consensus.core_conflict)),
+      formatConsensusValue(resolveConsensusValue(consensus.selling_points)),
+    ).join('\n\n')
+
+  return {
+    name: currentDraft?.name?.trim() ?? '',
+    description,
+    project_type: projectType,
+    tone,
+    audience: currentDraft?.audience?.trim()
+      || formatConsensusValue(resolveConsensusValue(consensus.audience)),
+    protagonist_seed: currentDraft?.protagonist_seed?.trim()
+      || formatConsensusValue(resolveConsensusValue(consensus.protagonist))
+      || undefined,
+    counterpart_seed: currentDraft?.counterpart_seed?.trim() || undefined,
+    world_seed: currentDraft?.world_seed?.trim()
+      || formatConsensusValue(resolveConsensusValue(consensus.worldview))
+      || undefined,
+    ending_direction: currentDraft?.ending_direction?.trim()
+      || formatConsensusValue(resolveConsensusValue(consensus.ending_direction))
+      || undefined,
+  }
+}
+
 export function mapInspirationMessagesToChatMessages(
   messages: InspirationAgentMessage[],
 ): LightweightChatMessage[] {

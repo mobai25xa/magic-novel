@@ -34,6 +34,8 @@ pub struct ContextSearchArgs {
     pub mode: Option<ContextSearchMode>,
     pub top_k: Option<u32>,
     pub scope: Option<ContextSearchScopePaths>,
+    #[serde(default)]
+    pub timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -271,6 +273,7 @@ mod tests {
                 mode: None,
                 top_k: None,
                 scope: None,
+                timeout_ms: None,
             },
         )
         .unwrap_err();
@@ -288,6 +291,7 @@ mod tests {
                 mode: Some(ContextSearchMode::Keyword),
                 top_k: Some(10),
                 scope: None,
+                timeout_ms: None,
             },
         )
         .expect("run");
@@ -309,6 +313,7 @@ mod tests {
                 scope: Some(ContextSearchScopePaths {
                     paths: Some(vec!["manuscripts/vol_1/ch_banana.json".to_string()]),
                 }),
+                timeout_ms: None,
             },
         )
         .expect("run");

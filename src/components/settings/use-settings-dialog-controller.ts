@@ -7,16 +7,21 @@ import {
   type CapabilityMode,
   type EditorFontPresetKey,
   type EditorTextAlign,
+  type PlanningGenerationMode,
 } from '@/state/settings'
 import type { ProviderType } from '@/stores/settings-types'
 import type { Language, ThemeMode } from '@/types/theme'
 
-import { syncProviderDraftFromStore } from './settings-provider-model-actions'
+import {
+  syncPlanningDraftFromStore,
+  syncProviderDraftFromStore,
+} from './settings-provider-model-actions'
 import { useDialogActions } from './settings-dialog-actions'
 import type { SettingsTabId } from './settings-dialog-types'
 
 type SettingsStoreState = ReturnType<typeof useSettingsStore.getState>
 type SetOpenAiProviderSettings = SettingsStoreState['setOpenAiProviderSettings']
+type SetPlanningProviderSettings = SettingsStoreState['setPlanningProviderSettings']
 export type TempState = ReturnType<typeof useTempSettingsState>
 
 function useTempProviderState(store: SettingsStoreState) {
@@ -37,6 +42,15 @@ function useTempProviderState(store: SettingsStoreState) {
   const [tempFetchedModels, setTempFetchedModels] = useState<string[]>(store.openaiEnabledModels)
   const [tempFetchingModels, setTempFetchingModels] = useState(false)
   const [tempModelFetchError, setTempModelFetchError] = useState('')
+  const [tempPlanningGenerationMode, setTempPlanningGenerationMode] = useState<PlanningGenerationMode>(store.planningGenerationMode)
+  const [tempPlanningProviderType, setTempPlanningProviderType] = useState<ProviderType>(store.planningProviderType)
+  const [tempPlanningBaseUrl, setTempPlanningBaseUrl] = useState(store.planningBaseUrl)
+  const [tempPlanningApiKey, setTempPlanningApiKey] = useState(store.planningApiKey)
+  const [tempPlanningModel, setTempPlanningModel] = useState(store.planningModel)
+  const [tempPlanningEnabledModels, setTempPlanningEnabledModels] = useState<string[]>(store.planningEnabledModels)
+  const [tempPlanningFetchedModels, setTempPlanningFetchedModels] = useState<string[]>(store.planningEnabledModels)
+  const [tempPlanningFetchingModels, setTempPlanningFetchingModels] = useState(false)
+  const [tempPlanningModelFetchError, setTempPlanningModelFetchError] = useState('')
 
   return {
     tempProviderType,
@@ -73,6 +87,24 @@ function useTempProviderState(store: SettingsStoreState) {
     setTempFetchingModels,
     tempModelFetchError,
     setTempModelFetchError,
+    tempPlanningGenerationMode,
+    setTempPlanningGenerationMode,
+    tempPlanningProviderType,
+    setTempPlanningProviderType,
+    tempPlanningBaseUrl,
+    setTempPlanningBaseUrl,
+    tempPlanningApiKey,
+    setTempPlanningApiKey,
+    tempPlanningModel,
+    setTempPlanningModel,
+    tempPlanningEnabledModels,
+    setTempPlanningEnabledModels,
+    tempPlanningFetchedModels,
+    setTempPlanningFetchedModels,
+    tempPlanningFetchingModels,
+    setTempPlanningFetchingModels,
+    tempPlanningModelFetchError,
+    setTempPlanningModelFetchError,
   }
 }
 
@@ -137,6 +169,8 @@ function useTempSettingsState(store: SettingsStoreState) {
 function useProviderSyncEffect(
   open: boolean,
   setOpenAiProviderSettings: SetOpenAiProviderSettings,
+  setPlanningProviderSettings: SetPlanningProviderSettings,
+  setProviderType: SettingsStoreState['setProviderType'],
   temp: TempState,
   hasLoadedRef: MutableRefObject<boolean>,
 ) {
@@ -148,6 +182,7 @@ function useProviderSyncEffect(
     void (async () => {
       try {
         const provider = await loadOpenAiProviderSettingsFeature()
+        setProviderType(provider.provider_type)
         setOpenAiProviderSettings({
           baseUrl: provider.openai_base_url,
           apiKey: provider.openai_api_key,
@@ -165,6 +200,14 @@ function useProviderSyncEffect(
             reason: provider.openai_embedding_detection_reason,
           },
           enabledModels: provider.openai_enabled_models,
+        })
+        setPlanningProviderSettings({
+          generationMode: provider.planning_generation_mode,
+          providerType: provider.planning_provider_type,
+          baseUrl: provider.planning_base_url,
+          apiKey: provider.planning_api_key,
+          model: provider.planning_model,
+          enabledModels: provider.planning_enabled_models,
         })
         syncProviderDraftFromStore({
           settings: {
@@ -184,12 +227,23 @@ function useProviderSyncEffect(
           },
           temp,
         })
+        syncPlanningDraftFromStore({
+          settings: {
+            planningGenerationMode: provider.planning_generation_mode,
+            planningProviderType: provider.planning_provider_type,
+            planningBaseUrl: provider.planning_base_url,
+            planningApiKey: provider.planning_api_key,
+            planningModel: provider.planning_model,
+            planningEnabledModels: provider.planning_enabled_models,
+          },
+          temp,
+        })
       } catch (error) {
         console.error('Failed to load OpenAI provider settings:', error)
         hasLoadedRef.current = false
       }
     })()
-  }, [open, hasLoadedRef, setOpenAiProviderSettings, temp])
+  }, [open, hasLoadedRef, setOpenAiProviderSettings, setPlanningProviderSettings, setProviderType, temp])
 }
 
 
@@ -206,7 +260,14 @@ export function useSettingsDialogController(input: { open: boolean; onClose: () 
     hasLoadedRef.current = false
   }, [input.open])
 
-  useProviderSyncEffect(input.open, settingsStore.setOpenAiProviderSettings, temp, hasLoadedRef)
+  useProviderSyncEffect(
+    input.open,
+    settingsStore.setOpenAiProviderSettings,
+    settingsStore.setPlanningProviderSettings,
+    settingsStore.setProviderType,
+    temp,
+    hasLoadedRef,
+  )
 
   const actions = useDialogActions({
     onClose: input.onClose,
@@ -223,6 +284,7 @@ export function useSettingsDialogController(input: { open: boolean; onClose: () 
     handleSelectDirectory: actions.handleSelectDirectory,
     handleFetchModels: actions.handleFetchModels,
     handleFetchEmbeddingModels: actions.handleFetchEmbeddingModels,
+    handleFetchPlanningModels: actions.handleFetchPlanningModels,
     handleSave: actions.handleSave,
     handleCancel: actions.handleCancel,
     resetProjectGenres: settingsStore.resetProjectGenres,

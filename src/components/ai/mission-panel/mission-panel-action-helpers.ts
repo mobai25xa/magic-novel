@@ -1,7 +1,7 @@
 import type { ActiveCastDraft } from '@/components/ai/active-cast-editor'
 import type { ChapterCardDraft } from '@/components/ai/chapter-card-editor'
 import type { RecentFactsDraft } from '@/components/ai/recent-facts-editor'
-import type { ActiveCast, ChapterCard, RecentFacts } from '@/lib/tauri-commands'
+import type { ActiveCast, ChapterCard, RecentFacts } from '@/features/agent-chat'
 
 export const LAYER1_SCHEMA_VERSION = 1
 export const MANUAL_LAYER1_SOURCE_PREFIX = 'manual:mission-panel'

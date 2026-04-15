@@ -47,7 +47,7 @@ impl ToolDefinition for StructureEditTool {
                 },
                 "node_type": {
                     "type": "string",
-                    "enum": ["volume", "chapter", "knowledge_item"]
+                    "enum": ["volume", "chapter"]
                 },
                 "target_ref": { "type": "string" },
                 "parent_ref": { "type": "string" },
@@ -57,11 +57,7 @@ impl ToolDefinition for StructureEditTool {
                 },
                 "title": { "type": "string" },
                 "dry_run": { "type": "boolean" },
-                "idempotency_key": { "type": "string" },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
-                }
+                "idempotency_key": { "type": "string" }
             },
             "required": ["op", "node_type"],
             "additionalProperties": false

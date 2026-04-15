@@ -66,11 +66,7 @@ impl ToolDefinition for KnowledgeReadTool {
                     "enum": ["compact", "full"]
                 },
                 "top_k": { "type": "number" },
-                "budget_chars": { "type": "number" },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
-                }
+                "budget_chars": { "type": "number" }
             },
             "required": [],
             "additionalProperties": false
@@ -105,6 +101,8 @@ impl ToolDefinition for KnowledgeWriteTool {
             "Propose knowledge deltas (auditable and gated).\n\n",
             "v0 supports op=propose only to generate a KnowledgeDelta rather than directly overwriting files.\n",
             "Each change.target_ref must be a knowledge ref (knowledge:.magic_novel/...).\n",
+            "Each change.fields must be a JSON object, for example {\"summary\":\"canon update\"}.\n",
+            "Do not pass strings, arrays, or patch instructions inside change.fields.\n",
             "Use dry_run=true to preview without persisting the delta artifact."
         )
     }
@@ -125,7 +123,11 @@ impl ToolDefinition for KnowledgeWriteTool {
                         "properties": {
                             "target_ref": { "type": "string" },
                             "kind": { "type": "string", "enum": ["add", "update", "delete"] },
-                            "fields": { "type": "object", "additionalProperties": true }
+                            "fields": {
+                                "type": "object",
+                                "additionalProperties": true,
+                                "description": "Knowledge fields to propose as a JSON object. Example: {\"summary\":\"canon update\"}. Must be an object, not a string, array, or patch list."
+                            }
                         },
                         "required": ["target_ref", "kind", "fields"],
                         "additionalProperties": false
@@ -136,11 +138,7 @@ impl ToolDefinition for KnowledgeWriteTool {
                     "items": { "type": "string" }
                 },
                 "dry_run": { "type": "boolean" },
-                "idempotency_key": { "type": "string" },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
-                }
+                "idempotency_key": { "type": "string" }
             },
             "required": ["op", "changes"],
             "additionalProperties": false

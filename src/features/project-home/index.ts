@@ -2,6 +2,7 @@ import {
   createProject as createProjectCommand,
   emptyRecycledProjects as emptyRecycledProjectsCommand,
   exportTreeMulti as exportTreeMultiCommand,
+  getPlanningManifest as getPlanningManifestCommand,
   getProjectBootstrapStatus as getProjectBootstrapStatusCommand,
   getProjectTree as getProjectTreeCommand,
   importAsset as importAssetCommand,
@@ -9,14 +10,18 @@ import {
   listRecycledProjects as listRecycledProjectsCommand,
   openProject as openProjectCommand,
   permanentlyDeleteRecycledProject as permanentlyDeleteRecycledProjectCommand,
+  refreshPlanningManifest as refreshPlanningManifestCommand,
   restoreRecycledProject as restoreRecycledProjectCommand,
   resumeProjectBootstrap as resumeProjectBootstrapCommand,
   scanProjectsDirectory as scanProjectsDirectoryCommand,
   startProjectBootstrap as startProjectBootstrapCommand,
   trashProject as trashProjectCommand,
+  updatePlanningDocumentApprovalState as updatePlanningDocumentApprovalStateCommand,
   updateProjectMetadata as updateProjectMetadataCommand,
   type CreateProjectInput,
   type FileNode,
+  type PlanningDocApprovalState,
+  type PlanningManifest,
   type ProjectMetadata,
   type ProjectBootstrapStatus,
   type ProjectSnapshot,
@@ -36,6 +41,22 @@ export async function openProjectEntry(projectPath: string): Promise<ProjectSnap
 
 export async function loadProjectTree(projectPath: string): Promise<FileNode[]> {
   return getProjectTreeCommand(projectPath)
+}
+
+export async function getPlanningManifestEntry(projectPath: string): Promise<PlanningManifest> {
+  return getPlanningManifestCommand(projectPath)
+}
+
+export async function refreshPlanningManifestEntry(projectPath: string): Promise<PlanningManifest> {
+  return refreshPlanningManifestCommand(projectPath)
+}
+
+export async function updatePlanningDocumentApprovalStateEntry(
+  projectPath: string,
+  docId: string,
+  approvalState: PlanningDocApprovalState,
+): Promise<PlanningManifest> {
+  return updatePlanningDocumentApprovalStateCommand(projectPath, docId, approvalState)
 }
 
 export async function updateProjectEntryMetadata(
@@ -124,6 +145,8 @@ export {
 
 export type {
   CreateProjectInput,
+  PlanningDocApprovalState,
+  PlanningManifest,
   ProjectBootstrapStatus,
   StartProjectBootstrapInput,
 }

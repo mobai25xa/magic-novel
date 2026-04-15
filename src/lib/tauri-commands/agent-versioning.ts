@@ -23,8 +23,14 @@ import {
 } from '@/platform/tauri/clients/agent-versioning-client'
 
 function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiProviderSettings {
+  const providerType = input.provider_type === 'openai' || input.provider_type === 'anthropic' || input.provider_type === 'gemini'
+    ? input.provider_type
+    : 'openai-compatible'
   const model = input.openai_model || 'gpt-4o-mini'
-  const enabledModels = Array.isArray(input.openai_enabled_models) ? input.openai_enabled_models : [model]
+  const normalizedEnabledModels = Array.isArray(input.openai_enabled_models)
+    ? Array.from(new Set(input.openai_enabled_models.map((item) => item.trim()).filter(Boolean)))
+    : []
+  const enabledModels = normalizedEnabledModels.length > 0 ? normalizedEnabledModels : [model]
   const embeddingModel = input.openai_embedding_model || model
   const detected = typeof input.openai_embedding_detected === 'boolean'
     ? input.openai_embedding_detected
@@ -32,9 +38,16 @@ function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiP
   const reason = (input.openai_embedding_detection_reason || '').trim()
     || (detected ? '' : 'embedding_model_unavailable')
   const enabled = Boolean(input.openai_embedding_enabled) && detected
+  const planningEnabledModels = Array.isArray(input.planning_enabled_models)
+    ? Array.from(new Set(input.planning_enabled_models.map((item) => item.trim()).filter(Boolean)))
+    : []
+  const planningModel = (input.planning_model || '').trim()
+    || planningEnabledModels[0]
+    || ''
 
   return {
     ...input,
+    provider_type: providerType,
     openai_embedding_model: embeddingModel,
     openai_embedding_base_url: input.openai_embedding_base_url || input.openai_base_url,
     openai_embedding_api_key: input.openai_embedding_api_key || input.openai_api_key,
@@ -44,6 +57,19 @@ function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiP
     openai_embedding_detected: detected,
     openai_embedding_detection_reason: reason,
     openai_embedding_enabled: enabled,
+    openai_enabled_models: enabledModels,
+    planning_generation_mode: input.planning_generation_mode === 'dedicated' ? 'dedicated' : 'follow_primary',
+    planning_provider_type: input.planning_provider_type === 'openai'
+      || input.planning_provider_type === 'anthropic'
+      || input.planning_provider_type === 'gemini'
+      ? input.planning_provider_type
+      : 'openai-compatible',
+    planning_base_url: input.planning_base_url || '',
+    planning_api_key: input.planning_api_key || '',
+    planning_model: planningModel,
+    planning_enabled_models: planningEnabledModels.length > 0
+      ? planningEnabledModels
+      : (planningModel ? [planningModel] : []),
   }
 }
 

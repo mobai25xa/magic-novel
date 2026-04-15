@@ -4,6 +4,9 @@ import { Clock3, PencilLine, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/use-translation'
 import {
+  type InspirationSessionMeta,
+} from '@/features/inspiration'
+import {
   Badge,
   Button,
   Input,
@@ -16,7 +19,6 @@ import {
   Toggle,
 } from '@/magic-ui/components'
 import { cn } from '@/lib/utils'
-import type { InspirationSessionMeta } from '@/platform/tauri/clients/inspiration-session-client'
 
 interface InspirationSessionPanelProps {
   open: boolean
@@ -63,7 +65,6 @@ function formatSessionDigest(item: InspirationSessionMeta | null) {
 }
 
 function RenameSessionDialog(input: {
-  open: boolean
   defaultValue: string
   title: string
   onClose: () => void
@@ -72,14 +73,8 @@ function RenameSessionDialog(input: {
   const { translations } = useTranslation()
   const [value, setValue] = useState(input.defaultValue)
 
-  useEffect(() => {
-    if (input.open) {
-      setValue(input.defaultValue)
-    }
-  }, [input.defaultValue, input.open])
-
   return (
-    <Modal open={input.open} onOpenChange={(open) => !open && input.onClose()}>
+    <Modal open onOpenChange={(open) => !open && input.onClose()}>
       <ModalContent size="sm">
         <ModalHeader>
           <ModalTitle>{input.title}</ModalTitle>
@@ -177,52 +172,73 @@ function SessionRow(input: {
 export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
   const { translations } = useTranslation()
   const cp = translations.createPage
+  const {
+    open,
+    onOpenChange,
+    sessionId,
+    sessionList,
+    loadingSession,
+    loadingSessionList,
+    sessionListError,
+    runningTurn,
+    preserveInspirationSession,
+    setPreserveInspirationSession,
+    loadSessionList,
+    openSession,
+    newSession,
+    renameSession,
+    deleteSession,
+  } = input
   const [renameOpen, setRenameOpen] = useState(false)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleteTargetSessionId, setDeleteTargetSessionId] = useState<string | null>(null)
 
   const currentSession = useMemo(
-    () => input.sessionList.find((item) => item.session_id === input.sessionId) ?? null,
-    [input.sessionId, input.sessionList],
+    () => sessionList.find((item) => item.session_id === sessionId) ?? null,
+    [sessionId, sessionList],
   )
   const deleteTargetSession = useMemo(
-    () => input.sessionList.find((item) => item.session_id === deleteTargetSessionId) ?? null,
-    [deleteTargetSessionId, input.sessionList],
+    () => sessionList.find((item) => item.session_id === deleteTargetSessionId) ?? null,
+    [deleteTargetSessionId, sessionList],
   )
 
-  const currentTitle = input.sessionId
+  const currentTitle = sessionId
     ? formatSessionTitle(currentSession, cp.inspirationSessionUntitled)
     : cp.inspirationSessionNoActive
 
   const currentTime = currentSession
     ? formatSessionTime(currentSession.updated_at)
-    : input.loadingSession
+    : loadingSession
       ? translations.common.loading
       : '...'
 
   const currentDigest = formatSessionDigest(currentSession)
-  const actionLocked = input.loadingSession || input.loadingSessionList
-  const switchLocked = actionLocked || input.runningTurn
-  const currentDeleteDisabled = actionLocked || !input.sessionId || input.runningTurn
-  const currentRenameDisabled = actionLocked || !input.sessionId || input.runningTurn
-  const newSessionDisabled = actionLocked || input.runningTurn
+  const actionLocked = loadingSession || loadingSessionList
+  const switchLocked = actionLocked || runningTurn
+  const currentDeleteDisabled = actionLocked || !sessionId || runningTurn
+  const currentRenameDisabled = actionLocked || !sessionId || runningTurn
+  const newSessionDisabled = actionLocked || runningTurn
   const deleteTargetTitle = formatSessionTitle(deleteTargetSession, cp.inspirationSessionUntitled)
 
-  useEffect(() => {
-    if (input.open) {
-      void input.loadSessionList(20)
-    }
-  }, [input.loadSessionList, input.open])
+  const closeDeleteDialog = () => {
+    setDeleteOpen(false)
+    setDeleteTargetSessionId(null)
+  }
+
+  const openDeleteDialog = (nextSessionId: string) => {
+    setDeleteTargetSessionId(nextSessionId)
+    setDeleteOpen(true)
+  }
 
   useEffect(() => {
-    if (!deleteOpen) {
-      setDeleteTargetSessionId(null)
+    if (open) {
+      void loadSessionList(20)
     }
-  }, [deleteOpen])
+  }, [loadSessionList, open])
 
   return (
     <>
-      <Modal open={input.open} onOpenChange={input.onOpenChange}>
+      <Modal open={open} onOpenChange={onOpenChange}>
         <ModalContent size="lg" className="max-h-[88vh] overflow-hidden">
           <ModalHeader className="border-b border-[var(--border-primary)] px-6 py-5">
             <div className="flex items-center justify-between gap-3">
@@ -235,12 +251,12 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
               <Button
                 size="sm"
                 variant="outline"
-                disabled={input.loadingSessionList}
+                disabled={loadingSessionList}
                 onClick={() => {
-                  void input.loadSessionList(20)
+                  void loadSessionList(20)
                 }}
               >
-                {input.loadingSessionList ? (
+                {loadingSessionList ? (
                   <Spinner size="xs" className="mr-1.5" />
                 ) : (
                   <RefreshCw size={14} className="mr-1.5" />
@@ -280,7 +296,7 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
                       variant="outline"
                       disabled={newSessionDisabled}
                       onClick={() => {
-                        void input.newSession().then(() => input.onOpenChange(false))
+                        void newSession().then(() => onOpenChange(false))
                       }}
                     >
                       <Plus size={14} className="mr-1.5" />
@@ -299,7 +315,11 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
                       size="sm"
                       variant="ghost"
                       disabled={currentDeleteDisabled}
-                      onClick={() => setDeleteOpen(true)}
+                      onClick={() => {
+                        if (sessionId) {
+                          openDeleteDialog(sessionId)
+                        }
+                      }}
                     >
                       <Trash2 size={14} className="mr-1.5" />
                       {cp.inspirationSessionDelete}
@@ -317,22 +337,22 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
                     </div>
                   </div>
                   <Toggle
-                    checked={input.preserveInspirationSession}
-                    onChange={(event) => input.setPreserveInspirationSession(event.target.checked)}
+                    checked={preserveInspirationSession}
+                    onChange={(event) => setPreserveInspirationSession(event.target.checked)}
                     aria-label={cp.inspirationSessionPreserveToggle}
                   />
                 </div>
               </section>
 
-              {actionLocked || input.runningTurn ? (
+              {actionLocked || runningTurn ? (
                 <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs">
                   {actionLocked ? cp.inspirationSessionLoadingHint : cp.inspirationSessionRunningHint}
                 </div>
               ) : null}
 
-              {input.sessionListError ? (
+              {sessionListError ? (
                 <div className="rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-xs">
-                  {input.sessionListError}
+                  {sessionListError}
                 </div>
               ) : null}
             </div>
@@ -342,34 +362,33 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
                 {cp.inspirationSessionListLabel}
               </div>
               <div className="space-y-3">
-                {input.loadingSessionList && input.sessionList.length === 0 ? (
+                {loadingSessionList && sessionList.length === 0 ? (
                   <div className="flex items-center justify-center rounded-2xl border border-dashed border-[var(--border-primary)] px-4 py-10">
                     <Spinner />
                   </div>
                 ) : null}
 
-                {!input.loadingSessionList && input.sessionList.length === 0 ? (
+                {!loadingSessionList && sessionList.length === 0 ? (
                   <div className="rounded-2xl border border-dashed border-[var(--border-primary)] px-4 py-10 text-center text-sm opacity-70">
                     {cp.inspirationSessionEmptyList}
                   </div>
                 ) : null}
 
-                {input.sessionList.map((item) => (
+                {sessionList.map((item) => (
                   <SessionRow
                     key={item.session_id}
                     item={item}
-                    selected={item.session_id === input.sessionId}
+                    selected={item.session_id === sessionId}
                     switchDisabled={switchLocked}
                     deleteDisabled={switchLocked}
                     untitledLabel={cp.inspirationSessionUntitled}
                     currentLabel={cp.inspirationSessionCurrentLabel}
                     deleteLabel={cp.inspirationSessionDelete}
                     onClick={() => {
-                      void input.openSession(item.session_id).then(() => input.onOpenChange(false))
+                      void openSession(item.session_id).then(() => onOpenChange(false))
                     }}
                     onDelete={() => {
-                      setDeleteTargetSessionId(item.session_id)
-                      setDeleteOpen(true)
+                      openDeleteDialog(item.session_id)
                     }}
                   />
                 ))}
@@ -379,31 +398,32 @@ export function InspirationSessionPanel(input: InspirationSessionPanelProps) {
         </ModalContent>
       </Modal>
 
-      <RenameSessionDialog
-        open={renameOpen}
-        title={cp.inspirationSessionRename}
-        defaultValue={currentSession?.title ?? ''}
-        onClose={() => setRenameOpen(false)}
-        onConfirm={(value) => {
-          if (!input.sessionId) {
-            return
-          }
-          void input.renameSession(input.sessionId, value)
-        }}
-      />
+      {renameOpen ? (
+        <RenameSessionDialog
+          title={cp.inspirationSessionRename}
+          defaultValue={currentSession?.title ?? ''}
+          onClose={() => setRenameOpen(false)}
+          onConfirm={(value) => {
+            if (!sessionId) {
+              return
+            }
+            void renameSession(sessionId, value)
+          }}
+        />
+      ) : null}
 
       <ConfirmDialog
         open={deleteOpen}
         title={cp.inspirationSessionDeleteConfirmTitle}
         description={`${cp.inspirationSessionDeleteConfirmDesc}\n${deleteTargetTitle}`}
         danger
-        onCancel={() => setDeleteOpen(false)}
+        onCancel={closeDeleteDialog}
         onConfirm={() => {
           if (!deleteTargetSessionId) {
             return
           }
-          void input.deleteSession(deleteTargetSessionId)
-          setDeleteOpen(false)
+          void deleteSession(deleteTargetSessionId)
+          closeDeleteDialog()
         }}
       />
     </>

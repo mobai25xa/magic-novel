@@ -474,11 +474,11 @@ pub async fn inspiration_session_delete(
         return Err(active_turn_delete_conflict(&input.session_id));
     }
 
-    remove_session_meta(&input.session_id)?;
     let stream_path = session_stream_path(&input.session_id)?;
     let runtime_path = session_runtime_path(&input.session_id)?;
     remove_file_if_exists(&stream_path)?;
     remove_file_if_exists(&runtime_path)?;
+    remove_session_meta(&input.session_id)?;
     session_state::global().remove_session(&input.session_id);
 
     Ok(())
@@ -501,9 +501,8 @@ pub async fn inspiration_turn_start(
 
     apply_inspiration_system_prompt(&mut state, input.system_prompt.as_deref());
     state.session_id = input.session_id.clone();
-    state
-        .messages
-        .push(AgentMessage::user(input.user_text.clone()));
+    let user_message = AgentMessage::user(input.user_text.clone());
+    state.messages.push(user_message.clone());
     state.current_turn = turn_id;
 
     let persistence = InspirationSessionPersistenceSink::new(input.session_id.clone())
@@ -514,7 +513,7 @@ pub async fn inspiration_turn_start(
             .with_client_request_id(Some(client_request_id.clone()))
             .with_persistence(persistence);
 
-    emitter.persist_user_message(&input.user_text, turn_id)?;
+    emitter.persist_user_message(&user_message, turn_id)?;
 
     let semantic_retrieval_enabled = load_openai_search_settings()
         .map(|settings| settings.openai_embedding_enabled)

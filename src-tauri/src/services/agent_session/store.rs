@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,17 @@ impl Default for AgentSessionIndex {
             sessions: Vec::new(),
         }
     }
+}
+
+fn index_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+pub fn lock_session_index() -> MutexGuard<'static, ()> {
+    index_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 pub fn load_index(index_path: &Path) -> Result<AgentSessionIndex, AppError> {
@@ -88,6 +100,7 @@ pub fn update_index_for_events(
     session_id: &str,
     events: &[AgentSessionEvent],
 ) -> Result<(), AppError> {
+    let _guard = lock_session_index();
     let now = Utc::now().timestamp_millis();
     let index_path = super::session_index_path(project_path);
     let mut index = load_index(&index_path)?;

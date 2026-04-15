@@ -56,10 +56,6 @@ impl ToolDefinition for ContextReadTool {
                     "type": "number",
                     "description": "Max characters to return (default: 2000)."
                 },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
-                },
                 "span": {
                     "type": "object",
                     "properties": {
@@ -131,10 +127,6 @@ impl ToolDefinition for ContextSearchTool {
                 "top_k": {
                     "type": "number",
                     "description": "Max hits to return (default: 10)."
-                },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
                 },
                 "scope": {
                     "type": "object",

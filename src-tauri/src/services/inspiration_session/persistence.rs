@@ -99,12 +99,12 @@ impl InspirationSessionPersistenceSink {
         self.append(&[event])
     }
 
-    pub fn persist_user_message(&self, text: &str, turn: u32) -> Result<(), AppError> {
+    pub fn persist_user_message(&self, msg: &AgentMessage, turn: u32) -> Result<(), AppError> {
         let payload = append_event_diagnostics(
             json!({
                 "role": "user",
-                "content": text,
-                "message_id": format!("msg_{}", uuid::Uuid::new_v4()),
+                "content": msg.text_content(),
+                "message_id": msg.id,
             }),
             turn,
             self.client_request_id.as_deref(),

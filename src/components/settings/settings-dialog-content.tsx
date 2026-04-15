@@ -26,6 +26,7 @@ export function renderSettingsDialogContent(input: {
   onSelectDirectory: () => Promise<void>
   onFetchModels: () => Promise<void>
   onFetchEmbeddingModels: () => Promise<void>
+  onFetchPlanningModels: () => Promise<void>
   resetProjectGenres: () => void
 }) {
   switch (input.activeTab) {
@@ -37,6 +38,7 @@ export function renderSettingsDialogContent(input: {
         input.temp,
         input.onFetchModels,
         input.onFetchEmbeddingModels,
+        input.onFetchPlanningModels,
       )
     case 'editor':
       return renderEditor(input.translations, input.language, input.temp)

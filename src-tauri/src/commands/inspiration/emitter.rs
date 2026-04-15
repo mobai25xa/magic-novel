@@ -67,9 +67,9 @@ impl EventSink for InspirationEventEmitter {
         Ok(())
     }
 
-    fn persist_user_message(&self, text: &str, turn: u32) -> Result<(), AppError> {
+    fn persist_user_message(&self, msg: &AgentMessage, turn: u32) -> Result<(), AppError> {
         if let Some(ref sink) = self.persistence {
-            sink.persist_user_message(text, turn)?;
+            sink.persist_user_message(msg, turn)?;
         }
         Ok(())
     }

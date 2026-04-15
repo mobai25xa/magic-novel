@@ -3,12 +3,22 @@ use std::path::{Path, PathBuf};
 
 use crate::agent_tools::contracts::FaultDomain;
 use crate::agent_tools::tools::r#ref::{normalize_project_relative_path, RefError};
+use crate::models::PlanningDocId;
 use crate::models::AppError;
 use crate::services::{ensure_dir, write_file};
 
 pub const KNOWLEDGE_ROOT_PRIMARY: &str = ".magic_novel";
 pub const KNOWLEDGE_GUIDELINES_FILE: &str = "guidelines.md";
-pub const KNOWLEDGE_SCAFFOLD_DIRS: &[&str] = &["characters", "terms", "settings"];
+pub const KNOWLEDGE_SCAFFOLD_DIRS: &[&str] = &[
+    "characters",
+    "terms",
+    "settings",
+    "planning",
+    "foreshadow",
+    "index",
+    "system",
+    "task",
+];
 
 const KNOWLEDGE_SHORTHAND_ROOTS: &[&str] = &[
     "characters",
@@ -22,6 +32,7 @@ const KNOWLEDGE_SHORTHAND_ROOTS: &[&str] = &[
     "chapter_summaries",
     "recent_facts",
     "foreshadow",
+    "planning",
     "settings",
 ];
 const KNOWLEDGE_SHORTHAND_FILES: &[&str] = &[KNOWLEDGE_GUIDELINES_FILE, "branch_state.json"];
@@ -104,6 +115,28 @@ pub fn resolve_knowledge_physical_path(project_path: &Path, virtual_path: &str) 
     project_path.join(KNOWLEDGE_ROOT_PRIMARY).join(rel)
 }
 
+pub fn builtin_knowledge_display_name(virtual_path: &str) -> Option<&'static str> {
+    let normalized = virtual_path.trim().trim_end_matches('/');
+
+    if let Some(doc_id) = PlanningDocId::from_relative_path(normalized) {
+        return Some(doc_id.display_name());
+    }
+
+    match normalized {
+        ".magic_novel" => Some("知识库"),
+        ".magic_novel/guidelines.md" => Some("创作准则"),
+        ".magic_novel/planning" => Some("规划合同"),
+        ".magic_novel/characters" => Some("角色资料"),
+        ".magic_novel/terms" => Some("术语库"),
+        ".magic_novel/settings" => Some("设定资料"),
+        ".magic_novel/foreshadow" => Some("伏笔资料"),
+        ".magic_novel/index" => Some("索引"),
+        ".magic_novel/system" => Some("系统"),
+        ".magic_novel/task" => Some("任务"),
+        _ => None,
+    }
+}
+
 /// Map a virtual `.magic_novel/...` path used by tools/UI into the physical knowledge root.
 #[allow(dead_code)]
 pub fn map_virtual_magic_novel_path(project_path: &Path, virtual_path: &str) -> PathBuf {
@@ -180,6 +213,8 @@ mod tests {
         assert!(primary.join("characters").is_dir());
         assert!(primary.join("terms").is_dir());
         assert!(primary.join("settings").is_dir());
+        assert!(primary.join("planning").is_dir());
+        assert!(primary.join("foreshadow").is_dir());
     }
 
     #[test]
@@ -213,6 +248,22 @@ mod tests {
                 .join(KNOWLEDGE_ROOT_PRIMARY)
                 .join("characters")
                 .join("alice.md")
+        );
+    }
+
+    #[test]
+    fn builtin_display_names_cover_scaffold_and_planning_contracts() {
+        assert_eq!(
+            builtin_knowledge_display_name(".magic_novel/planning"),
+            Some("规划合同")
+        );
+        assert_eq!(
+            builtin_knowledge_display_name(".magic_novel/planning/narrative_contract.md"),
+            Some("叙事合同")
+        );
+        assert_eq!(
+            builtin_knowledge_display_name(".magic_novel/guidelines.md"),
+            Some("创作准则")
         );
     }
 }

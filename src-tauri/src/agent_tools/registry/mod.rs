@@ -925,4 +925,50 @@ mod tests {
         assert!(!visible.contains(&"skill"));
         assert!(!visible.contains(&"inspiration_consensus_patch"));
     }
+
+    #[test]
+    fn test_tool_schemas_do_not_expose_unimplemented_per_call_timeout_ms() {
+        let context = ToolSchemaContext::default();
+        for tool_name in [
+            "workspace_map",
+            "context_read",
+            "context_search",
+            "knowledge_read",
+            "knowledge_write",
+            "draft_write",
+            "structure_edit",
+        ] {
+            let schema = get_schema(tool_name, &context).expect("schema");
+            let properties = schema
+                .get("properties")
+                .and_then(|value| value.as_object())
+                .expect("schema properties");
+            assert!(
+                !properties.contains_key("timeout_ms"),
+                "{tool_name} should not expose timeout_ms until per-call timeout negotiation is implemented"
+            );
+        }
+    }
+
+    #[test]
+    fn test_structure_edit_schema_hides_unimplemented_knowledge_item_node_type() {
+        let schema = get_schema("structure_edit", &ToolSchemaContext::default())
+            .expect("structure_edit schema");
+        let node_type_values = schema
+            .get("properties")
+            .and_then(|value| value.get("node_type"))
+            .and_then(|value| value.get("enum"))
+            .and_then(|value| value.as_array())
+            .expect("node_type enum");
+
+        assert!(node_type_values
+            .iter()
+            .all(|value| value.as_str() != Some("knowledge_item")));
+        assert!(node_type_values
+            .iter()
+            .any(|value| value.as_str() == Some("volume")));
+        assert!(node_type_values
+            .iter()
+            .any(|value| value.as_str() == Some("chapter")));
+    }
 }

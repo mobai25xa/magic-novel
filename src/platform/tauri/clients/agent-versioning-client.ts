@@ -3,8 +3,11 @@ import { invokeTauri } from './core'
 export type Actor = 'agent' | 'user' | 'system'
 
 export type EmbeddingSource = 'provider' | 'local'
+export type ProviderType = 'openai' | 'anthropic' | 'gemini' | 'openai-compatible'
+export type PlanningGenerationMode = 'follow_primary' | 'dedicated'
 
 export interface OpenAiProviderSettings {
+  provider_type: ProviderType
   openai_base_url: string
   openai_api_key: string
   openai_model: string
@@ -18,9 +21,16 @@ export interface OpenAiProviderSettings {
   openai_embedding_detected: boolean
   openai_embedding_detection_reason: string
   openai_enabled_models: string[]
+  planning_generation_mode: PlanningGenerationMode
+  planning_provider_type: ProviderType
+  planning_base_url: string
+  planning_api_key: string
+  planning_model: string
+  planning_enabled_models: string[]
 }
 
 export interface SaveOpenAiProviderSettingsInput {
+  provider_type?: ProviderType
   openai_base_url: string
   openai_api_key: string
   openai_model?: string
@@ -34,6 +44,12 @@ export interface SaveOpenAiProviderSettingsInput {
   openai_embedding_detected?: boolean
   openai_embedding_detection_reason?: string
   openai_enabled_models?: string[]
+  planning_generation_mode?: PlanningGenerationMode
+  planning_provider_type?: ProviderType
+  planning_base_url?: string
+  planning_api_key?: string
+  planning_model?: string
+  planning_enabled_models?: string[]
 }
 
 export interface FetchOpenAiModelsInput {
@@ -101,9 +117,41 @@ function normalizeEmbeddingSource(input: unknown): EmbeddingSource {
   return input === 'local' ? 'local' : 'provider'
 }
 
+function normalizeProviderType(input: unknown): ProviderType {
+  return input === 'openai' || input === 'anthropic' || input === 'gemini'
+    ? input
+    : 'openai-compatible'
+}
+
+function normalizePlanningGenerationMode(input: unknown): PlanningGenerationMode {
+  return input === 'dedicated' ? 'dedicated' : 'follow_primary'
+}
+
+function normalizeModelList(input: unknown) {
+  if (!Array.isArray(input)) {
+    return []
+  }
+
+  const seen = new Set<string>()
+  const normalized: string[] = []
+
+  for (const raw of input) {
+    const model = typeof raw === 'string' ? raw.trim() : ''
+    if (!model || seen.has(model)) {
+      continue
+    }
+    seen.add(model)
+    normalized.push(model)
+  }
+
+  return normalized
+}
+
 function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiProviderSettings {
+  const providerType = normalizeProviderType(input.provider_type)
   const model = input.openai_model || 'gpt-4o-mini'
-  const enabledModels = Array.isArray(input.openai_enabled_models) ? input.openai_enabled_models : [model]
+  const normalizedEnabledModels = normalizeModelList(input.openai_enabled_models)
+  const enabledModels = normalizedEnabledModels.length > 0 ? normalizedEnabledModels : [model]
   const embeddingModel = input.openai_embedding_model || model
   const detected = typeof input.openai_embedding_detected === 'boolean'
     ? input.openai_embedding_detected
@@ -111,9 +159,14 @@ function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiP
   const reason = (input.openai_embedding_detection_reason || '').trim()
     || (detected ? '' : 'embedding_model_unavailable')
   const enabled = Boolean(input.openai_embedding_enabled) && detected
+  const planningEnabledModels = normalizeModelList(input.planning_enabled_models)
+  const planningModel = (input.planning_model || '').trim()
+    || planningEnabledModels[0]
+    || ''
 
   return {
     ...input,
+    provider_type: providerType,
     openai_embedding_model: embeddingModel,
     openai_embedding_base_url: input.openai_embedding_base_url || input.openai_base_url,
     openai_embedding_api_key: input.openai_embedding_api_key || input.openai_api_key,
@@ -123,6 +176,15 @@ function normalizeOpenAiProviderSettings(input: OpenAiProviderSettings): OpenAiP
     openai_embedding_detected: detected,
     openai_embedding_detection_reason: reason,
     openai_embedding_enabled: enabled,
+    openai_enabled_models: enabledModels,
+    planning_generation_mode: normalizePlanningGenerationMode(input.planning_generation_mode),
+    planning_provider_type: normalizeProviderType(input.planning_provider_type),
+    planning_base_url: input.planning_base_url || '',
+    planning_api_key: input.planning_api_key || '',
+    planning_model: planningModel,
+    planning_enabled_models: planningEnabledModels.length > 0
+      ? planningEnabledModels
+      : (planningModel ? [planningModel] : []),
   }
 }
 

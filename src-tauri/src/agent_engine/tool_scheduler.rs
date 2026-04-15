@@ -144,6 +144,7 @@ fn build_execution_diagnostic(
     Some(ToolExecutionDiagnostic {
         tool_name: tc.tool_name.clone(),
         error_code: Some(error.code.clone()),
+        error_message: Some(error.message.clone()),
         retryable: error.retryable,
         details: error.details.clone(),
         args: tc.args.clone(),
@@ -1367,6 +1368,36 @@ mod tests {
             .build_askuser_suspend(&tc, &[tc.clone()], 0)
             .expect("headless path should not error");
         assert!(suspend.is_none());
+    }
+
+    #[test]
+    fn test_build_askuser_suspend_rejects_invalid_structured_questions_early() {
+        let scheduler = ToolScheduler::new(
+            TestSink,
+            "D:/p".to_string(),
+            ApprovalMode::ConfirmWrites,
+            ClarificationMode::Interactive,
+            CancellationToken::new(),
+        );
+        let tc = ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "askuser".to_string(),
+            args: json!({
+                "questions": [{
+                    "question": "Pick one",
+                    "topic": "style",
+                    "options": ["Only one"]
+                }]
+            }),
+        };
+
+        let suspend = scheduler
+            .build_askuser_suspend(&tc, &[tc.clone()], 0)
+            .expect("invalid payload should not error");
+        assert!(
+            suspend.is_none(),
+            "invalid askuser payload should not suspend"
+        );
     }
 
     #[test]

@@ -687,12 +687,11 @@ pub async fn agent_turn_start(
     state.session_id = session_id.clone();
 
     // Add user message for this turn
-    state
-        .messages
-        .push(AgentMessage::user(input.user_text.clone()));
+    let user_message = AgentMessage::user(input.user_text.clone());
+    state.messages.push(user_message.clone());
     state.current_turn = turn_id;
 
-    emitter.persist_user_message(&input.user_text, turn_id)?;
+    emitter.persist_user_message(&user_message, turn_id)?;
 
     // Emit TURN_STARTED immediately
     let semantic_retrieval_enabled = load_openai_search_settings()

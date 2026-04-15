@@ -40,6 +40,7 @@ export function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     onSelectDirectory: () => controller.handleSelectDirectory(translations.settings.selectRootDirectory),
     onFetchModels: controller.handleFetchModels,
     onFetchEmbeddingModels: controller.handleFetchEmbeddingModels,
+    onFetchPlanningModels: controller.handleFetchPlanningModels,
     resetProjectGenres: controller.resetProjectGenres,
   })
 

@@ -1,3 +1,8 @@
+import type {
+  CreateProjectHandoffDraft,
+  InspirationConsensusState,
+} from '@/features/inspiration/types'
+
 import { invokeTauri } from './core'
 
 export type ProjectType = string
@@ -44,6 +49,59 @@ export interface ProjectSnapshot {
   project: ProjectMetadata
   path: string
   tree: FileNode[]
+}
+
+export type PlanningDocMaterializationState = 'ready' | 'failed'
+export type PlanningDocApprovalState = 'ai_draft' | 'user_refined' | 'accepted'
+
+export interface PlanningDocEntry {
+  id: string
+  path: string
+  required_for_create: boolean
+  required_for_write: boolean
+  materialization_state: PlanningDocMaterializationState
+  approval_state: PlanningDocApprovalState
+  last_source: string
+  updated_at: number
+}
+
+export interface WritingReadiness {
+  can_start: boolean
+  blockers: string[]
+}
+
+export interface PlanningManifest {
+  bundle_version: number
+  bundle_status: string
+  docs: PlanningDocEntry[]
+  writing_readiness: WritingReadiness
+  optional_outputs: string[]
+  recommended_next_doc: string
+  generation_source?: string | null
+  generation_provider?: string | null
+  generation_model?: string | null
+  updated_at: number
+}
+
+export interface ProjectHomeAction {
+  action: string
+  enabled: boolean
+  target_path?: string | null
+}
+
+export interface CreateProjectFromIdeationInput {
+  path: string
+  name: string
+  author: string
+  consensusSnapshot: InspirationConsensusState
+  createHandoff: CreateProjectHandoffDraft
+  originInspirationSessionId?: string
+}
+
+export interface CreateProjectFromIdeationOutput {
+  project_snapshot: ProjectSnapshot
+  planning_manifest: PlanningManifest
+  project_home_actions: ProjectHomeAction[]
 }
 
 export interface VolumeMetadata {
@@ -175,8 +233,41 @@ export async function createProjectClient(input: CreateProjectInput): Promise<Pr
   return invokeTauri('create_project', { ...input })
 }
 
+export async function createProjectFromIdeationClient(
+  input: CreateProjectFromIdeationInput,
+): Promise<CreateProjectFromIdeationOutput> {
+  return invokeTauri('create_project_from_ideation', {
+    path: input.path,
+    name: input.name,
+    author: input.author,
+    consensusSnapshot: input.consensusSnapshot,
+    createHandoff: input.createHandoff,
+    originInspirationSessionId: input.originInspirationSessionId,
+  })
+}
+
 export async function openProjectClient(path: string): Promise<ProjectSnapshot> {
   return invokeTauri('open_project', { path })
+}
+
+export async function getPlanningManifestClient(projectPath: string): Promise<PlanningManifest> {
+  return invokeTauri('get_planning_manifest', { projectPath })
+}
+
+export async function refreshPlanningManifestClient(projectPath: string): Promise<PlanningManifest> {
+  return invokeTauri('refresh_planning_manifest', { projectPath })
+}
+
+export async function updatePlanningDocumentApprovalStateClient(
+  projectPath: string,
+  docId: string,
+  approvalState: PlanningDocApprovalState,
+): Promise<PlanningManifest> {
+  return invokeTauri('update_planning_document_approval_state', {
+    projectPath,
+    docId,
+    approvalState,
+  })
 }
 
 export async function getProjectTreeClient(path: string): Promise<FileNode[]> {

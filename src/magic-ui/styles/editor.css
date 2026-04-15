@@ -77,6 +77,32 @@
     line-height: 1.4;
 }
 
+.ProseMirror.editor-content-kind-knowledge h1,
+.ProseMirror.editor-content-kind-asset h1 {
+    font-size: 1.4em;
+    font-weight: 600;
+    margin-top: 1.2em;
+    margin-bottom: 0.6em;
+    line-height: 1.35;
+}
+
+.ProseMirror.editor-content-kind-knowledge h2,
+.ProseMirror.editor-content-kind-asset h2 {
+    font-size: 1.16em;
+    font-weight: 600;
+    margin-top: 1.05em;
+    margin-bottom: 0.45em;
+}
+
+.ProseMirror.editor-content-kind-knowledge h3,
+.ProseMirror.editor-content-kind-asset h3 {
+    font-size: 1.04em;
+    font-weight: 500;
+    margin-top: 0.9em;
+    margin-bottom: 0.4em;
+    color: var(--text-secondary-foreground);
+}
+
 /* ── 引用块 ── */
 
 .ProseMirror blockquote {

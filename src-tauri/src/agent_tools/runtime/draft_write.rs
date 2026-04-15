@@ -78,6 +78,8 @@ pub(super) struct DraftWriteArgs {
     dry_run: Option<bool>,
     #[serde(default)]
     idempotency_key: Option<String>,
+    #[serde(default, rename = "timeout_ms")]
+    _timeout_ms: Option<u32>,
 }
 
 pub(super) fn execute(project_path: &str, mut input: Value, call_id: String) -> ToolResult<Value> {

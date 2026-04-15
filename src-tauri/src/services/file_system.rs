@@ -10,10 +10,22 @@ pub fn ensure_dir(path: &Path) -> Result<(), AppError> {
 }
 
 pub fn read_file(path: &Path) -> Result<String, AppError> {
+    let backup_path = path.with_extension("bak");
+
     if !path.exists() {
+        if backup_path.exists() {
+            return fs::read_to_string(&backup_path).map_err(AppError::from);
+        }
         return Err(AppError::not_found(format!("File not found: {:?}", path)));
     }
-    fs::read_to_string(path).map_err(AppError::from)
+
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound && backup_path.exists() => {
+            fs::read_to_string(&backup_path).map_err(AppError::from)
+        }
+        Err(err) => Err(AppError::from(err)),
+    }
 }
 
 pub fn write_file(path: &Path, content: &str) -> Result<(), AppError> {

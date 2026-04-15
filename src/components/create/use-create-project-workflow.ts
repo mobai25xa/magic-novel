@@ -1,25 +1,24 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import {
-  createProjectFlow,
-  openProjectFlow,
-  resumeProjectBootstrapFlow,
-  type CreateProjectFlowResult,
-} from '@/components/home/page/home-page-project-actions-helpers'
-import {
-  DEFAULT_CREATE_PROJECT_TARGET_REF,
-  resolveCreateProjectTargetRef,
-  shouldAutoEnterCreatedProject,
-} from '@/components/create/workflow-helpers'
-import { openEditorTarget } from '@/features/editor-navigation/open-editor-target'
-import type { ProjectBootstrapStatus } from '@/features/project-home'
+  createProjectFromIdeation,
+  resolvePlanningConfigIssueForCreate,
+  summarizeCreateProjectError,
+  type CreateProjectFromIdeationOutput,
+} from '@/features/project-creation'
 import { useTranslation } from '@/hooks/use-translation'
 import { useToast } from '@/magic-ui/components'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 
-import { buildCreateProjectInput, createDefaultProjectDraft, validateCreateProjectDraft } from './form-utils'
-import { applyCreateHandoffToDraft } from './inspiration/inspiration-helpers'
+import {
+  createDefaultProjectDraft,
+  validateCreateProjectDraft,
+} from './form-utils'
+import {
+  applyCreateHandoffToDraft,
+  buildCreateHandoffFromConsensus,
+} from './inspiration/inspiration-helpers'
 import { useInspirationWorkflow } from './inspiration/use-inspiration-workflow'
 import type {
   CreateProjectDraft,
@@ -34,16 +33,9 @@ interface UseCreateProjectWorkflowInput {
   active?: boolean
 }
 
-function isBootstrapUnsupportedError(error: unknown) {
-  const message = String(error).toLowerCase()
-  return (
-    message.includes('resume_project_bootstrap')
-    && (message.includes('not found') || message.includes('unknown') || message.includes('missing'))
-  )
-}
-
 export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
   const { translations } = useTranslation()
+  const cp = translations.createPage
   const { addToast } = useToast()
   const projectStore = useProjectStore()
   const projectsRootDir = useSettingsStore((state) => state.projectsRootDir)
@@ -54,20 +46,16 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
 
   const [draft, setDraft] = useState<CreateProjectDraft>(() => createDefaultProjectDraft())
   const [errors, setErrors] = useState<CreateProjectFormErrors>({})
-  const [stage, setStage] = useState<CreateProjectWorkflowStage>('inspiration_chat')
+  const [stage, setStage] = useState<CreateProjectWorkflowStage>('ideation')
   const [submitting, setSubmitting] = useState(false)
-  const [bootstrapStatus, setBootstrapStatus] = useState<ProjectBootstrapStatus | null>(null)
-  const [result, setResult] = useState<CreateProjectFlowResult | null>(null)
   const [preserveInspirationSession, setPreserveInspirationSession] = useState(false)
 
   const resetWorkflow = useCallback((options?: { suppressInspirationAutoCreate?: boolean }) => {
     runIdRef.current += 1
     setDraft(createDefaultProjectDraft())
     setErrors({})
-    setStage('inspiration_chat')
+    setStage('ideation')
     setSubmitting(false)
-    setBootstrapStatus(null)
-    setResult(null)
     setPreserveInspirationSession(false)
     inspiration.reset({
       suspendAutoCreate: Boolean(options?.suppressInspirationAutoCreate),
@@ -85,11 +73,20 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
       if (patch.name !== undefined) delete next.name
       if (patch.author !== undefined) delete next.author
       if (patch.description !== undefined) delete next.description
-      if (patch.targetTotalWords !== undefined) delete next.targetTotalWords
-      if (patch.selectedGenres !== undefined || patch.customGenres !== undefined) delete next.projectType
       return next
     })
-  }, [])
+
+    const handoffPatch: Record<string, string> = {}
+    if (patch.name !== undefined) {
+      handoffPatch.name = patch.name
+    }
+    if (patch.description !== undefined) {
+      handoffPatch.description = patch.description
+    }
+    if (Object.keys(handoffPatch).length > 0) {
+      inspiration.updateFinalDraft(handoffPatch)
+    }
+  }, [inspiration])
 
   const toggleGenre = useCallback((genre: string) => {
     setDraft((current) => ({
@@ -98,40 +95,53 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
         ? current.selectedGenres.filter((item) => item !== genre)
         : [...current.selectedGenres, genre],
     }))
-    setErrors((current) => ({ ...current, projectType: undefined }))
   }, [])
 
-  const enterCreatedProject = useCallback(async (outcome: CreateProjectFlowResult) => {
+  const enterCreatedProject = useCallback(async (outcome: CreateProjectFromIdeationOutput) => {
     if (!preserveInspirationSession && inspiration.sessionId) {
       await inspiration.deleteSession(inspiration.sessionId)
     }
 
-    await openProjectFlow({ projectStore, selectedPath: outcome.snapshot.path })
-    projectStore.setBootstrapStatus(outcome.snapshot.path, outcome.bootstrapStatus)
-
-    const targetRefs = Array.from(new Set([
-      resolveCreateProjectTargetRef(outcome),
-      DEFAULT_CREATE_PROJECT_TARGET_REF,
-    ].filter((value): value is string => Boolean(value))))
-
-    let opened = false
-    for (const targetRef of targetRefs) {
-      opened = await openEditorTarget(targetRef, {
-        revealLeftTree: true,
-        switchLeftTab: true,
-      })
-      if (opened) {
-        break
-      }
-    }
-
-    if (!opened) {
-      console.warn('Failed to open created-project handoff target:', targetRefs)
-    }
+    projectStore.setProjectPath(outcome.project_snapshot.path)
+    projectStore.setProject({
+      projectId: outcome.project_snapshot.project.project_id,
+      name: outcome.project_snapshot.project.name,
+      author: outcome.project_snapshot.project.author,
+      description: outcome.project_snapshot.project.description,
+      createdAt: outcome.project_snapshot.project.created_at,
+      updatedAt: outcome.project_snapshot.project.updated_at,
+    })
+    projectStore.setTree([])
+    projectStore.clearBootstrapStatus()
+    projectStore.setPlanningManifest(
+      outcome.project_snapshot.path,
+      outcome.planning_manifest,
+    )
+    projectStore.addToProjectList({
+      path: outcome.project_snapshot.path,
+      name: outcome.project_snapshot.project.name,
+      author: outcome.project_snapshot.project.author,
+      lastOpenedAt: Date.now(),
+      coverImage: outcome.project_snapshot.project.cover_image,
+    })
 
     resetWorkflow()
-    await input.onProjectReady(outcome.snapshot.path)
+    await input.onProjectReady(outcome.project_snapshot.path)
   }, [inspiration, input, preserveInspirationSession, projectStore, resetWorkflow])
+
+  const prepareLaunchSheet = useCallback((candidateHandoff?: typeof inspiration.finalCreateHandoffDraft) => {
+    const resolvedHandoff = buildCreateHandoffFromConsensus(
+      inspiration.consensus,
+      candidateHandoff ?? inspiration.finalCreateHandoffDraft,
+    )
+
+    setDraft((current) => ({
+      ...applyCreateHandoffToDraft(current, resolvedHandoff, projectGenres),
+      author: current.author,
+    }))
+    inspiration.updateFinalDraft(resolvedHandoff)
+    setStage('launch_sheet')
+  }, [inspiration, projectGenres])
 
   const handleSubmit = useCallback(async () => {
     const validationErrors = validateCreateProjectDraft(draft)
@@ -140,157 +150,121 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
       return
     }
 
+    if (!projectsRootDir) {
+      addToast({
+        title: translations.common.error,
+        description: translations.home.configureRootDir,
+        variant: 'destructive',
+      })
+      input.onOpenSettings()
+      return
+    }
+
+    const planningConfigIssue = resolvePlanningConfigIssueForCreate(
+      useSettingsStore.getState() as ReturnType<typeof useSettingsStore.getState> & Record<string, unknown>,
+    )
+
+    if (planningConfigIssue) {
+      const issueMessageMap = {
+        planning_model_missing: cp.planningModelMissing,
+        planning_api_key_missing: cp.planningApiKeyMissing,
+        planning_base_url_missing: cp.planningBaseUrlMissing,
+        planning_enabled_models_empty: cp.planningEnabledModelsEmpty,
+      } as const
+
+      addToast({
+        title: translations.common.error,
+        description: issueMessageMap[planningConfigIssue.code],
+        variant: 'destructive',
+      })
+      input.onOpenSettings()
+      return
+    }
+
     setSubmitting(true)
-    setBootstrapStatus(null)
-    setResult(null)
-    setStage(draft.aiAssist ? 'progress' : 'create_form')
+    setStage('generating_contract')
     const runId = runIdRef.current + 1
     runIdRef.current = runId
 
     try {
-      const outcome = await createProjectFlow({
-        onOpenSettings: input.onOpenSettings,
-        projectsRootDir,
-        projectStore,
-        addToast,
-        translations: {
-          common: { error: translations.common.error },
-          home: {
-            configureRootDir: translations.home.configureRootDir,
-            createSuccess: translations.home.createSuccess,
-            projectCreatedMsg: translations.home.projectCreatedMsg,
-          },
+      const createHandoff = buildCreateHandoffFromConsensus(
+        inspiration.consensus,
+        {
+          ...(inspiration.finalCreateHandoffDraft ?? buildCreateHandoffFromConsensus(inspiration.consensus)),
+          name: draft.name,
+          description: draft.description,
         },
-        data: buildCreateProjectInput(draft),
-        onBootstrapStatus: (nextStatus) => {
-          if (runIdRef.current !== runId) return
-          setBootstrapStatus(nextStatus)
-          setStage('progress')
-        },
-        suppressSuccessToast: true,
+      )
+
+      const outcome = await createProjectFromIdeation({
+        projectPath: `${projectsRootDir}/${draft.name.trim()}`,
+        name: draft.name,
+        author: draft.author,
+        consensusSnapshot: inspiration.consensus,
+        createHandoff,
+        sessionId: inspiration.sessionId,
       })
 
       if (runIdRef.current !== runId) return
 
-      if (shouldAutoEnterCreatedProject(outcome)) {
-        await enterCreatedProject(outcome)
-        return
-      }
-
-      setResult(outcome)
-      setBootstrapStatus(outcome.bootstrapStatus)
-      setStage('result')
+      addToast({
+        title: translations.home.createSuccess,
+        description: `${translations.home.projectCreatedMsg}${draft.name.trim()}`,
+        variant: 'success',
+      })
+      await enterCreatedProject(outcome)
     } catch (error) {
       if (runIdRef.current !== runId) return
 
-      const message = String(error)
-      if (message !== translations.home.configureRootDir) {
-        addToast({
-          title: translations.common.error,
-          description: message,
-          variant: 'destructive',
-        })
+      const summary = summarizeCreateProjectError(error)
+      const errorMessageMap = {
+        MissingMinimumConsensus: cp.createErrorMissingMinimumConsensus,
+        CoreBundleGenerationFailed: cp.createErrorCoreBundleGenerationFailed,
+        PersistenceFailed: cp.createErrorPersistenceFailed,
+        PlanningProviderConfigurationInvalid: cp.createErrorPlanningProviderConfigurationInvalid,
+        create_project_from_ideation_unavailable: cp.createErrorCommandUnavailable,
+      } as const
+
+      addToast({
+        title: translations.common.error,
+        description: summary.code ? errorMessageMap[summary.code] : summary.message,
+        variant: 'destructive',
+      })
+
+      if (summary.code === 'PlanningProviderConfigurationInvalid') {
+        input.onOpenSettings()
       }
-      setStage('create_form')
+
+      setStage('launch_sheet')
     } finally {
       if (runIdRef.current === runId) {
         setSubmitting(false)
       }
     }
-  }, [addToast, draft, enterCreatedProject, input.onOpenSettings, projectStore, projectsRootDir, translations])
-
-  const handleRetryBootstrap = useCallback(async () => {
-    if (!result) return
-
-    setSubmitting(true)
-    setStage('progress')
-    setBootstrapStatus(result.bootstrapStatus)
-    const runId = runIdRef.current + 1
-    runIdRef.current = runId
-
-    try {
-      const nextStatus = await resumeProjectBootstrapFlow({
-        projectPath: result.snapshot.path,
-        onBootstrapStatus: (nextStatusValue) => {
-          if (runIdRef.current !== runId) return
-          setBootstrapStatus(nextStatusValue)
-        },
-      })
-
-      if (runIdRef.current !== runId) return
-
-      const nextResult = {
-        ...result,
-        bootstrapStatus: nextStatus,
-        bootstrapError: null,
-        bootstrapUnsupported: false,
-      }
-
-      if (shouldAutoEnterCreatedProject(nextResult)) {
-        await enterCreatedProject(nextResult)
-        return
-      }
-
-      setResult(nextResult)
-      setBootstrapStatus(nextStatus)
-      setStage('result')
-    } catch (error) {
-      if (runIdRef.current !== runId) return
-
-      setResult({
-        ...result,
-        bootstrapError: String(error),
-        bootstrapUnsupported: isBootstrapUnsupportedError(error),
-      })
-      setStage('result')
-    } finally {
-      if (runIdRef.current === runId) {
-        setSubmitting(false)
-      }
-    }
-  }, [enterCreatedProject, result])
-
-  const handleEnterProject = useCallback(async () => {
-    if (!result) return
-    await enterCreatedProject(result)
-  }, [enterCreatedProject, result])
+  }, [addToast, cp, draft, enterCreatedProject, inspiration, input, projectsRootDir, translations])
 
   const handleGenerateVariants = useCallback(async () => {
     const generated = await inspiration.generateVariants()
     if (generated) {
-      setStage('variant_review')
+      prepareLaunchSheet(generated.variants[0]?.create_handoff)
     }
-  }, [inspiration])
+  }, [inspiration, prepareLaunchSheet])
 
   const handleSkipToCreateForm = useCallback(() => {
-    setStage('create_form')
-  }, [])
+    prepareLaunchSheet()
+  }, [prepareLaunchSheet])
 
   const handleBackToInspiration = useCallback(() => {
-    setStage('inspiration_chat')
+    setStage('ideation')
   }, [])
 
   const handleContinueToCreateForm = useCallback(() => {
-    if (!inspiration.finalCreateHandoffDraft) {
-      return
-    }
-
-    setDraft((current) => applyCreateHandoffToDraft(
-      current,
-      inspiration.finalCreateHandoffDraft!,
-      projectGenres,
-    ))
-    setStage('create_form')
-  }, [inspiration.finalCreateHandoffDraft, projectGenres])
+    prepareLaunchSheet(inspiration.finalCreateHandoffDraft)
+  }, [inspiration.finalCreateHandoffDraft, prepareLaunchSheet])
 
   const handleBackFromCreateForm = useCallback(() => {
-    if (inspiration.variants.length > 0) {
-      setStage('variant_review')
-      return
-    }
-
-    setStage('inspiration_chat')
-  }, [inspiration.variants.length])
+    setStage('ideation')
+  }, [])
 
   const handleClose = useCallback(() => {
     if (submitting) return
@@ -303,8 +277,6 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
     errors,
     stage,
     submitting,
-    bootstrapStatus,
-    result,
     preserveInspirationSession,
     setPreserveInspirationSession,
     projectGenres,
@@ -312,8 +284,6 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
     updateDraft,
     toggleGenre,
     handleSubmit,
-    handleRetryBootstrap,
-    handleEnterProject,
     handleGenerateVariants,
     handleSkipToCreateForm,
     handleBackToInspiration,
@@ -322,23 +292,19 @@ export function useCreateProjectWorkflow(input: UseCreateProjectWorkflowInput) {
     handleClose,
     resetWorkflow,
   }), [
-    bootstrapStatus,
     draft,
     errors,
     handleClose,
     handleContinueToCreateForm,
-    handleEnterProject,
     handleGenerateVariants,
     handleBackFromCreateForm,
     handleBackToInspiration,
     handleSkipToCreateForm,
-    handleRetryBootstrap,
     handleSubmit,
     inspiration,
     preserveInspirationSession,
     projectGenres,
     resetWorkflow,
-    result,
     stage,
     submitting,
     toggleGenre,

@@ -103,28 +103,28 @@ fn format_success_content(tc: &ToolCallInfo, result: &ToolResult<serde_json::Val
     }
 }
 
-fn format_error_content(_tc: &ToolCallInfo, result: &ToolResult<serde_json::Value>) -> String {
+fn format_error_content(tc: &ToolCallInfo, result: &ToolResult<serde_json::Value>) -> String {
     let err = match &result.error {
         Some(e) => e,
         None => return "unknown error".to_string(),
     };
 
     let recovery = match err.code.as_str() {
-        "E_CONFLICT" | "E_VC_CONFLICT_REVISION" => " Recovery: Run context_read to fetch the latest target state, then retry with the same idempotency_key when applicable.",
+        "E_CONFLICT" | "E_VC_CONFLICT_REVISION" => " Recovery: Run context_read to fetch the latest target state, then retry with the same idempotency_key when applicable.".to_string(),
         "E_TOOL_NOT_FOUND" => {
-            " Recovery: Use only the exposed tool set for this turn, and verify tool names in the registry."
+            " Recovery: Use only the exposed tool set for this turn, and verify tool names in the registry.".to_string()
         }
         "E_TOOL_SCHEMA_INVALID" => {
-            " Recovery: Check the parameter types and required fields in the tool schema."
+            schema_invalid_recovery(tc, &err.message)
         }
         "E_TOOL_NOT_ALLOWED" => {
-            " Recovery: Use only the tools exposed for this turn (see allowed_tools in error details)."
+            " Recovery: Use only the tools exposed for this turn (see allowed_tools in error details).".to_string()
         }
         "E_TOOL_TIMEOUT" => {
-            " Recovery: The tool call took too long. Retry with a simpler query or smaller scope."
+            " Recovery: The tool call took too long. Retry with a simpler query or smaller scope.".to_string()
         }
-        "E_REF_NOT_FOUND" => " Recovery: Use workspace_map to locate the correct ref, then retry.",
-        _ => "",
+        "E_REF_NOT_FOUND" => " Recovery: Use workspace_map to locate the correct ref, then retry.".to_string(),
+        _ => String::new(),
     };
 
     format!(
@@ -133,6 +133,34 @@ fn format_error_content(_tc: &ToolCallInfo, result: &ToolResult<serde_json::Valu
         sanitize_error_message(&err.message),
         recovery
     )
+}
+
+fn schema_invalid_recovery(tc: &ToolCallInfo, message: &str) -> String {
+    if tc.tool_name == "knowledge_write" {
+        if message.contains("changes[") && message.contains(".fields") {
+            return " Recovery: For knowledge_write, each changes[i].fields must be a JSON object like {\"summary\":\"canon update\"}. Do not send strings, arrays, or patch instructions.".to_string();
+        }
+
+        return " Recovery: Re-check knowledge_write inputs against the schema. Each change must include target_ref, kind, and fields where fields is a JSON object.".to_string();
+    }
+
+    if tc.tool_name == "askuser" {
+        return " Recovery: For askuser, send an object with either `questionnaire` as a non-empty string, or `questions` as 1-4 items. Each question must include non-empty `question`, `topic`, and `options`, and `options` must contain 2-4 non-empty strings.".to_string();
+    }
+
+    if tc.tool_name == "structure_edit" {
+        if message.contains("knowledge_item") || message.contains("node_type") {
+            return " Recovery: For structure_edit, `node_type` must be `volume` or `chapter`. `knowledge_item` is not supported.".to_string();
+        }
+
+        return " Recovery: Re-check structure_edit inputs against the schema. Include `op`, `node_type`, and the required refs/title/position fields for the selected operation.".to_string();
+    }
+
+    if tc.tool_name == "draft_write" {
+        return " Recovery: For draft_write, include `target_ref`, `write_mode`, `instruction`, and `content`, where `content` is an object like {\"kind\":\"markdown\",\"value\":\"...\"}.".to_string();
+    }
+
+    " Recovery: Check the parameter types and required fields in the tool schema.".to_string()
 }
 #[cfg(test)]
 mod tests {
@@ -552,6 +580,144 @@ mod tests {
         };
         assert!(content.contains("[error code=E_TOOL_TIMEOUT]"));
         assert!(content.contains("Recovery:"));
+    }
+
+    #[test]
+    fn test_format_error_knowledge_write_has_specific_fields_recovery_hint() {
+        let tc = ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "knowledge_write".to_string(),
+            args: json!({
+                "changes": [{
+                    "target_ref": "knowledge:.magic_novel/terms/foo.json",
+                    "kind": "add",
+                    "fields": "summary = foo"
+                }]
+            }),
+        };
+        let result = ToolResult {
+            ok: false,
+            data: None,
+            error: Some(crate::agent_tools::contracts::ToolError {
+                code: "E_TOOL_SCHEMA_INVALID".to_string(),
+                message: "changes[0].fields must be an object, got string".to_string(),
+                retryable: false,
+                fault_domain: crate::agent_tools::contracts::FaultDomain::Validation,
+                details: None,
+            }),
+            meta: crate::agent_tools::contracts::ToolMeta {
+                tool: "knowledge_write".to_string(),
+                call_id: "tool_kw_1".to_string(),
+                duration_ms: 1,
+                revision_before: None,
+                revision_after: None,
+                tx_id: None,
+                read_set: None,
+                write_set: None,
+            },
+        };
+
+        let msg = build_tool_message(&tc, &result);
+        let content = match &msg.blocks[0] {
+            crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
+            _ => panic!("expected tool_result"),
+        };
+
+        assert!(content.contains("changes[i].fields must be a JSON object"));
+        assert!(content.contains("patch instructions"));
+    }
+
+    #[test]
+    fn test_format_error_askuser_has_specific_shape_recovery_hint() {
+        let tc = ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "askuser".to_string(),
+            args: json!({
+                "questions": [{
+                    "question": "Pick one",
+                    "topic": "style",
+                    "options": ["Only one"]
+                }]
+            }),
+        };
+        let result = ToolResult {
+            ok: false,
+            data: None,
+            error: Some(crate::agent_tools::contracts::ToolError {
+                code: "E_TOOL_SCHEMA_INVALID".to_string(),
+                message: "askuser questions[0].options must contain between 2 and 4 items"
+                    .to_string(),
+                retryable: false,
+                fault_domain: crate::agent_tools::contracts::FaultDomain::Validation,
+                details: None,
+            }),
+            meta: crate::agent_tools::contracts::ToolMeta {
+                tool: "askuser".to_string(),
+                call_id: "tool_ask_1".to_string(),
+                duration_ms: 1,
+                revision_before: None,
+                revision_after: None,
+                tx_id: None,
+                read_set: None,
+                write_set: None,
+            },
+        };
+
+        let msg = build_tool_message(&tc, &result);
+        let content = match &msg.blocks[0] {
+            crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
+            _ => panic!("expected tool_result"),
+        };
+
+        assert!(content.contains("questions"));
+        assert!(content.contains("questionnaire"));
+        assert!(content.contains("2-4 non-empty strings"));
+    }
+
+    #[test]
+    fn test_format_error_structure_edit_has_specific_node_type_recovery_hint() {
+        let tc = ToolCallInfo {
+            llm_call_id: "c1".to_string(),
+            tool_name: "structure_edit".to_string(),
+            args: json!({
+                "op": "create",
+                "node_type": "knowledge_item",
+                "title": "Lore"
+            }),
+        };
+        let result = ToolResult {
+            ok: false,
+            data: None,
+            error: Some(crate::agent_tools::contracts::ToolError {
+                code: "E_TOOL_SCHEMA_INVALID".to_string(),
+                message: "unknown variant `knowledge_item`, expected `volume` or `chapter`"
+                    .to_string(),
+                retryable: false,
+                fault_domain: crate::agent_tools::contracts::FaultDomain::Validation,
+                details: None,
+            }),
+            meta: crate::agent_tools::contracts::ToolMeta {
+                tool: "structure_edit".to_string(),
+                call_id: "tool_structure_1".to_string(),
+                duration_ms: 1,
+                revision_before: None,
+                revision_after: None,
+                tx_id: None,
+                read_set: None,
+                write_set: None,
+            },
+        };
+
+        let msg = build_tool_message(&tc, &result);
+        let content = match &msg.blocks[0] {
+            crate::agent_engine::messages::ContentBlock::ToolResult { content, .. } => content,
+            _ => panic!("expected tool_result"),
+        };
+
+        assert!(content.contains("node_type"));
+        assert!(content.contains("volume"));
+        assert!(content.contains("chapter"));
+        assert!(content.contains("knowledge_item"));
     }
 
     #[test]

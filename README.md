@@ -1,107 +1,104 @@
-# React + TypeScript + Vite
+# Magic Novel
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Magic Novel 是一个面向长篇创作的桌面写作工具，聚焦于小说项目管理、规划承接、章节编辑和 AI 辅助创作。
 
-Currently, two official plugins are available:
+## 功能概览
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- 工作台：创建、打开和管理作品
+- 项目首页：查看规划 Manifest、合同状态与开写门槛
+- 编辑器：按卷 / 章节组织内容，支持保存、导入、导出与字数统计
+- AI 辅助：支持剧情推演、角色润色、章节协作等创作场景
+- 多模型配置：支持 OpenAI、Anthropic、Gemini 及 OpenAI 兼容接口
 
-## React Compiler
+## 技术栈
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+- 前端：React 19 + TypeScript + Vite
+- 桌面端：Tauri 2
+- 后端：Rust
+- UI / 状态管理：Radix UI、TipTap、Zustand
 
-## Expanding the ESLint configuration
+## 环境要求
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+在本地启动前，请先准备：
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+- Node.js 20+
+- pnpm 9+
+- Rust stable
+- Tauri 2 开发环境
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+如需安装 Tauri 环境，可参考官方文档：<https://tauri.app/start/prerequisites/>
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+## 快速开始
+
+### 1. 安装依赖
+
+```bash
+pnpm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 2. 启动前端开发环境
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm dev
 ```
 
-## 代码规范
+### 3. 启动桌面应用开发环境
 
-### 单文件行数限制
-
-为保持代码可读性和可维护性，项目对单文件代码量有明确限制：
-
-| 语言 | 纯逻辑上限 | 含测试上限 |
-|------|-----------|-----------|
-| Rust (`.rs`) | 600 行 | 800 行 |
-| TypeScript/TSX (`.ts`/`.tsx`) | 500 行 | 700 行 |
-
-### 拆分原则
-
-- 按职责边界拆分，而非机械按行数切割
-- 提取的模块使用 `pub(crate)` 可见性，仅在需要跨 crate 时使用 `pub`
-- 拆分后每个文件应有清晰的单一职责（如：调度、格式化、错误处理、schema 构建）
-- 辅助函数保持私有，仅暴露必要的公共接口
-
-### 示例：`agent_engine/` 模块结构
-
+```bash
+pnpm tauri dev
 ```
-agent_engine/
-├── loop_engine.rs        # 核心循环（AgentLoop::run）
-├── tool_scheduler.rs     # 工具调度与并行分组
-├── tool_dispatch.rs      # 工具执行与输入解析
-├── tool_schemas.rs       # OpenAI 工具 schema 构建
-├── tool_formatters.rs    # 工具结果格式化
-├── tool_errors.rs        # 错误构造与资源锁辅助
-├── context_loader.rs     # 上下文加载/注入/缓存
-├── worker_dispatch.rs    # Worker 子循环调度
-├── compaction.rs         # 上下文压缩
-├── ...
+
+## 构建
+
+### 构建前端资源
+
+```bash
+pnpm build
 ```
+
+### 构建桌面应用
+
+```bash
+pnpm tauri build
+```
+
+## 常用校验命令
+
+```bash
+pnpm lint
+pnpm test:tool-agent
+pnpm test:agent-chat
+pnpm test:session-regression
+pnpm test:tool-provider-smoke
+pnpm check:governance
+```
+
+## 使用流程
+
+1. 启动应用后，先在设置页配置作品存储目录和模型 Provider。
+2. 在工作台创建新作品，或打开已有项目。
+3. 进入项目首页，查看规划合同与推荐下一步。
+4. 满足写作门槛后进入编辑器，开始卷章创作。
+5. 按需使用 AI 助手完成剧情推演、章节生成或内容润色。
+
+## 目录结构
+
+```text
+magic-novel/
+├─ src/          # React 前端
+├─ src-tauri/    # Tauri / Rust 后端
+├─ public/       # 静态资源
+├─ scripts/      # 测试与治理脚本
+├─ schemas/      # 工具与协议快照
+├─ tests/        # Rust 集成测试
+└─ docs/         # 补充资料
+```
+
+## 配置说明
+
+- Provider 配置会持久化到用户目录下的 `.magic/setting.json`
+- 当前支持的 Provider 类型：
+  - OpenAI
+  - Anthropic
+  - Gemini
+  - OpenAI Compatible

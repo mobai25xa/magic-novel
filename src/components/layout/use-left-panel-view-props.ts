@@ -46,6 +46,16 @@ export function useLeftPanelViewProps(input: Input): LeftPanelViewProps {
     onCreateChapter: input.onCreateChapter,
     onCreateKnowledgeFolder: input.onCreateKnowledgeFolder,
     onCreateKnowledgeFile: input.onCreateKnowledgeFile,
+    onCreateChapterInVolumeDirect: (volumePath) => {
+      input.setInputDialog({
+        open: true,
+        title: input.translations.editor.newChapter,
+        placeholder: input.translations.editor.enterChapterName,
+        onConfirm: (title) => {
+          void input.onCreateChapterInVolume(volumePath, title)
+        },
+      })
+    },
     onChapterSelect: input.onChapterSelect,
     onAssetSelect: async (relativePath) => {
       if (!input.projectPath) return

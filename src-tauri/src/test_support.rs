@@ -36,3 +36,49 @@ pub mod inspiration_env {
         }
     }
 }
+
+#[cfg(test)]
+pub mod ai_settings_env {
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    const AI_SETTINGS_ROOT_ENV: &str = "MAGIC_NOVEL_AI_SETTINGS_ROOT";
+
+    pub struct AiSettingsTempRootGuard {
+        lock: MutexGuard<'static, ()>,
+        dir: tempfile::TempDir,
+    }
+
+    impl AiSettingsTempRootGuard {
+        pub fn root(&self) -> &Path {
+            self.dir.path()
+        }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    pub fn enter_temp_root() -> AiSettingsTempRootGuard {
+        let lock = env_lock()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var(AI_SETTINGS_ROOT_ENV, dir.path());
+
+        AiSettingsTempRootGuard { lock, dir }
+    }
+
+    pub fn with_temp_root<T>(f: impl FnOnce(&Path) -> T) -> T {
+        let guard = enter_temp_root();
+        f(guard.root())
+    }
+
+    impl Drop for AiSettingsTempRootGuard {
+        fn drop(&mut self) {
+            let _ = &self.lock;
+            std::env::remove_var(AI_SETTINGS_ROOT_ENV);
+        }
+    }
+}

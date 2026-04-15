@@ -31,7 +31,7 @@ pub enum KnowledgeWriteChangeKind {
 pub struct KnowledgeWriteChange {
     pub target_ref: String,
     pub kind: KnowledgeWriteChangeKind,
-    pub fields: serde_json::Value,
+    pub fields: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -42,7 +42,8 @@ pub struct KnowledgeWriteArgs {
     pub evidence_refs: Option<Vec<String>>,
     pub dry_run: Option<bool>,
     pub idempotency_key: Option<String>,
-    pub timeout_ms: Option<u32>,
+    #[serde(default, rename = "timeout_ms")]
+    pub _timeout_ms: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +67,42 @@ pub struct KnowledgeWriteRun {
 pub struct KnowledgeWriteError {
     pub code: &'static str,
     pub message: String,
+}
+
+pub(crate) fn validate_knowledge_write_input_shape(
+    input: &serde_json::Value,
+) -> Result<(), KnowledgeWriteError> {
+    let Some(changes) = input.get("changes") else {
+        return Ok(());
+    };
+
+    let Some(change_items) = changes.as_array() else {
+        return Err(type_mismatch_error("changes", "array", changes));
+    };
+
+    for (idx, change) in change_items.iter().enumerate() {
+        let Some(change_obj) = change.as_object() else {
+            return Err(type_mismatch_error(
+                &format!("changes[{idx}]"),
+                "object",
+                change,
+            ));
+        };
+
+        let path = format!("changes[{idx}].fields");
+        let Some(fields) = change_obj.get("fields") else {
+            return Err(KnowledgeWriteError {
+                code: "E_TOOL_SCHEMA_INVALID",
+                message: format!("{path} is required"),
+            });
+        };
+
+        if !fields.is_object() {
+            return Err(type_mismatch_error(&path, "object", fields));
+        }
+    }
+
+    Ok(())
 }
 
 pub fn run_knowledge_write(
@@ -173,22 +210,13 @@ pub fn run_knowledge_write(
             KnowledgeOp::Create => None,
         };
 
-        let fields = if change.fields.is_object() {
-            change.fields.clone()
-        } else {
-            return Err(KnowledgeWriteError {
-                code: "E_TOOL_SCHEMA_INVALID",
-                message: "fields must be an object".to_string(),
-            });
-        };
-
         proposal_items.push(KnowledgeProposalItem {
             item_id: format!("kitem_{}", uuid::Uuid::new_v4()),
             kind,
             op,
             target_ref: Some(target_internal_ref),
             target_revision,
-            fields,
+            fields: serde_json::Value::Object(change.fields.clone()),
             evidence_refs: evidence_refs.clone(),
             source_refs: vec![format!("tool_call_id:{call_id}")],
             change_reason: format!("knowledge_write propose #{idx}"),
@@ -397,13 +425,15 @@ fn load_existing_revision(project_path: &Path, target_internal_ref: &str) -> Opt
 
 fn validate_payload_budget(args: &KnowledgeWriteArgs) -> Result<(), KnowledgeWriteError> {
     let mut total = 0_usize;
-    for ch in &args.changes {
+    for (idx, ch) in args.changes.iter().enumerate() {
         let s = serde_json::to_string(&ch.fields).unwrap_or_default();
         let len = s.chars().count();
         if len > MAX_FIELDS_JSON_CHARS {
             return Err(KnowledgeWriteError {
                 code: "E_PAYLOAD_TOO_LARGE",
-                message: "fields payload is too large".to_string(),
+                message: format!(
+                    "changes[{idx}].fields payload is too large: {len} chars (max {MAX_FIELDS_JSON_CHARS})"
+                ),
             });
         }
         total = total.saturating_add(len);
@@ -412,7 +442,9 @@ fn validate_payload_budget(args: &KnowledgeWriteArgs) -> Result<(), KnowledgeWri
     if total > MAX_TOTAL_FIELDS_JSON_CHARS {
         return Err(KnowledgeWriteError {
             code: "E_PAYLOAD_TOO_LARGE",
-            message: "total fields payload is too large".to_string(),
+            message: format!(
+                "total changes[*].fields payload is too large: {total} chars (max {MAX_TOTAL_FIELDS_JSON_CHARS})"
+            ),
         });
     }
 
@@ -618,6 +650,31 @@ fn map_tool_ref_error(err: RefError) -> KnowledgeWriteError {
     }
 }
 
+fn type_mismatch_error(
+    path: &str,
+    expected: &str,
+    actual: &serde_json::Value,
+) -> KnowledgeWriteError {
+    KnowledgeWriteError {
+        code: "E_TOOL_SCHEMA_INVALID",
+        message: format!(
+            "{path} must be an {expected}, got {}",
+            json_type_name(actual)
+        ),
+    }
+}
+
+fn json_type_name(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -628,6 +685,10 @@ mod tests {
         let project_path = dir.path().to_string_lossy().to_string();
         std::fs::create_dir_all(Path::new(&project_path).join(".magic_novel")).expect("dir");
         (dir, project_path)
+    }
+
+    fn object_fields(value: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        value.as_object().cloned().expect("object fields")
     }
 
     #[test]
@@ -641,12 +702,12 @@ mod tests {
                 changes: vec![KnowledgeWriteChange {
                     target_ref: "chapter:manuscripts/vol_1/ch_1.json".to_string(),
                     kind: KnowledgeWriteChangeKind::Add,
-                    fields: serde_json::json!({"summary": "x"}),
+                    fields: object_fields(serde_json::json!({"summary": "x"})),
                 }],
                 evidence_refs: None,
                 dry_run: Some(true),
                 idempotency_key: None,
-                timeout_ms: None,
+                _timeout_ms: None,
             },
         )
         .unwrap_err();
@@ -662,12 +723,12 @@ mod tests {
             changes: vec![KnowledgeWriteChange {
                 target_ref: "knowledge:.magic_novel/terms/foo.json".to_string(),
                 kind: KnowledgeWriteChangeKind::Add,
-                fields: serde_json::json!({"summary": "x"}),
+                fields: object_fields(serde_json::json!({"summary": "x"})),
             }],
             evidence_refs: None,
             dry_run: Some(false),
             idempotency_key: Some("same-key".to_string()),
-            timeout_ms: None,
+            _timeout_ms: None,
         };
 
         let first = run_knowledge_write(&project_path, "call_1", args.clone()).expect("first");
@@ -692,12 +753,12 @@ mod tests {
                 changes: vec![KnowledgeWriteChange {
                     target_ref: "terms/foo.json".to_string(),
                     kind: KnowledgeWriteChangeKind::Add,
-                    fields: serde_json::json!({"summary": "x"}),
+                    fields: object_fields(serde_json::json!({"summary": "x"})),
                 }],
                 evidence_refs: Some(vec!["knowledge:.magic_novel/terms/foo.json".to_string()]),
                 dry_run: Some(true),
                 idempotency_key: None,
-                timeout_ms: None,
+                _timeout_ms: None,
             },
         )
         .expect("run");
@@ -709,5 +770,41 @@ mod tests {
                 "knowledge:.magic_novel/terms/foo.json".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn knowledge_write_args_deserialization_rejects_non_object_fields() {
+        let err = serde_json::from_value::<KnowledgeWriteArgs>(serde_json::json!({
+            "op": "propose",
+            "changes": [
+                {
+                    "target_ref": "knowledge:.magic_novel/terms/foo.json",
+                    "kind": "add",
+                    "fields": "summary = foo"
+                }
+            ],
+            "dry_run": true
+        }))
+        .expect_err("non-object fields should fail deserialization");
+
+        assert!(err.to_string().contains("expected a map"));
+    }
+
+    #[test]
+    fn validate_input_shape_reports_fields_path() {
+        let err = validate_knowledge_write_input_shape(&serde_json::json!({
+            "op": "propose",
+            "changes": [
+                {
+                    "target_ref": "knowledge:.magic_novel/terms/foo.json",
+                    "kind": "add",
+                    "fields": ["not", "an", "object"]
+                }
+            ]
+        }))
+        .expect_err("shape validation should reject array fields");
+
+        assert_eq!(err.code, "E_TOOL_SCHEMA_INVALID");
+        assert_eq!(err.message, "changes[0].fields must be an object, got array");
     }
 }

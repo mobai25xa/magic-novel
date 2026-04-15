@@ -1,9 +1,14 @@
 import type {
   Chapter,
+  CreateProjectFromIdeationInput,
+  CreateProjectFromIdeationOutput,
   CreateProjectInput,
   FileNode as ProjectFileNode,
+  PlanningDocApprovalState,
+  PlanningManifest,
   ProjectMetadata,
   ProjectBootstrapStatus,
+  ProjectHomeAction,
   ProjectSnapshot,
   ProjectType,
   RecycleItem,
@@ -14,6 +19,7 @@ import {
   clearWritingStatsClient,
   createChapterClient,
   createProjectClient,
+  createProjectFromIdeationClient,
   createVolumeClient,
   emptyRecycleBinClient,
   emptyRecycledProjectsClient,
@@ -21,6 +27,7 @@ import {
   exportChapterClient,
   exportTreeMultiClient,
   exportVolumeClient,
+  getPlanningManifestClient,
   getProjectTreeClient,
   importAssetClient,
   importChapterClient,
@@ -34,6 +41,7 @@ import {
   permanentlyDeleteRecycledProjectClient,
   readChapterClient,
   readVolumeClient,
+  refreshPlanningManifestClient,
   resumeProjectBootstrapClient,
   restoreRecycleItemClient,
   restoreRecycledProjectClient,
@@ -45,6 +53,7 @@ import {
   trashChapterClient,
   trashProjectClient,
   trashVolumeClient,
+  updatePlanningDocumentApprovalStateClient,
   updateChapterMetadataClient,
   updateProjectMetadataClient,
   updateVolumeClient,
@@ -55,6 +64,12 @@ export async function createProject(
   input: CreateProjectInput,
 ): Promise<ProjectSnapshot> {
   return createProjectClient(input)
+}
+
+export async function createProjectFromIdeation(
+  input: CreateProjectFromIdeationInput,
+): Promise<CreateProjectFromIdeationOutput> {
+  return createProjectFromIdeationClient(input)
 }
 
 export async function openProject(path: string): Promise<ProjectSnapshot> {
@@ -78,6 +93,22 @@ export type FileNode = ProjectFileNode | {
 
 export async function getProjectTree(path: string): Promise<FileNode[]> {
   return getProjectTreeClient(path) as unknown as FileNode[]
+}
+
+export async function getPlanningManifest(projectPath: string): Promise<PlanningManifest> {
+  return getPlanningManifestClient(projectPath)
+}
+
+export async function refreshPlanningManifest(projectPath: string): Promise<PlanningManifest> {
+  return refreshPlanningManifestClient(projectPath)
+}
+
+export async function updatePlanningDocumentApprovalState(
+  projectPath: string,
+  docId: string,
+  approvalState: PlanningDocApprovalState,
+): Promise<PlanningManifest> {
+  return updatePlanningDocumentApprovalStateClient(projectPath, docId, approvalState)
 }
 
 export async function updateProjectMetadata(
@@ -265,9 +296,14 @@ export async function resumeProjectBootstrap(projectPath: string): Promise<Proje
 
 export type {
   Chapter,
+  CreateProjectFromIdeationInput,
+  CreateProjectFromIdeationOutput,
   CreateProjectInput,
+  PlanningDocApprovalState,
   ProjectMetadata,
+  PlanningManifest,
   ProjectBootstrapStatus,
+  ProjectHomeAction,
   ProjectSnapshot,
   ProjectType,
   RecycleItem,

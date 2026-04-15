@@ -37,7 +37,6 @@ enum StructureOp {
 enum StructureNodeType {
     Volume,
     Chapter,
-    KnowledgeItem,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +56,8 @@ pub(super) struct StructureEditArgs {
     dry_run: Option<bool>,
     #[serde(default)]
     idempotency_key: Option<String>,
+    #[serde(default, rename = "timeout_ms")]
+    _timeout_ms: Option<u32>,
 }
 
 struct OkOutcome {
@@ -109,23 +110,6 @@ pub(super) fn execute(project_path: &str, mut input: Value, call_id: String) -> 
             return result;
         }
     };
-
-    if args.node_type == StructureNodeType::KnowledgeItem {
-        let result = tool_err(
-            &call_id,
-            started,
-            "E_NOT_IMPLEMENTED",
-            "node_type=knowledge_item is not implemented in v0",
-            false,
-            FaultDomain::Tool,
-            None,
-            None,
-            None,
-            None,
-        );
-        emit_from_result(&result, "execute");
-        return result;
-    }
 
     if let Some(key) = &args.idempotency_key {
         if key.trim().is_empty() || key.len() > MAX_IDEMPOTENCY_KEY_LEN {
@@ -390,7 +374,6 @@ fn exec_create(
                 tx_id: Some(tx_id),
             })
         }
-        StructureNodeType::KnowledgeItem => unreachable!("validated earlier"),
     }
 }
 
@@ -606,7 +589,6 @@ fn exec_rename(
                 tx_id: None,
             })
         }
-        StructureNodeType::KnowledgeItem => unreachable!("validated earlier"),
     }
 }
 
@@ -756,7 +738,6 @@ fn exec_archive(
                 tx_id: Some(tx_id),
             })
         }
-        StructureNodeType::KnowledgeItem => unreachable!("validated earlier"),
     }
 }
 
@@ -920,6 +901,5 @@ fn exec_restore(
                 tx_id: Some(tx_id),
             })
         }
-        StructureNodeType::KnowledgeItem => unreachable!("validated earlier"),
     }
 }

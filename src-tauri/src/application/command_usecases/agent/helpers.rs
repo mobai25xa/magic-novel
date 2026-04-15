@@ -6,11 +6,12 @@ use std::path::PathBuf;
 
 use super::{
     OpenAiProviderSettings, SaveOpenAiProviderSettingsInput, DEFAULT_LOCAL_EMBEDDING_BASE_URL,
-    DEFAULT_OPENAI_MODEL,
+    DEFAULT_OPENAI_MODEL, DEFAULT_PLANNING_GENERATION_MODE, DEFAULT_PROVIDER_TYPE,
 };
 
 const MAGEIC_DIR: &str = ".magic";
 const SETTINGS_FILE: &str = "setting.json";
+const AI_SETTINGS_ROOT_ENV: &str = "MAGIC_NOVEL_AI_SETTINGS_ROOT";
 
 pub(super) async fn read_response_body(
     response: reqwest::Response,
@@ -84,7 +85,17 @@ pub(super) fn build_models_url(base_url: &str) -> String {
 }
 
 fn settings_file_path() -> Result<PathBuf, AppError> {
-    let home = dirs::home_dir().ok_or_else(|| {
+    let home = if let Some(root) = std::env::var_os(AI_SETTINGS_ROOT_ENV) {
+        let root = PathBuf::from(root);
+        if root.as_os_str().is_empty() {
+            dirs::home_dir()
+        } else {
+            Some(root)
+        }
+    } else {
+        dirs::home_dir()
+    }
+    .ok_or_else(|| {
         app_err(
             ErrorCode::Internal,
             "无法定位用户目录",
@@ -122,6 +133,7 @@ pub(super) fn load_openai_provider_settings() -> Result<OpenAiProviderSettings, 
         )
     })?;
 
+    parsed.provider_type = normalize_provider_type(Some(parsed.provider_type.as_str()));
     parsed.openai_enabled_models = normalize_models(parsed.openai_enabled_models);
     if !parsed
         .openai_enabled_models
@@ -173,6 +185,34 @@ pub(super) fn load_openai_provider_settings() -> Result<OpenAiProviderSettings, 
     parsed.openai_embedding_enabled =
         parsed.openai_embedding_enabled && parsed.openai_embedding_detected;
 
+    parsed.planning_generation_mode =
+        normalize_planning_generation_mode(Some(parsed.planning_generation_mode.as_str()));
+    parsed.planning_provider_type =
+        normalize_provider_type(Some(parsed.planning_provider_type.as_str()));
+    parsed.planning_enabled_models = normalize_optional_models(parsed.planning_enabled_models);
+
+    let planning_model = parsed.planning_model.trim().to_string();
+    if !planning_model.is_empty()
+        && !parsed
+            .planning_enabled_models
+            .iter()
+            .any(|item| item == &planning_model)
+    {
+        parsed
+            .planning_enabled_models
+            .insert(0, planning_model.clone());
+    }
+
+    parsed.planning_model = if planning_model.is_empty() {
+        parsed
+            .planning_enabled_models
+            .first()
+            .cloned()
+            .unwrap_or_default()
+    } else {
+        planning_model
+    };
+
     Ok(parsed)
 }
 
@@ -184,6 +224,16 @@ pub(super) fn write_openai_provider_settings(
 }
 
 pub(super) fn normalize_models(input: Vec<String>) -> Vec<String> {
+    let mut out = normalize_optional_models(input);
+
+    if out.is_empty() {
+        out.push(super::DEFAULT_OPENAI_MODEL.to_string());
+    }
+
+    out
+}
+
+pub(super) fn normalize_optional_models(input: Vec<String>) -> Vec<String> {
     let mut out = Vec::new();
     for item in input {
         let trimmed = item.trim();
@@ -196,10 +246,6 @@ pub(super) fn normalize_models(input: Vec<String>) -> Vec<String> {
         out.push(trimmed.to_string());
     }
 
-    if out.is_empty() {
-        out.push(super::DEFAULT_OPENAI_MODEL.to_string());
-    }
-
     out
 }
 
@@ -209,6 +255,7 @@ pub(super) fn default_embedding_detection_reason() -> String {
 
 pub(super) fn normalize_save_input(
     input: SaveOpenAiProviderSettingsInput,
+    existing: &OpenAiProviderSettings,
 ) -> OpenAiProviderSettings {
     let base = input.openai_base_url.trim().to_string();
     let key = input.openai_api_key.trim().to_string();
@@ -290,8 +337,68 @@ pub(super) fn normalize_save_input(
         });
 
     let embedding_enabled = input.openai_embedding_enabled.unwrap_or(false) && embedding_detected;
+    let provider_type = normalize_provider_type(
+        input
+            .provider_type
+            .as_deref()
+            .or(Some(existing.provider_type.as_str())),
+    );
+    let planning_generation_mode = normalize_planning_generation_mode(
+        input
+            .planning_generation_mode
+            .as_deref()
+            .or(Some(existing.planning_generation_mode.as_str())),
+    );
+    let planning_provider_type = normalize_provider_type(
+        input
+            .planning_provider_type
+            .as_deref()
+            .or(Some(existing.planning_provider_type.as_str())),
+    );
+    let planning_base_url = input
+        .planning_base_url
+        .as_deref()
+        .unwrap_or(existing.planning_base_url.as_str())
+        .trim()
+        .to_string();
+    let planning_api_key = input
+        .planning_api_key
+        .as_deref()
+        .unwrap_or(existing.planning_api_key.as_str())
+        .trim()
+        .to_string();
+    let mut planning_enabled_models = normalize_optional_models(
+        input
+            .planning_enabled_models
+            .unwrap_or_else(|| existing.planning_enabled_models.clone()),
+    );
+    let requested_planning_model = input
+        .planning_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            let existing_model = existing.planning_model.trim();
+            if existing_model.is_empty() {
+                None
+            } else {
+                Some(existing_model.to_string())
+            }
+        });
+
+    if let Some(model) = requested_planning_model.as_ref() {
+        if !planning_enabled_models.iter().any(|value| value == model) {
+            planning_enabled_models.insert(0, model.clone());
+        }
+    }
+
+    let planning_model = requested_planning_model
+        .or_else(|| planning_enabled_models.first().cloned())
+        .unwrap_or_default();
 
     OpenAiProviderSettings {
+        provider_type,
         openai_base_url: base,
         openai_api_key: key,
         openai_model: model,
@@ -305,6 +412,12 @@ pub(super) fn normalize_save_input(
         openai_embedding_detected: embedding_detected,
         openai_embedding_detection_reason: embedding_detection_reason,
         openai_enabled_models: enabled_models,
+        planning_generation_mode,
+        planning_provider_type,
+        planning_base_url,
+        planning_api_key,
+        planning_model,
+        planning_enabled_models,
     }
 }
 
@@ -312,6 +425,22 @@ pub(super) fn normalize_embedding_source(input: Option<&str>) -> String {
     match input.map(str::trim) {
         Some("local") => "local".to_string(),
         _ => "provider".to_string(),
+    }
+}
+
+pub(super) fn normalize_provider_type(input: Option<&str>) -> String {
+    match input.map(str::trim) {
+        Some("openai") => "openai".to_string(),
+        Some("anthropic") => "anthropic".to_string(),
+        Some("gemini") => "gemini".to_string(),
+        _ => DEFAULT_PROVIDER_TYPE.to_string(),
+    }
+}
+
+pub(super) fn normalize_planning_generation_mode(input: Option<&str>) -> String {
+    match input.map(str::trim) {
+        Some("dedicated") => "dedicated".to_string(),
+        _ => DEFAULT_PLANNING_GENERATION_MODE.to_string(),
     }
 }
 
@@ -326,5 +455,61 @@ pub(super) fn app_err(
         message: message.to_string(),
         details,
         recoverable: Some(recoverable),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_save_input_preserves_planning_settings_when_omitted() {
+        let existing = OpenAiProviderSettings {
+            provider_type: "gemini".to_string(),
+            planning_generation_mode: "dedicated".to_string(),
+            planning_provider_type: "anthropic".to_string(),
+            planning_base_url: "https://planning.example/v1".to_string(),
+            planning_api_key: "planning-secret".to_string(),
+            planning_model: "claude-sonnet".to_string(),
+            planning_enabled_models: vec!["claude-sonnet".to_string()],
+            ..OpenAiProviderSettings::default()
+        };
+
+        let normalized = normalize_save_input(
+            SaveOpenAiProviderSettingsInput {
+                provider_type: None,
+                openai_base_url: "https://primary.example/v1".to_string(),
+                openai_api_key: "primary-secret".to_string(),
+                openai_model: Some("gpt-4o-mini".to_string()),
+                openai_embedding_model: None,
+                openai_embedding_base_url: None,
+                openai_embedding_api_key: None,
+                openai_local_embedding_base_url: None,
+                openai_local_embedding_api_key: None,
+                openai_embedding_source: None,
+                openai_embedding_enabled: Some(false),
+                openai_embedding_detected: Some(false),
+                openai_embedding_detection_reason: None,
+                openai_enabled_models: vec!["gpt-4o-mini".to_string()],
+                planning_generation_mode: None,
+                planning_provider_type: None,
+                planning_base_url: None,
+                planning_api_key: None,
+                planning_model: None,
+                planning_enabled_models: None,
+            },
+            &existing,
+        );
+
+        assert_eq!(normalized.provider_type, "gemini");
+        assert_eq!(normalized.planning_generation_mode, "dedicated");
+        assert_eq!(normalized.planning_provider_type, "anthropic");
+        assert_eq!(normalized.planning_base_url, "https://planning.example/v1");
+        assert_eq!(normalized.planning_api_key, "planning-secret");
+        assert_eq!(normalized.planning_model, "claude-sonnet");
+        assert_eq!(
+            normalized.planning_enabled_models,
+            vec!["claude-sonnet".to_string()]
+        );
     }
 }

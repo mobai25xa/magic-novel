@@ -8,7 +8,7 @@ type ContentTreeProps = {
   onChapterSelect: (chapterPath: string, chapterId: string, title?: string) => void
   onCreateChapterInVolume?: (volumePath: string) => void
   onAssetSelect?: (relativePath: string) => void
-  mode?: 'all' | 'knowledge'
+  mode?: 'all' | 'knowledge' | 'manuscript'
   hideKnowledgeRoot?: boolean
   variant?: 'tree' | 'outline'
 }

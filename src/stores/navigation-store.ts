@@ -24,7 +24,7 @@ export const useNavigationStore = create<NavigationStore>()(
         const state = get()
 
         // editor 需要 projectPath 非空，否则忽略
-        if (page === 'editor') {
+        if (page === 'editor' || page === 'project_home') {
           const { projectPath } = useProjectStore.getState()
           if (!projectPath) return
         }

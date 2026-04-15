@@ -133,15 +133,15 @@ fn render_project_profile(project: &ProjectMetadata) -> String {
     };
 
     format!(
-        "# Project Profile\n\n- Name: {}\n- Author: {}\n- Description: {}\n- Genres: {}\n- Target Total Words: {}\n- Planned Volumes: {}\n- Target Words Per Volume: {}\n- Target Words Per Chapter: {}\n- Narrative POV: {}\n- Tone: {}\n- Audience: {}\n- Bootstrap State: {:?}\n",
+        "# Project Profile\n\n- Name: {}\n- Author: {}\n- Description: {}\n- Genres: {}\n- Target Total Words: {}\n- Planned Volumes: {}\n- Target Words Per Volume: {}\n- Target Words Per Chapter: {}\n- Narrative POV: {}\n- Tone: {}\n- Audience: {}\n- Planning Job State: {:?}\n",
         project.name,
         project.author,
         description,
         display_list(&project.project_type),
         project.target_total_words,
-        project.planned_volumes,
-        project.target_words_per_volume,
-        project.target_words_per_chapter,
+        display_optional_number(project.planned_volumes),
+        display_optional_number(project.target_words_per_volume),
+        display_optional_number(project.target_words_per_chapter),
         project.narrative_pov,
         tone,
         project.audience,
@@ -196,7 +196,7 @@ fn render_current_bootstrap_task(status: &ProjectBootstrapStatus) -> String {
     };
 
     let mut output = format!(
-        "# Current Bootstrap Task\n\n- job_id: {}\n- phase: {:?}\n- progress: {}\n- next: {}\n\n## Completed Steps\n{}\n\n## Failed Steps\n{}\n",
+        "# Legacy Bootstrap Task\n\n- note: compatibility-only helper for older bootstrap flows\n- job_id: {}\n- phase: {:?}\n- progress: {}\n- next: {}\n\n## Completed Steps\n{}\n\n## Failed Steps\n{}\n",
         status.creation_job_id,
         status.phase,
         status.progress,
@@ -218,6 +218,12 @@ fn display_list(values: &[String]) -> String {
     } else {
         values.join(" / ")
     }
+}
+
+fn display_optional_number(value: Option<i32>) -> String {
+    value
+        .map(|number| number.to_string())
+        .unwrap_or_else(|| "未设置".to_string())
 }
 
 fn knowledge_file_path(project_path: &Path, relative_path: &str) -> PathBuf {

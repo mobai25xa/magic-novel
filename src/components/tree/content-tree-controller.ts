@@ -64,7 +64,7 @@ function useKnowledgeTree(projectPath: string | null, label: string, reloadKey: 
 export function useContentTreeController(input: {
   onChapterSelect: (path: string, chapterId: string, title?: string) => void
   onAssetSelect?: (relativePath: string) => void
-  mode?: 'all' | 'knowledge'
+  mode?: 'all' | 'knowledge' | 'manuscript'
   hideKnowledgeRoot?: boolean
 }) {
   const { tree, selectedPath, setSelectedPath, projectPath, setTree } = useProjectStore()
@@ -81,9 +81,12 @@ export function useContentTreeController(input: {
   const dragEnabled = tocSort.field === 'manual'
   const sortedTree = useMemo(() => {
     const base = knowledgeTree ? [knowledgeTree, ...tree] : tree
-    const scoped = input.mode === 'knowledge'
-      ? base.filter((node) => node.kind === 'knowledge')
-      : base
+    const scoped =
+      input.mode === 'knowledge'
+        ? base.filter((node) => node.kind === 'knowledge')
+        : input.mode === 'manuscript'
+          ? base.filter((node) => node.kind !== 'knowledge')
+          : base
 
     const normalized = input.mode === 'knowledge' && input.hideKnowledgeRoot
       ? scoped.flatMap((node) => (node.kind === 'knowledge' ? node.children || [] : [node]))

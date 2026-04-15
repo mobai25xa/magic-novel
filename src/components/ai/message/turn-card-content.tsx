@@ -3,7 +3,6 @@ import { useCallback } from 'react'
 import type { AgentUiTurnState, FeedbackRating } from '@/lib/agent-chat/types'
 import { useAgentChatStore } from '@/state/agent'
 
-import { useAiTranslations } from '../ai-hooks'
 import { useTurnCardContentModel } from './turn-card-content-hooks'
 import { TurnCardAssistantBlock } from './turn-card-assistant-block'
 
@@ -48,8 +47,6 @@ function isActiveTurn(phase: AgentUiTurnState['phase']) {
 }
 
 export function TurnCardContent(input: TurnCardContentProps) {
-  const ai = useAiTranslations()
-
   const feedbackRating = useAgentChatStore(
     (s) => s.turnFeedback[input.turn.turn] ?? 'unset',
   ) as FeedbackRating
@@ -72,13 +69,19 @@ export function TurnCardContent(input: TurnCardContentProps) {
   const showContinuousLoading = active && input.running
   const loading = input.hideInlineLoadingIndicator ? false : showContinuousLoading
   const elapsedLabel = formatElapsedLabel(model.elapsedMs)
+  const hasAssistantContent = input.running
+    ? (model.hasAnswer || model.rawHasAnswer)
+    : model.rawHasAnswer
+
+  if (!hasAssistantContent) {
+    return null
+  }
+
   const assistantText = !input.running
-    ? (model.rawHasAnswer ? input.text : ai.turn.assistantPlaceholder)
+    ? input.text
     : model.hasAnswer
       ? model.typedAnswer
-      : model.rawHasAnswer
-        ? input.text
-        : ai.turn.assistantPlaceholder
+      : input.text
 
   return (
     <TurnCardAssistantBlock

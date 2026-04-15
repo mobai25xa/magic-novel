@@ -1,8 +1,7 @@
-import { useEffect, useMemo } from 'react'
-import { ChevronLeft, ChevronRight, File, FileText, FolderPlus, Plus } from 'lucide-react'
+import { useMemo } from 'react'
+import { ChevronLeft, FolderPlus, Plus } from 'lucide-react'
 
 import { InputDialog } from '@/components/common/InputDialog'
-import { SelectDialog } from '@/components/common/SelectDialog'
 import { ContentTree } from '@/components/tree/ContentTree'
 import { useEditorStore } from '@/state/editor'
 import { useProjectStore } from '@/state/project'
@@ -36,6 +35,7 @@ export type LeftPanelViewProps = {
     }
     home: {
       homePage: string
+      projectHome: string
     }
     editor: {
       tableOfContents: string
@@ -68,6 +68,7 @@ export type LeftPanelViewProps = {
   pinnedAssetsDefault?: string
   onCreateVolume: () => void
   onCreateChapter: () => void
+  onCreateChapterInVolumeDirect: (volumePath: string) => void
   onChapterSelect: (path: string, id: string, title?: string) => void
   onAssetSelect: (relativePath: string) => void
   onOpenPinnedAssetsDialog: () => void
@@ -99,126 +100,7 @@ export type LeftPanelViewProps = {
   onCloseKnowledgeDialog: () => void
 }
 
-type OutlineFileRowProps = {
-  node: LeftPanelTreeNode
-  currentChapterPath: string | null
-  currentAssetPath: string | null
-  onSelectChapter: (path: string, id: string, title?: string) => void
-  onSelectAsset?: (relativePath: string) => void
-}
-
-function formatWordCount(value: number | undefined) {
-  if (!value || value <= 0) return '0'
-  if (value >= 1000) return `${(value / 1000).toFixed(1)}k`
-  return String(value)
-}
-
-function OutlineFileRow({
-  node,
-  currentChapterPath,
-  currentAssetPath,
-  onSelectChapter,
-  onSelectAsset,
-}: OutlineFileRowProps) {
-  const isChapterNode = node.kind === 'chapter'
-  const isAssetNode = node.kind === 'asset_file'
-  const activeAssetPath = node.assetRelativePath || null
-  const isActive = isChapterNode
-    ? currentChapterPath === node.path
-    : isAssetNode
-      ? activeAssetPath !== null && currentAssetPath === activeAssetPath
-      : false
-
-  const handleClick = () => {
-    if (isChapterNode && node.chapterId) {
-      onSelectChapter(node.path, node.chapterId, node.title)
-      return
-    }
-
-    if (isAssetNode && node.assetRelativePath && onSelectAsset) {
-      onSelectAsset(node.assetRelativePath)
-    }
-  }
-
-  return (
-    <button
-      type="button"
-      className={`editor-shell-outline-item${isActive ? ' is-active' : ''}`}
-      onClick={handleClick}
-      title={node.title || node.name}
-    >
-      <div className="editor-shell-outline-item-left">
-        {isActive ? (
-          <FileText size={14} className="editor-shell-outline-item-icon is-active" />
-        ) : (
-          <File size={14} className="editor-shell-outline-item-icon" />
-        )}
-        <span className="editor-shell-outline-item-title">{node.title || node.name}</span>
-      </div>
-      {isChapterNode ? (
-        <span className={`editor-shell-outline-item-count${isActive ? ' is-active' : ''}`}>
-          {formatWordCount(node.textLengthNoWhitespace)}
-        </span>
-      ) : null}
-    </button>
-  )
-}
-
-type OutlineVolumeBlockProps = {
-  node: LeftPanelTreeNode
-  currentChapterPath: string | null
-  currentAssetPath: string | null
-  onSelectChapter: (path: string, id: string, title?: string) => void
-  onSelectAsset?: (relativePath: string) => void
-}
-
-function OutlineVolumeBlock({
-  node,
-  currentChapterPath,
-  currentAssetPath,
-  onSelectChapter,
-  onSelectAsset,
-}: OutlineVolumeBlockProps) {
-  const open = useEditorUiStore((state) => !state.sidebarTreeCollapsedDirPaths[node.path])
-  const toggleCollapsed = useEditorUiStore((state) => state.toggleSidebarTreeDirCollapsed)
-  const chapterChildren = (node.children || []).filter((child) => child.kind === 'chapter' || child.kind === 'asset_file')
-
-  useEffect(() => {
-    useEditorUiStore.getState().registerSidebarTreeDirPath(node.path)
-  }, [node.path])
-
-  return (
-    <div className="editor-shell-volume-group">
-      <button
-        type="button"
-        className="editor-shell-volume-header"
-        onClick={() => toggleCollapsed(node.path)}
-      >
-        {open ? <ChevronRight size={12} className="editor-shell-volume-arrow is-open" /> : <ChevronRight size={12} className="editor-shell-volume-arrow" />}
-        <span className="editor-shell-volume-title">{node.title || node.name}</span>
-        <span className="editor-shell-volume-count">{chapterChildren.length}</span>
-      </button>
-
-      {open ? (
-        <div className="editor-shell-volume-children">
-          {chapterChildren.map((chapter) => (
-            <OutlineFileRow
-              key={chapter.path}
-              node={chapter}
-              currentChapterPath={currentChapterPath}
-              currentAssetPath={currentAssetPath}
-              onSelectChapter={onSelectChapter}
-              onSelectAsset={onSelectAsset}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function OutlineContent(input: LeftPanelViewProps) {
-  const { currentChapterPath, currentAssetPath } = useEditorStore()
   const volumes = useMemo(
     () => input.tree.filter((node) => node.kind === 'dir'),
     [input.tree],
@@ -251,16 +133,13 @@ function OutlineContent(input: LeftPanelViewProps) {
 
   return (
     <div className="editor-shell-outline-scroll">
-      {volumes.map((volume) => (
-        <OutlineVolumeBlock
-          key={volume.path}
-          node={volume}
-          currentChapterPath={currentChapterPath}
-          currentAssetPath={currentAssetPath}
-          onSelectChapter={input.onChapterSelect}
-          onSelectAsset={input.onAssetSelect}
-        />
-      ))}
+      <ContentTree
+        mode="manuscript"
+        variant="outline"
+        onChapterSelect={input.onChapterSelect}
+        onCreateChapterInVolume={input.onCreateChapterInVolumeDirect}
+        onAssetSelect={input.onAssetSelect}
+      />
     </div>
   )
 }
@@ -294,10 +173,10 @@ function SidebarHeader(input: Pick<LeftPanelViewProps, 'translations'>) {
       <button
         type="button"
         className="editor-shell-left-back"
-        onClick={() => navigate('workspace')}
+        onClick={() => navigate(projectPath ? 'project_home' : 'workspace')}
       >
         <ChevronLeft size={14} className="editor-shell-left-back-arrow" />
-        {input.translations.common.back}{input.translations.home.homePage}
+        {input.translations.common.back}{projectPath ? input.translations.home.projectHome : input.translations.home.homePage}
       </button>
 
       <div className="editor-shell-book-info">
@@ -309,6 +188,7 @@ function SidebarHeader(input: Pick<LeftPanelViewProps, 'translations'>) {
 }
 
 function SidebarTabs(input: {
+  translations: Pick<LeftPanelViewProps['translations'], 'editor'>
   activeTab: LeftPanelTab
   setActiveTab: (tab: LeftPanelTab) => void
 }) {
@@ -319,7 +199,7 @@ function SidebarTabs(input: {
         className={`editor-shell-left-tab${input.activeTab === 'outline' ? ' is-active' : ''}`}
         onClick={() => input.setActiveTab('outline')}
       >
-        大纲
+        {input.translations.editor.tableOfContents}
       </button>
       <button
         type="button"
@@ -473,7 +353,7 @@ export function LeftPanelView(input: LeftPanelViewProps) {
     <TooltipProvider>
       <div className="panel-sidebar editor-shell-left-panel" data-no-drag>
         <SidebarHeader translations={input.translations} />
-        <SidebarTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+        <SidebarTabs translations={input.translations} activeTab={activeTab} setActiveTab={setActiveTab} />
 
         {activeTab === 'outline' ? (
           <OutlineContent {...input} />

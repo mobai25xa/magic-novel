@@ -1,9 +1,10 @@
 use crate::models::{AppError, ErrorCode};
 use crate::services::{
     append_events_jsonl, delete_runtime_snapshot, ensure_dir, find_meta, load_index,
-    read_events_jsonl, recover_stream_file, save_index, session_index_path, session_settings_path,
-    session_stream_path, sessions_root, upsert_meta, AgentSessionEvent, AgentSessionIndex,
-    AgentSessionMeta, AgentSessionSettings, AGENT_SESSION_SCHEMA_VERSION,
+    load_runtime_snapshot, lock_session_index, read_events_jsonl, recover_stream_file, save_index,
+    session_index_path, session_settings_path, session_stream_path, sessions_root, upsert_meta,
+    AgentSessionEvent, AgentSessionIndex, AgentSessionMeta, AgentSessionSettings,
+    AGENT_SESSION_SCHEMA_VERSION,
 };
 use crate::utils::atomic_write::atomic_write_json;
 use chrono::Utc;
@@ -86,6 +87,150 @@ pub fn normalize_active_chapter(path: Option<String>) -> Option<String> {
         }
     })
 }
+
+fn apply_events_to_recovered_meta(meta: &mut AgentSessionMeta, events: &[AgentSessionEvent]) {
+    let mut last_turn = meta.last_turn;
+    let mut last_stop_reason = meta.last_stop_reason.clone();
+    let mut compaction_count = meta.compaction_count.unwrap_or(0);
+
+    for event in events {
+        if let Some(turn) = event.turn {
+            if last_turn.map_or(true, |value| turn > value) {
+                last_turn = Some(turn);
+            }
+        }
+
+        meta.updated_at = meta.updated_at.max(event.ts);
+
+        match event.event_type.as_str() {
+            "turn_completed" => {
+                last_stop_reason = event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("stop_reason"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .and_then(|value| match value {
+                        "success" | "cancel" | "error" | "limit" => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .or_else(|| Some("success".to_string()));
+            }
+            "turn_failed" => {
+                last_stop_reason = event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("stop_reason"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .and_then(|value| match value {
+                        "success" | "cancel" | "error" | "limit" => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .or_else(|| Some("error".to_string()));
+            }
+            "turn_cancelled" => {
+                last_stop_reason = event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("stop_reason"))
+                    .and_then(|value| value.as_str())
+                    .map(str::trim)
+                    .and_then(|value| match value {
+                        "success" | "cancel" | "error" | "limit" => Some(value.to_string()),
+                        _ => None,
+                    })
+                    .or_else(|| Some("cancel".to_string()));
+            }
+            "compaction_summary" | "compaction_fallback" => {
+                compaction_count = compaction_count.saturating_add(1);
+            }
+            _ => {}
+        }
+
+        if let Some(payload) = &event.payload {
+            if let Some(path) = payload
+                .get("active_chapter_path")
+                .and_then(|value| value.as_str())
+                .filter(|value| !value.trim().is_empty())
+            {
+                meta.active_chapter_path = Some(path.to_string());
+            }
+        }
+    }
+
+    meta.last_turn = last_turn;
+    meta.last_stop_reason = last_stop_reason;
+    meta.compaction_count = Some(compaction_count);
+}
+
+fn build_recovered_meta(
+    project_path: &Path,
+    session_id: &str,
+) -> Result<Option<AgentSessionMeta>, AppError> {
+    let runtime_snapshot = load_runtime_snapshot(project_path, session_id)?;
+    let events = load_session_events(project_path, session_id)?;
+
+    if runtime_snapshot.is_none() && events.is_empty() {
+        return Ok(None);
+    }
+
+    let now = Utc::now().timestamp_millis();
+    let first_event_ts = events.iter().map(|event| event.ts).min();
+    let last_event_ts = events.iter().map(|event| event.ts).max();
+    let snapshot_updated_at = runtime_snapshot
+        .as_ref()
+        .map(|snapshot| snapshot.updated_at);
+
+    let created_at = first_event_ts.or(snapshot_updated_at).unwrap_or(now);
+    let updated_at = last_event_ts
+        .or(snapshot_updated_at)
+        .unwrap_or(created_at)
+        .max(created_at);
+
+    let mut meta = AgentSessionMeta {
+        schema_version: AGENT_SESSION_SCHEMA_VERSION,
+        session_id: session_id.to_string(),
+        created_at,
+        updated_at,
+        title: None,
+        last_turn: runtime_snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.last_turn.map(i64::from)),
+        last_stop_reason: None,
+        active_chapter_path: None,
+        compaction_count: Some(0),
+    };
+
+    apply_events_to_recovered_meta(&mut meta, &events);
+    Ok(Some(meta))
+}
+
+fn load_or_repair_session_meta_locked(
+    project_path: &Path,
+    index_path: &Path,
+    index: &mut AgentSessionIndex,
+    session_id: &str,
+) -> Result<Option<AgentSessionMeta>, AppError> {
+    if let Some(meta) = find_meta(index, session_id) {
+        return Ok(Some(meta));
+    }
+
+    let Some(recovered) = build_recovered_meta(project_path, session_id)? else {
+        return Ok(None);
+    };
+
+    tracing::warn!(
+        target: "agent_session",
+        project_path = %project_path.display(),
+        session_id = %session_id,
+        "recovered agent session metadata from persisted files"
+    );
+    upsert_meta(index, recovered.clone());
+    save_index(index_path, index)?;
+
+    Ok(Some(recovered))
+}
 pub fn create_session_start_event(
     session_id: &str,
     now: i64,
@@ -140,6 +285,7 @@ pub fn load_session_index(project_path: &Path) -> Result<(PathBuf, AgentSessionI
     Ok((index_path, index))
 }
 pub fn save_session_meta(project_path: &Path, meta: AgentSessionMeta) -> Result<(), AppError> {
+    let _guard = lock_session_index();
     let (index_path, mut index) = load_session_index(project_path)?;
     upsert_meta(&mut index, meta);
     save_index(&index_path, &index)
@@ -162,13 +308,15 @@ pub fn load_session_meta(
     project_path: &Path,
     session_id: &str,
 ) -> Result<Option<AgentSessionMeta>, AppError> {
-    let (_, index) = load_session_index(project_path)?;
-    Ok(find_meta(&index, session_id))
+    let _guard = lock_session_index();
+    let (index_path, mut index) = load_session_index(project_path)?;
+    load_or_repair_session_meta_locked(project_path, &index_path, &mut index, session_id)
 }
 pub fn list_session_metas(
     project_path: &Path,
     limit: Option<usize>,
 ) -> Result<Vec<AgentSessionMeta>, AppError> {
+    let _guard = lock_session_index();
     let (_, mut index) = load_session_index(project_path)?;
     index
         .sessions
@@ -214,9 +362,11 @@ pub fn update_session_meta(
     active_chapter_path: Option<String>,
 ) -> Result<(), AppError> {
     let now = Utc::now().timestamp_millis();
+    let _guard = lock_session_index();
     let (index_path, mut index) = load_session_index(project_path)?;
-    let mut meta = find_meta(&index, session_id)
-        .ok_or_else(|| session_not_found_error(session_id, "session metadata not found"))?;
+    let mut meta =
+        load_or_repair_session_meta_locked(project_path, &index_path, &mut index, session_id)?
+            .ok_or_else(|| session_not_found_error(session_id, "session metadata not found"))?;
     if let Some(value) = title {
         meta.title = normalize_title(Some(value));
     }
@@ -257,6 +407,7 @@ pub fn delete_session(project_path: &Path, session_id: &str) -> Result<(), AppEr
 
     delete_runtime_snapshot(project_path, session_id)?;
 
+    let _guard = lock_session_index();
     let (index_path, mut index) = load_session_index(project_path)?;
     let original_len = index.sessions.len();
     index.sessions.retain(|meta| meta.session_id != session_id);

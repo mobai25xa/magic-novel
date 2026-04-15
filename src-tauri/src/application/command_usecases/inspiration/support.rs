@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use chrono::Utc;
 use serde::de::DeserializeOwned;
 
@@ -102,6 +104,95 @@ fn rebuild_conversation_from_events(
 
     state.current_turn = max_turn;
     state
+}
+
+fn merge_snapshot_conversation_with_event_messages(
+    snapshot_conversation: ConversationState,
+    event_conversation: &ConversationState,
+) -> ConversationState {
+    if event_conversation.messages.is_empty() {
+        return snapshot_conversation;
+    }
+
+    let mut merged = snapshot_conversation;
+    let mut known_message_ids = merged
+        .messages
+        .iter()
+        .map(|message| message.id.clone())
+        .collect::<HashSet<_>>();
+    let mut merged_signature_counts =
+        merged
+            .messages
+            .iter()
+            .fold(HashMap::<String, usize>::new(), |mut counts, message| {
+                *counts.entry(message.semantic_signature()).or_insert(0) += 1;
+                counts
+            });
+    let mut event_signature_seen_counts = HashMap::<String, usize>::new();
+
+    for message in &event_conversation.messages {
+        let signature = message.semantic_signature();
+        let snapshot_signature_count = merged_signature_counts
+            .get(&signature)
+            .copied()
+            .unwrap_or(0);
+        let event_signature_count = event_signature_seen_counts
+            .entry(signature.clone())
+            .and_modify(|count| *count += 1)
+            .or_insert(1);
+
+        if !known_message_ids.insert(message.id.clone()) {
+            continue;
+        }
+
+        if *event_signature_count <= snapshot_signature_count {
+            continue;
+        }
+
+        *merged_signature_counts.entry(signature).or_insert(0) += 1;
+        merged.messages.push(message.clone());
+    }
+
+    merged.current_turn = merged.current_turn.max(event_conversation.current_turn);
+    merged
+}
+
+fn runtime_state_from_terminal_event(
+    event: &InspirationSessionEvent,
+) -> Option<SessionRuntimeState> {
+    match event.event_type.as_str() {
+        "turn_completed" => Some(SessionRuntimeState::Completed),
+        "turn_failed" => Some(SessionRuntimeState::Failed),
+        "turn_cancelled" => Some(SessionRuntimeState::Cancelled),
+        _ => None,
+    }
+}
+
+fn latest_terminal_runtime_state(
+    events: &[InspirationSessionEvent],
+) -> Option<(i64, SessionRuntimeState)> {
+    let mut latest: Option<(i64, i64, SessionRuntimeState)> = None;
+
+    for event in events {
+        let Some(runtime_state) = runtime_state_from_terminal_event(event) else {
+            continue;
+        };
+
+        let turn = event.turn.unwrap_or_default();
+        let ts = event.ts;
+        let should_replace = latest
+            .as_ref()
+            .map(|(latest_turn, latest_ts, _)| {
+                turn > *latest_turn || (turn == *latest_turn && ts >= *latest_ts)
+            })
+            .unwrap_or(true);
+
+        if should_replace {
+            latest = Some((turn, ts, runtime_state));
+        }
+    }
+
+    latest.map(|(turn, _ts, runtime_state)| (turn, runtime_state))
 }
 
 fn parse_successful_tool_result<T>(message: &AgentMessage, expected_tool_name: &str) -> Option<T>
@@ -248,17 +339,31 @@ pub fn load_inspiration_session_snapshot(
 
     let events = load_session_events(session_id)?;
     let runtime_snapshot = load_runtime_snapshot(session_id)?;
+    let rebuilt_event_conversation = rebuild_conversation_from_events(session_id, &events);
     let (conversation, hydration_status, last_turn, next_turn_id, runtime_state) =
         if let Some(snapshot) = runtime_snapshot.clone() {
             let conversation = snapshot
                 .conversation
-                .unwrap_or_else(|| rebuild_conversation_from_events(session_id, &events));
+                .map(|conversation| {
+                    merge_snapshot_conversation_with_event_messages(
+                        conversation,
+                        &rebuilt_event_conversation,
+                    )
+                })
+                .unwrap_or_else(|| rebuilt_event_conversation.clone());
             let last_turn = snapshot.last_turn.or(Some(conversation.current_turn));
             let next_turn_id = Some(crate::agent_engine::session_state::derive_next_turn_id(
                 last_turn,
                 Some(&conversation),
                 snapshot.next_turn_id,
             ));
+            let runtime_state = latest_terminal_runtime_state(&events)
+                .filter(|(terminal_turn, _)| {
+                    let snapshot_turn = i64::from(last_turn.unwrap_or(conversation.current_turn));
+                    *terminal_turn >= snapshot_turn
+                })
+                .map(|(_turn, runtime_state)| runtime_state)
+                .unwrap_or(snapshot.runtime_state);
             (
                 conversation,
                 snapshot
@@ -266,7 +371,7 @@ pub fn load_inspiration_session_snapshot(
                     .unwrap_or_else(|| HYDRATION_STATUS_SNAPSHOT_LOADED.to_string()),
                 last_turn,
                 next_turn_id,
-                snapshot.runtime_state,
+                runtime_state,
             )
         } else if events.is_empty() {
             (
@@ -277,7 +382,7 @@ pub fn load_inspiration_session_snapshot(
                 SessionRuntimeState::Ready,
             )
         } else {
-            let conversation = rebuild_conversation_from_events(session_id, &events);
+            let conversation = rebuilt_event_conversation.clone();
             let last_turn = Some(conversation.current_turn);
             let next_turn_id = Some(crate::agent_engine::session_state::derive_next_turn_id(
                 last_turn,

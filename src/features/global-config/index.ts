@@ -13,8 +13,20 @@ import {
   type SkillDefinition,
   type WorkerDefinition,
 } from '@/platform/tauri/clients/global-config-client'
+import type {
+  ApprovalMode,
+  CapabilityMode,
+  ClarificationMode,
+} from '@/platform/tauri/clients/agent-engine-client'
 
-export type { CapabilityPreset, SkillDefinition, WorkerDefinition }
+export type {
+  ApprovalMode,
+  CapabilityMode,
+  CapabilityPreset,
+  ClarificationMode,
+  SkillDefinition,
+  WorkerDefinition,
+}
 export {
   BUILTIN_WORKER_TOOL_NAMES,
   WORKER_CAPABILITY_PRESETS,

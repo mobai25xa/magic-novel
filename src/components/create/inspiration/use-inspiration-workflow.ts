@@ -11,28 +11,24 @@ import type {
   OpenQuestionStatus,
 } from '@/features/inspiration/types'
 import { useStandardAiConsumerState } from '@/features/standard-ai-consumer'
-import { useTranslation } from '@/hooks/use-translation'
-import { AGENT_EVENT_CHANNEL } from '@/lib/agent-chat/runtime-backend-events/channels'
-import type { AgentEventEnvelope } from '@/lib/agent-chat/runtime-backend-events/types'
-import { formatUnknownError } from '@/lib/error-utils'
-import { useToast } from '@/magic-ui/components'
 import {
-  inspirationTurnCancelClient,
-  inspirationTurnStartClient,
-} from '@/platform/tauri/clients/inspiration-engine-client'
-import {
+  inspirationGenerateMetadataVariantsClient,
   inspirationSessionCreateClient,
   inspirationSessionDeleteClient,
   inspirationSessionListClient,
   inspirationSessionLoadClient,
   inspirationSessionSaveStateClient,
   inspirationSessionUpdateMetaClient,
-  type InspirationSessionMeta,
-} from '@/platform/tauri/clients/inspiration-session-client'
-import {
-  inspirationGenerateMetadataVariantsClient,
+  inspirationTurnCancelClient,
+  inspirationTurnStartClient,
   type InspirationMetadataVariantCandidate,
-} from '@/platform/tauri/clients/inspiration-variants-client'
+  type InspirationSessionMeta,
+} from '@/features/inspiration'
+import { useTranslation } from '@/hooks/use-translation'
+import { AGENT_EVENT_CHANNEL } from '@/lib/agent-chat/runtime-backend-events/channels'
+import type { AgentEventEnvelope } from '@/lib/agent-chat/runtime-backend-events/types'
+import { formatUnknownError } from '@/lib/error-utils'
+import { useToast } from '@/magic-ui/components'
 
 import {
   CONSENSUS_FIELD_IDS,
@@ -87,6 +83,8 @@ interface UseInspirationWorkflowInput {
   enabled: boolean
 }
 
+type InspirationSessionSnapshotPayload = Awaited<ReturnType<typeof inspirationSessionLoadClient>>['snapshot']
+
 export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
   const { translations } = useTranslation()
   const { addToast } = useToast()
@@ -96,6 +94,9 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
   const createSessionOpRef = useRef<{ id: number; promise: Promise<string | null> } | null>(null)
   const createSessionSeqRef = useRef(0)
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sessionIdRef = useRef<string | null>(null)
+  const activeTurnIdRef = useRef<number | null>(null)
+  const loadSnapshotRef = useRef<(nextSessionId?: string) => Promise<InspirationSessionSnapshotPayload | null>>(async () => null)
 
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [sessionList, setSessionList] = useState<InspirationSessionMeta[]>([])
@@ -118,6 +119,16 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
   const [chatError, setChatError] = useState<string | null>(null)
   const [runtimeState, setRuntimeState] = useState('idle')
 
+  const updateSessionId = useCallback((nextSessionId: string | null) => {
+    sessionIdRef.current = nextSessionId
+    setSessionId(nextSessionId)
+  }, [])
+
+  const updateActiveTurnId = useCallback((nextTurnId: number | null) => {
+    activeTurnIdRef.current = nextTurnId
+    setActiveTurnId(nextTurnId)
+  }, [])
+
   useEffect(() => {
     return () => {
       if (persistTimerRef.current) {
@@ -127,7 +138,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
     }
   }, [])
 
-  const applySnapshot = useCallback((snapshot: Awaited<ReturnType<typeof inspirationSessionLoadClient>>['snapshot']) => {
+  const applySnapshot = useCallback((snapshot: InspirationSessionSnapshotPayload) => {
     setMessages(mapInspirationMessagesToChatMessages(snapshot.messages))
     setConsensus(snapshot.consensus)
     setOpenQuestions(snapshot.open_questions)
@@ -136,7 +147,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
   }, [])
 
   const clearSessionWorkingState = useCallback(() => {
-    setSessionId(null)
+    updateSessionId(null)
     setMessages([])
     setConsensus(createEmptyConsensusState())
     setOpenQuestions([])
@@ -147,13 +158,13 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
     setChatInput('')
     setPendingUserMessage(null)
     setPendingAssistantText('')
-    setActiveTurnId(null)
+    updateActiveTurnId(null)
     setLoadingSession(false)
     setRunningTurn(false)
     setGeneratingVariants(false)
     setChatError(null)
     setRuntimeState('idle')
-  }, [])
+  }, [updateActiveTurnId, updateSessionId])
 
   const loadSessionList = useCallback(async (limit?: number) => {
     const runId = runIdRef.current
@@ -200,7 +211,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
         return loaded.snapshot
       }
 
-      setSessionId(loaded.session_id)
+      updateSessionId(loaded.session_id)
       applySnapshot(loaded.snapshot)
       return loaded.snapshot
     } catch (error) {
@@ -221,7 +232,11 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
         setLoadingSession(false)
       }
     }
-  }, [addToast, applySnapshot, sessionId, translations.common.error])
+  }, [addToast, applySnapshot, sessionId, translations.common.error, updateSessionId])
+
+  useEffect(() => {
+    loadSnapshotRef.current = loadSnapshot
+  }, [loadSnapshot])
 
   const persistStateNow = useCallback(async (
     nextConsensus: InspirationConsensusState,
@@ -376,7 +391,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
     }
 
     clearSessionWorkingState()
-    setSessionId(targetSessionId)
+    updateSessionId(targetSessionId)
     const snapshot = await loadSnapshot(targetSessionId)
     if (snapshot) {
       return
@@ -386,7 +401,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
 
     if (previousSessionId && previousSessionId !== targetSessionId) {
       runIdRef.current += 1
-      setSessionId(previousSessionId)
+      updateSessionId(previousSessionId)
       await loadSnapshot(previousSessionId)
       return
     }
@@ -401,6 +416,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
     runningTurn,
     sessionId,
     translations.common.warning,
+    updateSessionId,
   ])
 
   const newSession = useCallback(async () => {
@@ -530,21 +546,24 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
   ])
 
   useEffect(() => {
-    if (!input.enabled || !sessionId) {
+    if (!input.enabled) {
       return
     }
 
-    const runId = runIdRef.current
     let unlisten: UnlistenFn | null = null
+    let disposed = false
     void listen<AgentEventEnvelope>(AGENT_EVENT_CHANNEL, (event) => {
-      if (runIdRef.current !== runId) {
+      const currentSessionId = sessionIdRef.current
+      if (!currentSessionId) {
         return
       }
 
       const envelope = event.payload
-      if (envelope.session_id !== sessionId) {
+      if (envelope.session_id !== currentSessionId) {
         return
       }
+
+      const currentActiveTurnId = activeTurnIdRef.current
 
       switch (envelope.type) {
         case 'TURN_STARTED':
@@ -552,46 +571,51 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
           setRunningTurn(true)
           return
         case 'ASSISTANT_TEXT_DELTA':
-          if (activeTurnId !== null && envelope.turn_id !== activeTurnId) {
+          if (currentActiveTurnId !== null && envelope.turn_id !== currentActiveTurnId) {
             return
           }
           setPendingAssistantText((current) => current + String(envelope.payload.delta ?? ''))
           return
         case 'TURN_COMPLETED':
         case 'TURN_CANCELLED':
-          if (activeTurnId !== null && envelope.turn_id !== activeTurnId) {
+          if (currentActiveTurnId !== null && envelope.turn_id !== currentActiveTurnId) {
             return
           }
-          setActiveTurnId(null)
+          updateActiveTurnId(null)
           setRunningTurn(false)
           setPendingUserMessage(null)
           setPendingAssistantText('')
-          void loadSnapshot(sessionId)
+          void loadSnapshotRef.current(currentSessionId)
           return
         case 'TURN_FAILED':
-          if (activeTurnId !== null && envelope.turn_id !== activeTurnId) {
+          if (currentActiveTurnId !== null && envelope.turn_id !== currentActiveTurnId) {
             return
           }
-          setActiveTurnId(null)
+          updateActiveTurnId(null)
           setRunningTurn(false)
           setPendingUserMessage(null)
           setPendingAssistantText('')
           setChatError(summarizeTurnFailure(envelope.payload))
-          void loadSnapshot(sessionId)
+          void loadSnapshotRef.current(currentSessionId)
           return
         default:
           return
       }
     }).then((stopListening) => {
+      if (disposed) {
+        stopListening()
+        return
+      }
       unlisten = stopListening
     }).catch((error) => {
       console.error('Failed to listen inspiration agent events:', error)
     })
 
     return () => {
+      disposed = true
       unlisten?.()
     }
-  }, [activeTurnId, input.enabled, loadSnapshot, sessionId])
+  }, [input.enabled, updateActiveTurnId])
 
   const sendMessage = useCallback(async () => {
     const text = chatInput.trim()
@@ -628,7 +652,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
         return
       }
 
-      setActiveTurnId(started.turn_id)
+      updateActiveTurnId(started.turn_id)
       setRunningTurn(true)
       setRuntimeState('running')
     } catch (error) {
@@ -656,6 +680,7 @@ export function useInspirationWorkflow(input: UseInspirationWorkflowInput) {
     sessionId,
     standardAi.providerConfig,
     translations.common.error,
+    updateActiveTurnId,
   ])
 
   const cancelTurn = useCallback(async () => {

@@ -7,6 +7,7 @@ export type EmbeddingSource = 'provider' | 'local'
 export type ProviderType = 'openai' | 'anthropic' | 'gemini' | 'openai-compatible'
 export type ApprovalMode = 'confirm_writes' | 'auto'
 export type CapabilityMode = 'writing' | 'planning'
+export type PlanningGenerationMode = 'follow_primary' | 'dedicated'
 
 export interface EmbeddingAvailability {
   enabled: boolean
@@ -29,6 +30,15 @@ export interface OpenAiProviderSettingsInput {
   enabledModels: string[]
 }
 
+export interface PlanningProviderSettingsInput {
+  generationMode: PlanningGenerationMode
+  providerType: ProviderType
+  baseUrl: string
+  apiKey: string
+  model: string
+  enabledModels: string[]
+}
+
 export interface SettingsState {
   projectsRootDir: string | null
 
@@ -46,6 +56,12 @@ export interface SettingsState {
   openaiEmbeddingDetected: boolean
   openaiEmbeddingDetectionReason?: string
   openaiEnabledModels: string[]
+  planningGenerationMode: PlanningGenerationMode
+  planningProviderType: ProviderType
+  planningBaseUrl: string
+  planningApiKey: string
+  planningModel: string
+  planningEnabledModels: string[]
 
   dailyWordGoal: number
   theme: ThemeMode
@@ -69,6 +85,8 @@ export interface SettingsState {
   setProviderType: (type: ProviderType) => void
   setOpenAiProviderSettings: (input: OpenAiProviderSettingsInput) => void
   setOpenAiModel: (model: string) => void
+  setPlanningGenerationMode: (mode: PlanningGenerationMode) => void
+  setPlanningProviderSettings: (input: PlanningProviderSettingsInput) => void
   setOpenAiEmbeddingSource: (source: EmbeddingSource) => void
   setOpenAiEmbeddingEnabled: (enabled: boolean) => void
   setOpenAiEmbeddingAvailability: (input: EmbeddingAvailability) => void

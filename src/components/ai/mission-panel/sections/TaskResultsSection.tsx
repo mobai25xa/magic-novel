@@ -1,5 +1,5 @@
 import { AiStatusBadge } from '@/components/ai/status-badge'
-import type { MissionResultEntry } from '@/lib/tauri-commands/mission'
+import type { MissionResultEntry } from '@/features/agent-chat'
 
 type TaskResultsSectionProps = {
   taskResults: MissionResultEntry[]

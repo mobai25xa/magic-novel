@@ -1,13 +1,18 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import type { ProjectBootstrapStatus } from '@/platform/tauri/clients/project-client'
+import type {
+  PlanningManifest,
+  ProjectBootstrapStatus,
+} from '@/platform/tauri/clients/project-client'
 
 interface Project {
   projectId: string
   name: string
   author: string
   description?: string
+  bootstrapState?: string
+  bootstrapUpdatedAt?: number
   createdAt: number
   updatedAt: number
 }
@@ -60,6 +65,8 @@ interface ProjectState {
   selectedPath: string | null
   bootstrapStatus: ProjectBootstrapStatus | null
   bootstrapStatusProjectPath: string | null
+  planningManifest: PlanningManifest | null
+  planningManifestProjectPath: string | null
 
   // Project list (recent projects)
   projectList: ProjectListItem[]
@@ -74,6 +81,8 @@ interface ProjectState {
   setSelectedPath: (path: string | null) => void
   setBootstrapStatus: (projectPath: string, status: ProjectBootstrapStatus | null) => void
   clearBootstrapStatus: (projectPath?: string | null) => void
+  setPlanningManifest: (projectPath: string, planningManifest: PlanningManifest | null) => void
+  clearPlanningManifest: (projectPath?: string | null) => void
   addToProjectList: (item: ProjectListItem) => void
   removeFromProjectList: (path: string) => void
   replaceRecycledProjects: (items: RecycledProject[]) => void
@@ -94,6 +103,8 @@ export const useProjectStore = create<ProjectState>()(
       selectedPath: null,
       bootstrapStatus: null,
       bootstrapStatusProjectPath: null,
+      planningManifest: null,
+      planningManifestProjectPath: null,
       projectList: [],
       recycledProjects: [],
       
@@ -104,6 +115,8 @@ export const useProjectStore = create<ProjectState>()(
               projectPath,
               bootstrapStatus: null,
               bootstrapStatusProjectPath: null,
+              planningManifest: null,
+              planningManifestProjectPath: null,
             }
       )),
       setProject: (project) => set({ project }),
@@ -121,6 +134,20 @@ export const useProjectStore = create<ProjectState>()(
         return {
           bootstrapStatus: null,
           bootstrapStatusProjectPath: null,
+        }
+      }),
+      setPlanningManifest: (projectPath, planningManifest) => set({
+        planningManifest,
+        planningManifestProjectPath: planningManifest ? projectPath : null,
+      }),
+      clearPlanningManifest: (projectPath) => set((state) => {
+        if (projectPath && state.planningManifestProjectPath && state.planningManifestProjectPath !== projectPath) {
+          return state
+        }
+
+        return {
+          planningManifest: null,
+          planningManifestProjectPath: null,
         }
       }),
       
@@ -155,6 +182,8 @@ export const useProjectStore = create<ProjectState>()(
         selectedPath: null,
         bootstrapStatus: null,
         bootstrapStatusProjectPath: null,
+        planningManifest: null,
+        planningManifestProjectPath: null,
         projectList: [],
         recycledProjects: []
       }),
@@ -166,6 +195,8 @@ export const useProjectStore = create<ProjectState>()(
         selectedPath: null,
         bootstrapStatus: null,
         bootstrapStatusProjectPath: null,
+        planningManifest: null,
+        planningManifestProjectPath: null,
         projectList: items,
         recycledProjects: recycled,
       }),
@@ -177,6 +208,8 @@ export const useProjectStore = create<ProjectState>()(
         selectedPath: null,
         bootstrapStatus: null,
         bootstrapStatusProjectPath: null,
+        planningManifest: null,
+        planningManifestProjectPath: null,
       }),
     }),
     {

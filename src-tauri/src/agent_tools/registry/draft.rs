@@ -67,11 +67,7 @@ impl ToolDefinition for DraftWriteTool {
                 },
                 "length_target": { "type": "number" },
                 "dry_run": { "type": "boolean" },
-                "idempotency_key": { "type": "string" },
-                "timeout_ms": {
-                    "type": "number",
-                    "description": "Requested time budget (ms). Clamped to tool hard cap."
-                }
+                "idempotency_key": { "type": "string" }
             },
             "required": ["target_ref", "write_mode", "instruction", "content"],
             "additionalProperties": false

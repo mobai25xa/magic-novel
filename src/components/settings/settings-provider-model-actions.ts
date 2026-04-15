@@ -38,6 +38,30 @@ export function syncProviderDraftFromStore(input: {
   input.temp.setTempModelFetchError('')
 }
 
+export function syncPlanningDraftFromStore(input: {
+  settings: {
+    planningGenerationMode: 'follow_primary' | 'dedicated'
+    planningProviderType: 'openai' | 'anthropic' | 'gemini' | 'openai-compatible'
+    planningBaseUrl: string
+    planningApiKey: string
+    planningModel: string
+    planningEnabledModels: string[]
+  }
+  temp: TempState
+}) {
+  input.temp.setTempPlanningGenerationMode(
+    input.settings.planningGenerationMode === 'dedicated' ? 'dedicated' : 'follow_primary',
+  )
+  input.temp.setTempPlanningProviderType(input.settings.planningProviderType || 'openai-compatible')
+  input.temp.setTempPlanningBaseUrl(input.settings.planningBaseUrl || '')
+  input.temp.setTempPlanningApiKey(input.settings.planningApiKey || '')
+  input.temp.setTempPlanningModel(input.settings.planningModel || '')
+  input.temp.setTempPlanningEnabledModels(input.settings.planningEnabledModels)
+  input.temp.setTempPlanningFetchedModels([])
+  input.temp.setTempPlanningFetchingModels(false)
+  input.temp.setTempPlanningModelFetchError('')
+}
+
 function normalizeModelList(models: string[]) {
   const seen = new Set<string>()
   const normalized: string[] = []
@@ -172,5 +196,40 @@ export async function fetchEmbeddingModelsAction(temp: TempState) {
     temp.setTempModelFetchError(message)
   } finally {
     temp.setTempFetchingModels(false)
+  }
+}
+
+export async function fetchPlanningModelsAction(temp: TempState) {
+  try {
+    temp.setTempPlanningFetchingModels(true)
+    temp.setTempPlanningModelFetchError('')
+
+    const result = await fetchOpenAiModelsFeature({
+      openai_base_url: temp.tempPlanningBaseUrl.trim(),
+      openai_api_key: temp.tempPlanningApiKey.trim(),
+    })
+
+    const resolved = resolveVisibleModels({
+      fetchedModels: result.models,
+      previousEnabledModels: temp.tempPlanningEnabledModels,
+      preferredModel: temp.tempPlanningModel,
+    })
+
+    if (resolved.fetched.length === 0) {
+      temp.setTempPlanningFetchedModels([])
+      temp.setTempPlanningEnabledModels([])
+      temp.setTempPlanningModel('')
+      temp.setTempPlanningModelFetchError('E_AI_MODELS_EMPTY')
+      return
+    }
+
+    temp.setTempPlanningFetchedModels(resolved.fetched)
+    temp.setTempPlanningEnabledModels(resolved.enabled)
+    temp.setTempPlanningModel(resolved.selected)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    temp.setTempPlanningModelFetchError(message)
+  } finally {
+    temp.setTempPlanningFetchingModels(false)
   }
 }

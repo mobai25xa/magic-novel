@@ -5,6 +5,7 @@ use crate::services::{ensure_dir, read_json};
 use crate::utils::atomic_write::atomic_write_json;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use tauri::command;
 
 const PROJECT_FILE: &str = "project.json";
@@ -18,6 +19,17 @@ const RECYCLE_PROJECTS_DIR: &str = "recycle_projects";
 const RECYCLE_SCHEMA_VERSION: i32 = 1;
 const RETENTION_DAYS: i64 = 30;
 const DAY_MS: i64 = 24 * 60 * 60 * 1000;
+
+fn recycle_index_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn lock_recycle_index() -> MutexGuard<'static, ()> {
+    recycle_index_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -211,6 +223,7 @@ fn normalize_rel(path: &str) -> String {
 #[command]
 pub async fn list_recycle_items(project_path: String) -> Result<Vec<RecycleItem>, AppError> {
     let project_path = PathBuf::from(&project_path);
+    let _guard = lock_recycle_index();
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 
@@ -251,6 +264,7 @@ pub async fn trash_volume(project_path: String, volume_path: String) -> Result<(
 pub fn trash_chapter_usecase(project_path: &str, chapter_path: &str) -> Result<(), AppError> {
     let project_path = PathBuf::from(project_path);
     let chapter_path = normalize_rel(chapter_path);
+    let _guard = lock_recycle_index();
 
     let chapter_full_path = project_path.join(MANUSCRIPTS_DIR).join(&chapter_path);
     if !chapter_full_path.exists() {
@@ -323,6 +337,7 @@ pub fn trash_chapter_usecase(project_path: &str, chapter_path: &str) -> Result<(
 pub fn trash_volume_usecase(project_path: &str, volume_path: &str) -> Result<(), AppError> {
     let project_path = PathBuf::from(project_path);
     let volume_path = normalize_rel(volume_path);
+    let _guard = lock_recycle_index();
 
     let volume_full_path = project_path.join(MANUSCRIPTS_DIR).join(&volume_path);
     if !volume_full_path.exists() {
@@ -373,6 +388,7 @@ pub fn find_recycle_item_id_by_original_rel_path_usecase(
     original_rel_path: &str,
 ) -> Result<Option<String>, AppError> {
     let project_path = PathBuf::from(project_path);
+    let _guard = lock_recycle_index();
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 
@@ -395,6 +411,7 @@ pub async fn restore_recycle_item(project_path: String, item_id: String) -> Resu
 
 pub fn restore_recycle_item_usecase(project_path: &str, item_id: &str) -> Result<(), AppError> {
     let project_path = PathBuf::from(project_path);
+    let _guard = lock_recycle_index();
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 
@@ -450,6 +467,7 @@ pub async fn permanently_delete_recycle_item(
     item_id: String,
 ) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
+    let _guard = lock_recycle_index();
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 
@@ -467,6 +485,7 @@ pub async fn permanently_delete_recycle_item(
 #[command]
 pub async fn empty_recycle_bin(project_path: String) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
+    let _guard = lock_recycle_index();
     let index_path = recycle_index_path(&project_path);
     let mut index = load_recycle_index(&index_path)?;
 
@@ -483,6 +502,7 @@ pub async fn empty_recycle_bin(project_path: String) -> Result<(), AppError> {
 #[command]
 pub async fn list_recycled_projects(root_dir: String) -> Result<Vec<RecycleItem>, AppError> {
     let root_dir = PathBuf::from(&root_dir);
+    let _guard = lock_recycle_index();
     let index_path = projects_recycle_index_path(&root_dir);
     let mut index = load_recycled_project_index(&index_path)?;
 
@@ -514,6 +534,7 @@ pub async fn list_recycled_projects(root_dir: String) -> Result<Vec<RecycleItem>
 #[command]
 pub async fn trash_project(project_path: String) -> Result<(), AppError> {
     let project_path = PathBuf::from(&project_path);
+    let _guard = lock_recycle_index();
 
     if !project_path.exists() {
         return Ok(());
@@ -567,6 +588,7 @@ pub async fn trash_project(project_path: String) -> Result<(), AppError> {
 #[command]
 pub async fn restore_recycled_project(root_dir: String, item_id: String) -> Result<(), AppError> {
     let root_dir = PathBuf::from(&root_dir);
+    let _guard = lock_recycle_index();
     let index_path = projects_recycle_index_path(&root_dir);
     let mut index = load_recycled_project_index(&index_path)?;
 
@@ -598,6 +620,7 @@ pub async fn permanently_delete_recycled_project(
     item_id: String,
 ) -> Result<(), AppError> {
     let root_dir = PathBuf::from(&root_dir);
+    let _guard = lock_recycle_index();
     let index_path = projects_recycle_index_path(&root_dir);
     let mut index = load_recycled_project_index(&index_path)?;
 
@@ -615,6 +638,7 @@ pub async fn permanently_delete_recycled_project(
 #[command]
 pub async fn empty_recycled_projects(root_dir: String) -> Result<(), AppError> {
     let root_dir = PathBuf::from(&root_dir);
+    let _guard = lock_recycle_index();
     let index_path = projects_recycle_index_path(&root_dir);
     let mut index = load_recycled_project_index(&index_path)?;
 

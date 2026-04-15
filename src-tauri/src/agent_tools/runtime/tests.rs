@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use crate::agent_tools::runtime::{execute_draft_write, execute_structure_edit};
+use crate::agent_tools::runtime::{
+    execute_context_read, execute_context_search, execute_draft_write, execute_knowledge_write,
+    execute_structure_edit, execute_workspace_map,
+};
 use crate::models::{Chapter, ProjectMetadata, VolumeMetadata};
 use crate::services::{ensure_dir, read_json, write_json};
 
@@ -240,5 +243,145 @@ fn draft_write_commit_updates_chapter_doc_and_revision_meta() {
     assert_eq!(
         blocks[0].get("type").and_then(|v| v.as_str()),
         Some("heading")
+    );
+}
+
+#[test]
+fn legacy_timeout_ms_is_accepted_for_backward_compatibility() {
+    let project_path = create_temp_project();
+    let volume = create_volume(&project_path, "卷一");
+    let chapter = create_chapter(&project_path, &volume.volume_id, "第一章");
+
+    let workspace_map = execute_workspace_map(
+        &project_path.to_string_lossy(),
+        json!({
+            "scope": "book",
+            "timeout_ms": 1500
+        }),
+        "call_test_workspace_timeout".to_string(),
+    );
+    assert!(
+        workspace_map.ok,
+        "workspace_map should accept legacy timeout_ms: {:?}",
+        workspace_map.error
+    );
+
+    let context_read = execute_context_read(
+        &project_path.to_string_lossy(),
+        json!({
+            "target_ref": chapter_ref(&volume.volume_id, &chapter.id),
+            "timeout_ms": 1500
+        }),
+        "call_test_context_read_timeout".to_string(),
+    );
+    assert!(
+        context_read.ok,
+        "context_read should accept legacy timeout_ms: {:?}",
+        context_read.error
+    );
+
+    let context_search = execute_context_search(
+        &project_path.to_string_lossy(),
+        json!({
+            "query": "第一章",
+            "timeout_ms": 1500
+        }),
+        "call_test_context_search_timeout".to_string(),
+    );
+    assert!(
+        context_search.ok,
+        "context_search should accept legacy timeout_ms: {:?}",
+        context_search.error
+    );
+
+    let draft_write = execute_draft_write(
+        &project_path.to_string_lossy(),
+        json!({
+            "target_ref": chapter_ref(&volume.volume_id, &chapter.id),
+            "write_mode": "rewrite",
+            "instruction": "rewrite softly",
+            "content": { "kind": "markdown", "value": "# 标题\n\n正文" },
+            "dry_run": true,
+            "timeout_ms": 1500
+        }),
+        "call_test_draft_timeout".to_string(),
+    );
+    assert!(
+        draft_write.ok,
+        "draft_write should accept legacy timeout_ms: {:?}",
+        draft_write.error
+    );
+
+    let structure_edit = execute_structure_edit(
+        &project_path.to_string_lossy(),
+        json!({
+            "op": "create",
+            "node_type": "chapter",
+            "parent_ref": volume_ref(&volume.volume_id),
+            "title": "新章",
+            "dry_run": true,
+            "timeout_ms": 1500
+        }),
+        "call_test_structure_timeout".to_string(),
+    );
+    assert!(
+        structure_edit.ok,
+        "structure_edit should accept legacy timeout_ms: {:?}",
+        structure_edit.error
+    );
+}
+
+#[test]
+fn structure_edit_rejects_knowledge_item_at_schema_boundary() {
+    let project_path = create_temp_project();
+
+    let result = execute_structure_edit(
+        &project_path.to_string_lossy(),
+        json!({
+            "op": "create",
+            "node_type": "knowledge_item",
+            "title": "设定项"
+        }),
+        "call_test_structure_knowledge_item".to_string(),
+    );
+
+    assert!(!result.ok);
+    assert_eq!(
+        result.error.as_ref().map(|err| err.code.as_str()),
+        Some("E_TOOL_SCHEMA_INVALID")
+    );
+    assert!(result
+        .error
+        .as_ref()
+        .and_then(|err| Some(err.message.contains("knowledge_item")))
+        .unwrap_or(false));
+}
+
+#[test]
+fn knowledge_write_reports_nested_fields_path_for_non_object_fields() {
+    let project_path = create_temp_project();
+
+    let result = execute_knowledge_write(
+        &project_path.to_string_lossy(),
+        json!({
+            "op": "propose",
+            "changes": [{
+                "target_ref": "knowledge:.magic_novel/terms/foo.json",
+                "kind": "add",
+                "fields": "summary = foo"
+            }],
+            "dry_run": true
+        }),
+        "call_test_knowledge_write_fields_path".to_string(),
+    );
+
+    assert!(!result.ok);
+    assert_eq!(
+        result.error.as_ref().map(|err| err.code.as_str()),
+        Some("E_TOOL_SCHEMA_INVALID")
+    );
+    assert_eq!(
+        result.error.as_ref().map(|err| err.message.as_str()),
+        Some("changes[0].fields must be an object, got string")
     );
 }

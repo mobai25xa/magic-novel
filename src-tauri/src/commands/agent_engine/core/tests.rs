@@ -10,6 +10,18 @@ fn setup_temp_project() -> std::path::PathBuf {
     base
 }
 
+fn write_test_ai_settings(root: &std::path::Path, base_url: &str, api_key: &str) {
+    let settings_dir = root.join(".magic");
+    std::fs::create_dir_all(&settings_dir).expect("create ai settings dir");
+    let settings = crate::services::OpenAiSearchSettings {
+        openai_base_url: base_url.to_string(),
+        openai_api_key: api_key.to_string(),
+        ..Default::default()
+    };
+    let raw = serde_json::to_string_pretty(&settings).expect("serialize ai settings");
+    std::fs::write(settings_dir.join("setting.json"), raw).expect("write ai settings");
+}
+
 #[test]
 fn apply_system_prompt_inserts_default_for_empty_state() {
     let mut state = ConversationState::new("s1".to_string());
@@ -556,90 +568,95 @@ fn hydrate_existing_session_on_start_rejects_missing_runtime_for_historical_sess
 
 #[test]
 fn hydrate_existing_session_on_start_rejects_resumable_suspended_session() {
-    let project = setup_temp_project();
-    let session_id = format!("test_suspended_runtime_{}", uuid::Uuid::new_v4());
+    crate::test_support::ai_settings_env::with_temp_root(|settings_root| {
+        write_test_ai_settings(settings_root, "https://api.openai.com/v1", "secret");
 
-    let stream_path = crate::services::session_stream_path(project.as_path(), &session_id);
-    let event = crate::services::AgentSessionEvent {
-        schema_version: crate::services::AGENT_SESSION_SCHEMA_VERSION,
-        event_type: "turn_state".to_string(),
-        session_id: session_id.clone(),
-        ts: chrono::Utc::now().timestamp_millis(),
-        event_id: Some(format!("evt_{}", uuid::Uuid::new_v4())),
-        event_seq: Some(1),
-        dedupe_key: None,
-        turn: Some(1),
-        payload: Some(serde_json::json!({
-            "state": "waiting_confirmation",
-            "call_id": "tool_1",
-        })),
-    };
-    crate::services::append_events_jsonl(&stream_path, &[event]).expect("append event");
+        let project = setup_temp_project();
+        let session_id = format!("test_suspended_runtime_{}", uuid::Uuid::new_v4());
 
-    let now = chrono::Utc::now().timestamp_millis();
-    let meta = crate::services::AgentSessionMeta {
-        schema_version: crate::services::AGENT_SESSION_SCHEMA_VERSION,
-        session_id: session_id.clone(),
-        title: Some("suspended".to_string()),
-        created_at: now,
-        updated_at: now,
-        last_turn: Some(1),
-        last_stop_reason: Some("limit".to_string()),
-        active_chapter_path: None,
-        compaction_count: Some(0),
-    };
-    crate::application::command_usecases::agent_session_support::save_session_meta(
-        project.as_path(),
-        meta,
-    )
-    .expect("save meta");
+        let stream_path = crate::services::session_stream_path(project.as_path(), &session_id);
+        let event = crate::services::AgentSessionEvent {
+            schema_version: crate::services::AGENT_SESSION_SCHEMA_VERSION,
+            event_type: "turn_state".to_string(),
+            session_id: session_id.clone(),
+            ts: chrono::Utc::now().timestamp_millis(),
+            event_id: Some(format!("evt_{}", uuid::Uuid::new_v4())),
+            event_seq: Some(1),
+            dedupe_key: None,
+            turn: Some(1),
+            payload: Some(serde_json::json!({
+                "state": "waiting_confirmation",
+                "call_id": "tool_1",
+            })),
+        };
+        crate::services::append_events_jsonl(&stream_path, &[event]).expect("append event");
 
-    let mut conversation = ConversationState::new(session_id.clone());
-    conversation
-        .messages
-        .push(AgentMessage::user("needs confirmation".to_string()));
-    conversation.current_turn = 1;
+        let now = chrono::Utc::now().timestamp_millis();
+        let meta = crate::services::AgentSessionMeta {
+            schema_version: crate::services::AGENT_SESSION_SCHEMA_VERSION,
+            session_id: session_id.clone(),
+            title: Some("suspended".to_string()),
+            created_at: now,
+            updated_at: now,
+            last_turn: Some(1),
+            last_stop_reason: Some("limit".to_string()),
+            active_chapter_path: None,
+            compaction_count: Some(0),
+        };
+        crate::application::command_usecases::agent_session_support::save_session_meta(
+            project.as_path(),
+            meta,
+        )
+        .expect("save meta");
 
-    let suspended = crate::agent_engine::session_state::SuspendedTurnState {
-        conversation_state: conversation,
-        pending_tool_call: crate::agent_engine::types::ToolCallInfo {
-            llm_call_id: "call_1".to_string(),
-            tool_name: "edit".to_string(),
-            args: serde_json::json!({"path": "chapter1.md"}),
-        },
-        pending_call_id: "pending_1".to_string(),
-        remaining_tool_calls: Vec::new(),
-        completed_messages: Vec::new(),
-        loop_config: LoopConfig::default(),
-        project_path: project.to_string_lossy().to_string(),
-        provider_name: "openai-compatible".to_string(),
-        model: "gpt-4o-mini".to_string(),
-        base_url: "https://api.openai.com/v1".to_string(),
-        api_key: "secret".to_string(),
-        active_chapter_path: None,
-        active_skill: None,
-        system_prompt: None,
-        suspend_reason: StopReason::WaitingConfirmation,
-        rounds_executed: 1,
-        total_tool_calls: 1,
-    };
+        let mut conversation = ConversationState::new(session_id.clone());
+        conversation
+            .messages
+            .push(AgentMessage::user("needs confirmation".to_string()));
+        conversation.current_turn = 1;
 
-    crate::services::save_runtime_snapshot_from_input(
-        project.as_path(),
-        RuntimeSnapshotUpsertInput::from_suspended(session_id.clone(), suspended, Some(1)),
-    )
-    .expect("save suspended snapshot");
+        let suspended = crate::agent_engine::session_state::SuspendedTurnState {
+            conversation_state: conversation,
+            pending_tool_call: crate::agent_engine::types::ToolCallInfo {
+                llm_call_id: "call_1".to_string(),
+                tool_name: "edit".to_string(),
+                args: serde_json::json!({"path": "chapter1.md"}),
+            },
+            pending_call_id: "pending_1".to_string(),
+            remaining_tool_calls: Vec::new(),
+            completed_messages: Vec::new(),
+            loop_config: LoopConfig::default(),
+            project_path: project.to_string_lossy().to_string(),
+            provider_name: "openai-compatible".to_string(),
+            model: "gpt-4o-mini".to_string(),
+            base_url: "https://api.openai.com/v1".to_string(),
+            api_key: "secret".to_string(),
+            active_chapter_path: None,
+            active_skill: None,
+            system_prompt: None,
+            suspend_reason: StopReason::WaitingConfirmation,
+            rounds_executed: 1,
+            total_tool_calls: 1,
+        };
 
-    let err = hydrate_existing_session_on_start(project.to_string_lossy().as_ref(), &session_id)
-        .expect_err("suspended session should require resume");
-    let details = err.details.expect("error details");
-    let code = details
-        .get("code")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    assert_eq!(code, "E_AGENT_SESSION_RESUME_NOT_SUPPORTED");
+        crate::services::save_runtime_snapshot_from_input(
+            project.as_path(),
+            RuntimeSnapshotUpsertInput::from_suspended(session_id.clone(), suspended, Some(1)),
+        )
+        .expect("save suspended snapshot");
 
-    crate::agent_engine::session_state::global().remove_session(&session_id);
+        let err =
+            hydrate_existing_session_on_start(project.to_string_lossy().as_ref(), &session_id)
+                .expect_err("suspended session should require resume");
+        let details = err.details.expect("error details");
+        let code = details
+            .get("code")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        assert_eq!(code, "E_AGENT_SESSION_RESUME_NOT_SUPPORTED");
+
+        crate::agent_engine::session_state::global().remove_session(&session_id);
+    });
 }
 
 #[test]

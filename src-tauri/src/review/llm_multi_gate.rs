@@ -16,6 +16,8 @@ use crate::models::{AppError, ErrorCode};
 use crate::review::types::{ReviewConfidence, ReviewIssue, ReviewSeverity, ReviewType};
 use crate::services::read_json;
 
+use super::target_ref::resolve_review_target_path;
+
 #[derive(Debug, Clone)]
 pub struct ReviewLlmConfig {
     pub provider: String,
@@ -318,17 +320,7 @@ fn build_evidence_bundle(
 }
 
 fn load_target_text(project_path: &Path, target_ref: &str) -> Result<String, AppError> {
-    let normalized = target_ref.trim().replace('\\', "/");
-    if normalized.is_empty() {
-        return Err(AppError::invalid_argument("review target is empty"));
-    }
-
-    let full = project_path.join("manuscripts").join(&normalized);
-    if !full.exists() {
-        return Err(AppError::not_found(format!(
-            "review target not found: {normalized}"
-        )));
-    }
+    let (_normalized, full) = resolve_review_target_path(project_path, target_ref)?;
 
     if full.extension().and_then(|v| v.to_str()) == Some("json") {
         let chapter = read_json::<crate::models::Chapter>(&full)?;

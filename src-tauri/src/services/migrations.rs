@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::models::{AppError, Chapter, VolumeMetadata};
-use crate::services::{ensure_dir, list_dirs, list_files, read_json, write_json};
+use crate::services::{ensure_dir, list_dirs, list_files, read_file, read_json, write_json};
 use crate::utils::atomic_write::atomic_write_json;
 
 const MANUSCRIPTS_DIR: &str = "manuscripts";
@@ -77,10 +77,25 @@ fn migrate_chapter_files(
         }
 
         let current_path = volume_dir.join(&file_name);
-        let mut chapter: Chapter = match read_json(&current_path) {
+        let chapter_content = match read_file(&current_path) {
             Ok(v) => v,
             Err(_) => continue,
         };
+        let chapter_json: serde_json::Value = match serde_json::from_str(&chapter_content) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let legacy_schema = chapter_json
+            .get("schema_version")
+            .and_then(serde_json::Value::as_i64)
+            == Some(1);
+        let mut chapter: Chapter = match serde_json::from_value(chapter_json) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if legacy_schema {
+            write_json(&current_path, &chapter)?;
+        }
 
         let chapter_id = normalize_chapter_id(&mut chapter, &current_path, &seen_ids)?;
         seen_ids.insert(chapter_id.clone());

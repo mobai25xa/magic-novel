@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Bot, CircleHelp, Compass, History, Lock, LockOpen, RefreshCw, Sparkles, X } from 'lucide-react'
 
 import { ChatInput } from '@/components/ai/input/ChatInput'
 import { ActionBar } from '@/components/ai/input/ActionBar'
 import { TurnCardAssistantBlock } from '@/components/ai/message/turn-card-assistant-block'
 import { TurnCardUserBlock } from '@/components/ai/message/turn-card-user-block'
+import { useChatTranscriptScroll } from '@/components/ai/panel/agent-chat-panel-scroll'
+import { AgentChatPanelViewScrollJump } from '@/components/ai/panel/view/agent-chat-panel-view-scroll'
 import type { OpenQuestionStatus } from '@/features/inspiration/types'
 import { useTranslation } from '@/hooks/use-translation'
 import { Badge, Button, Tabs, Tab, TabPanel, Tag } from '@/magic-ui/components'
@@ -44,7 +46,7 @@ export function InspirationWorkspace(input: InspirationWorkspaceProps) {
   const { translations } = useTranslation()
   const cp = translations.createPage
   const [mobileTab, setMobileTab] = useState<'consensus' | 'chat'>('chat')
-  const [missingBannerDismissed, setMissingBannerDismissed] = useState(false)
+  const [dismissedMissingFieldsKey, setDismissedMissingFieldsKey] = useState<string | null>(null)
 
   const fieldLabels = useMemo(() => ({
     story_core: cp.inspirationFieldStoryCore,
@@ -60,10 +62,7 @@ export function InspirationWorkspace(input: InspirationWorkspaceProps) {
 
   const requiredMissingSet = new Set(input.data.missingRequiredFields)
   const missingFieldsKey = input.data.missingRequiredFields.join('|')
-
-  useEffect(() => {
-    setMissingBannerDismissed(false)
-  }, [missingFieldsKey])
+  const missingBannerDismissed = dismissedMissingFieldsKey === missingFieldsKey
 
   const consensusPanel = (
     <div className="min-w-0 space-y-4">
@@ -212,7 +211,7 @@ export function InspirationWorkspace(input: InspirationWorkspaceProps) {
             title={cp.inspirationMissingFieldsTitle}
             value={input.data.missingRequiredFields.map((fieldId) => fieldLabels[fieldId]).join(' / ')}
             closeLabel={translations.common.close}
-            onClose={() => setMissingBannerDismissed(true)}
+            onClose={() => setDismissedMissingFieldsKey(missingFieldsKey)}
           />
         ) : null}
 
@@ -238,7 +237,7 @@ export function InspirationWorkspace(input: InspirationWorkspaceProps) {
                   title={cp.inspirationMissingFieldsTitle}
                   value={input.data.missingRequiredFields.map((fieldId) => fieldLabels[fieldId]).join(' / ')}
                   closeLabel={translations.common.close}
-                  onClose={() => setMissingBannerDismissed(true)}
+                  onClose={() => setDismissedMissingFieldsKey(missingFieldsKey)}
                 />
               ) : null}
               {consensusPanel}
@@ -330,7 +329,7 @@ function ChatPanel({ input }: { input: InspirationWorkspaceProps }) {
   const approvalMode = useSettingsStore((state) => state.approvalMode)
   const [sessionPanelOpen, setSessionPanelOpen] = useState(false)
   const sendDisabled = input.data.loadingSession || input.data.runningTurn || !input.data.chatInput.trim()
-  const transcriptItems = [
+  const transcriptItems = useMemo(() => [
     ...input.data.messages.map((message) => ({
       key: message.id,
       role: message.role,
@@ -353,7 +352,35 @@ function ChatPanel({ input }: { input: InspirationWorkspaceProps }) {
           pending: true,
         }]
       : []),
-  ]
+  ], [
+    input.data.messages,
+    input.data.pendingAssistant,
+    input.data.pendingUserMessage,
+  ])
+  const latestTranscriptSignature = useMemo(() => {
+    const lastItem = transcriptItems[transcriptItems.length - 1]
+
+    return [
+      input.data.sessionId,
+      input.data.runtimeState,
+      transcriptItems.length,
+      lastItem?.key ?? '',
+      lastItem?.role ?? '',
+      lastItem?.pending ? 'pending' : 'settled',
+      lastItem?.content.length ?? 0,
+    ].join('|')
+  }, [input.data.runtimeState, input.data.sessionId, transcriptItems])
+  const {
+    scrollRef,
+    scrollState,
+    handleScroll,
+    jumpToLatest,
+  } = useChatTranscriptScroll({
+    contentSignature: latestTranscriptSignature,
+    itemCount: transcriptItems.length,
+    streaming: input.data.runningTurn,
+    sessionKey: input.data.sessionId,
+  })
 
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col gap-4 rounded-[28px] border border-[var(--border-primary)] bg-[var(--bg-panel)] p-4">
@@ -382,7 +409,11 @@ function ChatPanel({ input }: { input: InspirationWorkspaceProps }) {
         </div>
       ) : null}
 
-      <div className="editor-shell-ai-scroll min-h-0 flex-1 overflow-x-hidden rounded-2xl border border-[var(--border-primary)]">
+      <div
+        ref={scrollRef}
+        className="editor-shell-ai-scroll min-h-0 flex-1 overflow-x-hidden rounded-2xl border border-[var(--border-primary)]"
+        onScroll={handleScroll}
+      >
         {transcriptItems.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-[var(--border-primary)] px-4 py-10 text-center">
             <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--bg-panel)]">
@@ -415,6 +446,12 @@ function ChatPanel({ input }: { input: InspirationWorkspaceProps }) {
             )
           ))
         )}
+
+        <AgentChatPanelViewScrollJump
+          autoScrollLocked={scrollState.autoScrollLocked}
+          unseenCount={scrollState.unseenCount}
+          onJump={jumpToLatest}
+        />
       </div>
 
       <div className="space-y-2">

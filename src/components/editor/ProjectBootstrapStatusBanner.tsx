@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { CheckCircle2, CircleAlert, Loader2, X } from 'lucide-react'
 
 import {
@@ -77,17 +77,6 @@ export function ProjectBootstrapStatusBanner() {
   const bannerKey = status
     ? `${projectPath}:${status.creation_job_id}:${status.phase}:${status.updated_at ?? 0}`
     : null
-
-  useEffect(() => {
-    if (!bannerKey) {
-      setDismissedKey(null)
-      return
-    }
-
-    if (dismissedKey && dismissedKey !== bannerKey) {
-      setDismissedKey(null)
-    }
-  }, [bannerKey, dismissedKey])
 
   if (!status || !projectPath || dismissedKey === bannerKey) {
     return null

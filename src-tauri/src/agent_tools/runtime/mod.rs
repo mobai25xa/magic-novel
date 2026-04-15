@@ -13,6 +13,8 @@ mod inspiration;
 mod structure_edit;
 
 #[cfg(test)]
+mod contract_regressions;
+#[cfg(test)]
 mod tests;
 
 use crate::agent_tools::contracts::{FaultDomain, ToolError, ToolMeta, ToolResult};
@@ -421,6 +423,23 @@ pub fn execute_knowledge_write(
             return result;
         }
     };
+
+    if let Err(err) = crate::agent_tools::tools::knowledge_write::validate_knowledge_write_input_shape(&input)
+    {
+        let result = tool_err(
+            "knowledge_write",
+            call_id,
+            started,
+            err.code,
+            &err.message,
+            false,
+            FaultDomain::Validation,
+            None,
+            None,
+        );
+        emit_from_result(&result, "execute");
+        return result;
+    }
 
     let args: crate::agent_tools::tools::knowledge_write::KnowledgeWriteArgs =
         match serde_json::from_value(input) {

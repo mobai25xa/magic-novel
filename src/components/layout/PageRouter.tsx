@@ -20,6 +20,9 @@ const WorkersPage = lazy(() =>
 const CreatePage = lazy(() =>
   import('@/pages/create').then((m) => ({ default: m.CreatePage }))
 )
+const ProjectHomePage = lazy(() =>
+  import('@/pages/project-home').then((m) => ({ default: m.ProjectHomePage }))
+)
 const EditorPage = lazy(() =>
   import('@/pages/editor').then((m) => ({ default: m.EditorPage }))
 )
@@ -52,7 +55,7 @@ export function PageRouter({ currentPage }: PageRouterProps) {
   const handleOpenProject = async (path: string) => {
     try {
       await openProjectFlow({ projectStore, selectedPath: path })
-      navigate('editor')
+      navigate('project_home')
     } catch (error) {
       console.error('Failed to open project:', error)
     }
@@ -94,6 +97,8 @@ function renderPage(
       return <RecyclePage />
     case 'create':
       return <CreatePage />
+    case 'project_home':
+      return <ProjectHomePage />
     case 'editor':
       return <EditorPage onOpenSettings={() => ctx.navigate('settings')} />
     case 'settings':
